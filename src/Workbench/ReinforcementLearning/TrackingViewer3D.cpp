@@ -274,6 +274,12 @@ struct TrackingViewer3D::Impl {
             s.locomotionTermination = v2.value("queda_encerra", false);
             // (O clipe nos motores, como no treino: 01/11 18h45.)
             s.clipBlend = v2.value("mistura_clipe", 1.0f);
+            // (A queda programada, como no treino: 01/11 22h50.)
+            s.protectiveFall = v2.value("queda_programada", false);
+            s.protectiveFallStepwise = true;
+            // (O levantar guiado pelo clipe, como no treino: 01/11 23h10.)
+            s.getUpGuide = v2.value("levantar_guiado", false);
+            s.getUpSeconds = v2.value("levantar_segundos", 1.7f);
             // (Os rumos e o giro com a regua fixa da avaliacao do treino: 2,5 m/s e, se o treino tem empurroes em
             // movimento, os do comeco do B21 - os padroes daqui; sem eles no treino, sem eles aqui.)
             s.trotMinimumSpeed = s.trotMaximumSpeed = 2.5f;

@@ -115,6 +115,22 @@ struct TrackingGetUpAmpSettings3D {
     // locomocao, o alvo de cada junta e o do clipe do passo (no quadro do fim da decisao) vezes (1 - clipBlend) mais o da
     // rede vezes clipBlend - o clipe comanda as juntas e a rede so corrige. 1: a rede livre (como antes); soltar = subir.
     float clipBlend = 1.0f;
+    // A queda programada (01/11 22h50, ele: "quando ele de fato cai, eu preferia aquele nosso ragdoll que temos na
+    // locomocao fisica... tenta cobrir a cabeca e se encolher... fica meio mole... e ai o ato de levantar ocorresse apos
+    // isso"): fora da locomocao, a queda sem volta de quem ja ficou de pe (e os comecos ja caindo) e a da locomocao
+    // fisica (ProtectiveFall3D) ate assentar, sem a rede - os passos dela dentro de uma decisao -; dai a rede levanta.
+    bool protectiveFall = false;
+    // No laboratorio, a queda programada passo a passo (uma decisao por vez, a acao da rede ignorada ate assentar): no
+    // treino ela roda inteira dentro de uma decisao, e na tela o corpo pulava de caindo para deitado.
+    bool protectiveFallStepwise = false;
+    // O levantar guiado pelo clipe (01/11 23h10, ele: "nossa meta vai ser 1.5 - 1.8 segundos para ficar de pe"; "os
+    // movimentos dele estao MUITO zuados... devem se aproximar mais dos clipes, e ele hoje ta ficando em pe TODO TORTO ao
+    // inves de aproximar-se do IDLE ALERTA apos levantar-se"): deitado, com a rede no comando, o clipe de levantar mais
+    // parecido com a pose de agora (de brucos ou de costas, normal ou espelhado, no instante mais proximo) e seguido -
+    // nos motores com a mistura clipBlend e na nota com a imitacao imitationWeight -, acelerado para o clipe inteiro durar
+    // getUpSeconds; no fim dele, de pe, o parado em alerta como no parado (a imitacao, a quietude e o ponto).
+    bool getUpGuide = false;
+    float getUpSeconds = 1.7f;
     // A troca de rede ao ficar de pe (01/11, ele: o levantar volta a ser so levantar e evitar quedas, "fazendo a troca
     // de RL no momento que recem fica de pe"): o episodio acaba (truncado, como o fim do tempo) quando ele fica de pe e
     // firme por 0,5 s - o mesmo da entrega no jogo - depois de ter estado no chao ou, no evitar a queda, do empurrao.

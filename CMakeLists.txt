@@ -880,6 +880,7 @@ add_library(MatterAthlete STATIC
     src/Engine/Character/CharacterLocomotion3D_Legs.cpp
     src/Engine/Character/CharacterLocomotion3D_Drives.cpp
     src/Engine/Character/CharacterLocomotion3D_Outputs.cpp
+    src/Engine/Character/CharacterLocomotion3D_ProtectiveFall.cpp
     src/Engine/Character/RagdollPoseKinematics3D.cpp
     src/Engine/Character/BodilyGetUp3D.cpp
     src/Engine/Character/BallOwnership3D.cpp

@@ -421,6 +421,12 @@ def main() -> int:
                         help="o premio do passo (o tempo no ar de cada pe que pousa, com o pedido de deslocamento)")
     parser.add_argument("--mistura-clipe", type=float, default=1.0,
                         help="na locomocao, o alvo = clipe x (1 - isto) + rede x isto (1: a rede livre)")
+    parser.add_argument("--queda-programada", action="store_true",
+                        help="a queda sem volta e a da locomocao fisica ate assentar (sem a rede); dai a rede levanta")
+    parser.add_argument("--levantar-guiado", action="store_true",
+                        help="deitado, o clipe de levantar mais parecido guia (nos motores e na imitacao); de pe, o idle")
+    parser.add_argument("--levantar-segundos", type=float, default=1.7,
+                        help="o levantar guiado: o clipe de levantar acelerado para durar isto")
     parser.add_argument("--so-clipe", default="", help="nos rumos, so os passos deste clipe (o imitador de um clipe)")
     parser.add_argument("--imitacao", type=float, default=0.0,
                         help="na locomocao, o peso da imitacao do clipe do passo pedido (DeepMimic; 0: sem)")
@@ -471,7 +477,8 @@ def main() -> int:
                   "locomocao_segundos": args.locomocao_segundos, "queda_encerra": args.queda_encerra,
                   "troca_pedido": list(args.troca_pedido), "peso_tarefa_loco": args.peso_tarefa_loco,
                   "peso_estilo_loco": args.peso_estilo_loco, "suave_loco": args.suave_loco, "passo": args.passo,
-                  "mistura_clipe": args.mistura_clipe}
+                  "mistura_clipe": args.mistura_clipe, "queda_programada": args.queda_programada,
+                  "levantar_guiado": args.levantar_guiado, "levantar_segundos": args.levantar_segundos}
     (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
@@ -482,7 +489,9 @@ def main() -> int:
               moving_push_newtons=tuple(args.empurrao_mov_forca), moving_push_hold_fraction=args.empurrao_mov_continuo,
               moving_push_hold_newtons=tuple(args.empurrao_mov_continuo_forca),
               locomotion_seconds=args.locomocao_segundos, locomotion_termination=args.queda_encerra,
-              **({"clip_blend": args.mistura_clipe} if args.mistura_clipe < 1.0 else {}))
+              **({"clip_blend": args.mistura_clipe} if args.mistura_clipe < 1.0 else {}),
+              **({"protective_fall": True} if args.queda_programada else {}),
+              **({"get_up_guide": True, "get_up_seconds": args.levantar_segundos} if args.levantar_guiado else {}))
     batch = native.GetUpAmpBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
                                  seed=args.semente, clip_start_fraction=args.comeco_clipe,
                                  standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,

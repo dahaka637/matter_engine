@@ -1,5 +1,7 @@
 #include "Engine/Tracking/TrackingGetUpAmpTraining3D.hpp"
 
+#include "Engine/Character/ProtectiveFall3D.hpp"
+
 #include "Engine/Animation/AnimationClip3D.hpp"
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
@@ -112,6 +114,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
     std::size_t startClipIndex = std::numeric_limits<std::size_t>::max();
     // As quedas com protecao carregadas (os indices).
     std::vector<std::size_t> protectionIndices;
+    // O rumo medio da pelve de cada clipe em relacao a frente dele (01/11 22h30: no parado em alerta, nos rumos do trote
+    // e nas corridas de lado a pelve fica ~22 graus virada; nos clipes de frente e de costas do Mixamo, ~0).
+    std::vector<float> yawOffsets;
     // A velocidade de deslocamento que falta aos clipes no lugar (os pares do discriminador): constante (corrida) ou
     // em rampa desde zero (a arrancada, com o deslocamento da fonte), para a frente do clipe.
     struct Travel {
@@ -177,6 +182,18 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // O ponto do idle: onde o corpo estava quando o idle passou a ser seguido (o parado nao sai do lugar).
         Vec3 idleAnchor {};
         bool idleAnchored = false;
+        // A queda programada: a dela, a inclinacao da pelve na decisao anterior e o comeco ja caindo que ela assume.
+        std::unique_ptr<ProtectiveFall3D> fall;
+        float lastTilt = 0.0f;
+        bool fallPending = false;
+        bool fallActive = false;
+        bool fallFromStart = false;
+        // O levantar guiado: seguindo um clipe de levantar (sem ciclo e acelerado: o tempo dele e trackStart + (time -
+        // trackFrom) * trackScale) e, de pe no fim dele, o parado em alerta.
+        bool getUpGuided = false;
+        bool idleAfterGetUp = false;
+        float trackFrom = 0.0f;
+        float trackScale = 1.0f;
         // Caido agora, e se ja caiu depois de ter ficado de pe.
         bool down = false;
         bool fellAfterStanding = false;
@@ -289,7 +306,22 @@ struct TrackingGetUpAmpTraining3D::Impl {
             for (float& value : w.pose) value += FallPoseNoise * (2.0f * u(w.rng) - 1.0f);
             contract->driveTargets(w.pose, w.drives);
             for (RagdollDriveTarget3D& drive : w.drives) drive.stiffnessScale *= FallStiffness;
-            settle(w, static_cast<int>((0.9f + 0.6f * u(w.rng)) / TickSeconds));
+            if (settings.protectiveFall) {
+                // (A queda programada: no laboratorio ela cai na tela - a primeira decisao a comeca -; no treino o corpo
+                // assenta por ela aqui, e o levantar parte das poses de quem caiu de verdade, como no jogo.)
+                w.body = w.scene->ragdollStateView(w.handle);
+                if (settings.protectiveFallStepwise) {
+                    w.fallPending = true;
+                    return;
+                }
+                w.fall->begin(static_cast<std::uint32_t>(w.rng()));
+                for (int k = 0; k < static_cast<int>(4.0f / TickSeconds) && !w.fall->settled(); ++k) {
+                    w.fall->step(*w.body, 0.0f, TickSeconds, w.drives);
+                    settle(w, 1);
+                }
+            } else {
+                settle(w, static_cast<int>((0.9f + 0.6f * u(w.rng)) / TickSeconds));
+            }
             if (posture->measure(w.body->links).headHeight < 1.0f) return;
         }
     }
@@ -426,7 +458,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
             if (u(w.rng) < settings.locomotionClipFraction) startInClip(w, gait.clip);
             else beginFromClip(w, true);
         }
-        w.faceYaw = bodyYaw(w);
+        // (01/11 22h30: a frente do corpo e a frente do clipe - no clipe do passo, ou do parado de pe -, nao a pelve: nas
+        // corridas de lado a pelve fica ~22 graus virada e o rumo pedido saia 22 graus para a frente do deslocamento do
+        // clipe - ele aprendeu a ir na diagonal.)
+        w.faceYaw = w.trackClip < references.size() ? w.trackYaw : w.lastClip < references.size() ? w.lastClipYaw : bodyYaw(w);
         // (De pe, a imitacao comeca no inicio do clipe do passo, no rumo do corpo.)
         if (w.trackClip == standingIndex || w.trackClip == standingMirrorIndex) w.trackClip = std::numeric_limits<std::size_t>::max();
         if (w.trackClip >= references.size() && w.commandSpeed > 0.0f) {
@@ -618,6 +653,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
 
     void begin(World& w) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        w.fallPending = false;
+        w.fallActive = false;
+        w.getUpGuided = false;
+        w.idleAfterGetUp = false;
         // (Um sorteio so, como antes: com as fatias novas em 0, os mesmos comecos de antes.)
         // (Tambem na avaliacao, que nao usa o sorteio: as mesmas 64 quedas fixas de antes.)
         const float draw = u(w.rng);
@@ -703,6 +742,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.avoidEnd = -1.0f;
         w.recomposedAt = -1.0f;
         w.idleAnchored = false;
+        if (settings.protectiveFall && w.protectiveStart && !w.locomotion) w.fallPending = true;
+        if (settings.getUpGuide && !w.locomotion && !w.fallPending && !start.standing) beginGetUpGuide(w);
+        w.lastTilt = ProtectiveFall3D::pelvisTilt(*profile, *w.body);
         w.down = fallen(start, *w.body);
         w.fellAfterStanding = false;
         if (kind == 3 || kind == 5) {
@@ -832,8 +874,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const float across = (-v.x * std::sin(toward) + v.y * std::cos(toward)) / std::max(0.5f, w.commandSpeed);
         return std::exp(-3.0f * across * across);
     }
+    // A frente do corpo nos rumos: a pelve menos o rumo medio dela no clipe seguido (seguir o clipe nao custa rumo).
+    float characterYaw(const World& w) const {
+        return w.locomotion && w.trackClip < yawOffsets.size() ? wrapAngle(bodyYaw(w) - yawOffsets[w.trackClip]) : bodyYaw(w);
+    }
     float facing(const World& w) const {
-        const float c = std::cos(wrapAngle(faceDirection(w) - bodyYaw(w)));
+        const float c = std::cos(wrapAngle(faceDirection(w) - characterYaw(w)));
         return w.startKind == 7 ? 0.5f * (1.0f + c) : std::max(0.0f, c);
     }
 
@@ -848,8 +894,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             phase[0] = phase[1] = 0.0f;
             if (clipTracked(w)) {
                 const float duration = std::max(1.0e-3f, references[w.trackClip]->durationSeconds());
-                float t = std::fmod(w.trackStart + w.time, duration);
-                if (t < 0.0f) t += duration;
+                const float t = trackTime(w, 0.0f);
                 phase[0] = std::sin(2.0f * Pi * t / duration);
                 phase[1] = std::cos(2.0f * Pi * t / duration);
             }
@@ -915,11 +960,101 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // empurrao caiu de 91% para ~40%. O idle so quieto: sem empurrao e 1,5 s depois do ultimo; dai a rede livre.)
     bool idleTracked(const World& w) const {
         return (w.trackClip == standingIndex || w.trackClip == standingMirrorIndex) && w.commandSpeed <= 0.0f
-            && (w.startKind == 2 || w.locomotion) && w.pushTicks == 0 && w.time >= w.lastPushEnd + 1.5f;
+            && (w.startKind == 2 || w.locomotion || w.idleAfterGetUp) && w.pushTicks == 0 && w.time >= w.lastPushEnd + 1.5f;
     }
     // O clipe seguido agora (o do passo com o pedido de deslocamento, ou o idle parado).
     bool clipTracked(const World& w) const {
-        return w.trackClip < references.size() && ((w.locomotion && w.commandSpeed > 0.0f) || idleTracked(w));
+        return w.trackClip < references.size() && ((w.locomotion && w.commandSpeed > 0.0f) || idleTracked(w) || w.getUpGuided);
+    }
+    // O tempo do clipe seguido daqui a `ahead` s: em ciclo nos passos e no parado; no levantar guiado, sem ciclo e
+    // acelerado, preso no fim.
+    float trackTime(const World& w, float ahead) const {
+        const float duration = std::max(1.0e-3f, references[w.trackClip]->durationSeconds());
+        if (w.getUpGuided) return std::clamp(w.trackStart + (w.time + ahead - w.trackFrom) * w.trackScale, 0.0f, duration);
+        const float t = std::fmod(w.trackStart + w.time + ahead, duration);
+        return t < 0.0f ? t + duration : t;
+    }
+    // A distancia da pose do corpo a de um quadro: as coordenadas das juntas e o baixo (a gravidade) no quadro da pelve.
+    float poseDistance(const RagdollState3D& body, const TrackingClipFrame3D& frame) const {
+        const auto down = [&](const PhysicsBodyState3D& pelvis) {
+            return (pelvis.orientation * profile->links[rootLink].modelOrientation.conjugate()).normalized().conjugate().rotate(
+                { 0.0f, 0.0f, -1.0f });
+        };
+        float d = 4.0f * (down(body.links[rootLink]) - down(frame.links[rootLink])).lengthSquared();
+        for (std::size_t i = 0; i < body.joints.size() && i < frame.coordinates.size() && i < profile->links.size(); ++i) {
+            const Vec3 c = frame.coordinates[i];
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                if (!profile->links[i].inboundJoint.axes[axis].enabled) continue;
+                const float e = body.joints[i].positionRadians[axis] - (axis == 0 ? c.x : axis == 1 ? c.y : c.z);
+                d += e * e;
+            }
+        }
+        return d;
+    }
+    // O levantar guiado (01/11 23h10): o clipe de levantar e o instante mais parecidos com a pose de agora (os quatro, a
+    // cada 0,1 s nos primeiros 60%), o rumo dele alinhando a pelve dele a do corpo.
+    void beginGetUpGuide(World& w) {
+        float best = std::numeric_limits<float>::max(), bestTime = 0.0f;
+        std::size_t bestClip = std::numeric_limits<std::size_t>::max();
+        for (std::size_t c = 0; c < std::size(GetUpClips) && c < references.size(); ++c)
+            for (float t = 0.0f; t <= 0.6f * references[c]->durationSeconds(); t += 0.1f) {
+                references[c]->frame(t, {}, 0.0f, w.frame);
+                const float d = poseDistance(*w.body, w.frame);
+                if (d < best) {
+                    best = d;
+                    bestClip = c;
+                    bestTime = t;
+                }
+            }
+        if (bestClip >= references.size()) return;
+        references[bestClip]->frame(bestTime, {}, 0.0f, w.frame);
+        w.trackClip = bestClip;
+        w.trackStart = bestTime;
+        w.trackFrom = w.time;
+        w.trackScale = settings.getUpSeconds > 0.0f ? references[bestClip]->durationSeconds() / settings.getUpSeconds : 1.0f;
+        w.trackYaw = wrapAngle(bodyYaw(w) - trackingBodyYaw3D(profile->links[rootLink], w.frame.links[rootLink]));
+        w.getUpGuided = true;
+        w.idleAfterGetUp = false;
+    }
+    // No fim do clipe de levantar: de pe, o parado em alerta (o normal ou o espelho, o mais perto da pose), na pelve do
+    // corpo; com o pedido de deslocamento, a rede livre; ainda no chao, outro clipe de onde ele esta.
+    void endGetUpGuide(World& w, bool standing) {
+        w.getUpGuided = false;
+        w.trackClip = std::numeric_limits<std::size_t>::max();
+        if (!standing) {
+            beginGetUpGuide(w);
+            return;
+        }
+        if (w.commandSpeed > 0.0f) return;
+        references[standingIndex]->frame(0.0f, {}, 0.0f, w.frame);
+        const float normal = poseDistance(*w.body, w.frame);
+        references[standingMirrorIndex]->frame(0.0f, {}, 0.0f, w.frame);
+        const std::size_t idle = poseDistance(*w.body, w.frame) < normal ? standingMirrorIndex : standingIndex;
+        w.trackClip = idle;
+        w.trackStart = -w.time;
+        w.trackYaw = wrapAngle(bodyYaw(w) - yawOffsets[idle]);
+        w.idleAfterGetUp = true;
+    }
+
+    // A queda programada (a da locomocao fisica) ate assentar, sem a rede: no treino inteira dentro de uma decisao, no
+    // laboratorio uma decisao por vez.
+    void beginProtectiveFall(World& w) {
+        w.fall->begin(static_cast<std::uint32_t>(w.rng()));
+        w.fallActive = true;
+        w.fallFromStart = w.fallPending;
+        w.fallPending = false;
+    }
+    void advanceProtectiveFall(World& w) {
+        for (int k = 0; k < TicksPerDecision; ++k) {
+            w.fall->step(*w.body, 0.0f, TickSeconds, w.drives);
+            settle(w, 1);
+        }
+        w.time += TicksPerDecision * TickSeconds;
+        if (!w.fall->settled()) return;
+        w.fallActive = false;
+        if (settings.getUpGuide) beginGetUpGuide(w);
+        // (Nos comecos ja caindo a queda nao foi da rede: o toque do tronco no chao nao conta contra ela.)
+        if (w.fallFromStart) w.touchedDown = true;
     }
 
     void decide(World& w, std::size_t index, std::span<const float> action, float& reward, std::uint8_t& terminated,
@@ -936,12 +1071,18 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.trackStart = -w.time;
             w.pendingClip = std::numeric_limits<std::size_t>::max();
         }
+        // (A queda programada: a queda sem volta - a da locomocao fisica, a pelve alem de ~50 graus e tombando - de quem
+        // ja ficou de pe no episodio e esta alto, ou o comeco ja caindo.)
+        const float tilt = ProtectiveFall3D::pelvisTilt(*profile, *w.body);
+        if (!w.fallActive && settings.protectiveFall && !w.locomotion
+            && (w.fallPending
+                || (w.stoodAt >= 0.0f && was.pelvisHeight > 0.5f * profile->standingRootHeightMeters
+                    && ProtectiveFall3D::committed(tilt, (tilt - w.lastTilt) / (TicksPerDecision * TickSeconds)))))
+            beginProtectiveFall(w);
+        const bool programmed = w.fallActive;
         if (settings.clipBlend < 1.0f && clipTracked(w)) {
             const TrackingClipReference3D& reference = *references[w.trackClip];
-            const float duration = std::max(1.0e-3f, reference.durationSeconds());
-            float t = std::fmod(w.trackStart + w.time + TicksPerDecision * TickSeconds, duration);
-            if (t < 0.0f) t += duration;
-            reference.frame(t, {}, 0.0f, w.frame);
+            reference.frame(trackTime(w, TicksPerDecision * TickSeconds), {}, 0.0f, w.frame);
             w.blendAction.assign(action.size(), 0.0f);
             contract->actionOf(w.frame.coordinates, w.blendAction);
             const float s = std::clamp(settings.clipBlend, 0.0f, 1.0f);
@@ -951,10 +1092,19 @@ struct TrackingGetUpAmpTraining3D::Impl {
         } else {
             contract->driveTargets(action, w.drives);
         }
-        settle(w, TicksPerDecision);
-        w.time += TicksPerDecision * TickSeconds;
+        if (programmed) {
+            if (settings.protectiveFallStepwise) advanceProtectiveFall(w);
+            else
+                while (w.fallActive && w.time < settings.episodeSeconds - 1e-4f) advanceProtectiveFall(w);
+        } else {
+            settle(w, TicksPerDecision);
+            w.time += TicksPerDecision * TickSeconds;
+        }
+        w.lastTilt = ProtectiveFall3D::pelvisTilt(*profile, *w.body);
         features->compute(w.body->links, std::span<float>(w.ampPair).subspan(a, a));
         const TrackingGetUpPosture3D now = posture->measure(w.body->links);
+        if (w.getUpGuided && trackTime(w, 0.0f) >= references[w.trackClip]->durationSeconds() - 1.0e-3f)
+            endGetUpGuide(w, now.standing);
         // O alvo alcancado: dai o pedido e ficar parado (a nota do parado, com a pose).
         if (!w.locomotion && w.commandSpeed > 0.0f && targetBearing(w).second < ArriveRadius) {
             w.commandSpeed = 0.0f;
@@ -977,7 +1127,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             : w.locomotion ? 0.7f * posture->standingReward(now, w.body->links, quiet) + (now.standing ? 0.3f * facing(w) : 0.0f)
                            : posture->standingReward(now, w.body->links, quiet);
         if (w.locomotion && now.standing) {
-            w.faceErrorSum += std::abs(wrapAngle(faceDirection(w) - bodyYaw(w)));
+            w.faceErrorSum += std::abs(wrapAngle(faceDirection(w) - characterYaw(w)));
             ++w.faceErrorSamples;
         }
         // O premio do passo (com o pedido de deslocamento, de pe): cada pe que pousa depois de um tempo no ar.
@@ -998,9 +1148,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // A imitacao do clipe do passo (com o pedido, de pe ou nao: cair sai caro pela pose).
         if (settings.imitationWeight > 0.0f && clipTracked(w)) {
             const TrackingClipReference3D& reference = *references[w.trackClip];
-            const float duration = std::max(1.0e-3f, reference.durationSeconds());
-            float t = std::fmod(w.trackStart + w.time, duration);
-            if (t < 0.0f) t += duration;
+            const float t = trackTime(w, 0.0f);
             const Vec3 root = w.body->links[rootLink].position;
             reference.frame(t, { root.x, root.y, 0.0f }, w.trackYaw, w.frame);
             // (01/11 17h: o quadro vem na posicao do corpo, entao imitar parado pagava - o sprint caiu de 2,0 para
@@ -1023,6 +1171,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 const float still = std::exp(-25.0f * (v.x * v.x + v.y * v.y)) * std::exp(-10.0f * (dx * dx + dy * dy))
                     * static_cast<float>(std::exp(-0.02 * spin / std::max<std::size_t>(1, w.body->links.size())));
                 state += settings.imitationWeight * (contract->reward(w.body->links, w.frame, 4.0f).total + 0.5f * still);
+            } else if (w.getUpGuided) {
+                // (O levantar guiado: a imitacao inteira - o clipe sobe, e o centro de massa dele puxa o do corpo.)
+                state += settings.imitationWeight * contract->reward(w.body->links, w.frame, 4.0f).total;
             } else {
                 const float toward = moveDirection(w);
                 const float progress =
@@ -1248,6 +1399,18 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         impl.references[impl.standingMirrorIndex]->frame(0.0f, {}, 0.0f, idle);
         impl.posture->addIdlePose(idle.links);
     }
+    for (const auto& reference : impl.references) {
+        TrackingClipFrame3D frame;
+        float x = 0.0f, y = 0.0f;
+        const std::uint32_t root = impl.contract->rootLink();
+        for (int k = 0; k < 32; ++k) {
+            reference->frame(reference->durationSeconds() * static_cast<float>(k) / 32.0f, {}, 0.0f, frame);
+            const float yaw = trackingBodyYaw3D(impl.profile->links[root], frame.links[root]);
+            x += std::cos(yaw);
+            y += std::sin(yaw);
+        }
+        impl.yawOffsets.push_back(std::atan2(y, x));
+    }
     for (std::size_t i = 0; i < impl.profile->links.size(); ++i) {
         if (impl.profile->links[i].parentIndex < 0) impl.rootLink = static_cast<std::uint32_t>(i);
         const std::string& id = impl.profile->links[i].id;
@@ -1285,6 +1448,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         spawn.active = true;
         spawn.pelvisPosition = { 0.0f, 0.0f, impl.profile->standingRootHeightMeters };
         w.handle = w.scene->createRagdoll(*impl.profile, spawn);
+        w.fall = std::make_unique<ProtectiveFall3D>(*impl.profile);
         w.observation.assign(impl.contract->bodyObservationSize() + CommandSize + GroundObservationSize + PhaseSize, 0.0f);
         w.finalObservation.assign(w.observation.size(), 0.0f);
         w.ampPair.assign(2 * impl.features->size(), 0.0f);
