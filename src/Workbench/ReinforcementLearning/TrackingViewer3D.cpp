@@ -280,6 +280,8 @@ struct TrackingViewer3D::Impl {
             // (O levantar guiado pelo clipe, como no treino: 01/11 23h10.)
             s.getUpGuide = v2.value("levantar_guiado", false);
             s.getUpSeconds = v2.value("levantar_segundos", 1.7f);
+            // (O rolar pelo clipe, como no treino: 02/11 01h40.)
+            s.rollBlend = v2.value("rolar_clipe", 1.0f);
             // (Os rumos e o giro com a regua fixa da avaliacao do treino: 2,5 m/s e, se o treino tem empurroes em
             // movimento, os do comeco do B21 - os padroes daqui; sem eles no treino, sem eles aqui.)
             s.trotMinimumSpeed = s.trotMaximumSpeed = 2.5f;
@@ -353,6 +355,38 @@ TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& run
     for (std::string line; std::getline(log, line);) {
         const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
         if (row.is_discarded() || !row.is_object()) continue;
+        // O levantar (levantar_amp, a rl_final - 02/11, ele: "nao aparece para mim no laboratorio"): as linhas do
+        // treino (as de "aval" sao os testes, lidos a parte) e os tres exercicios dele.
+        if (row.contains("atualizacao") && !row.contains("rodada")) {
+            if (row.contains("aval")) continue;
+            const auto number = [&](const char* key, double fallback) {
+                const auto it = row.find(key);
+                return it != row.end() && it->is_number() ? it->get<double>() : fallback;
+            };
+            TrainingIterationPoint3D point;
+            point.iteration = static_cast<std::uint64_t>(number("atualizacao", 0.0));
+            point.time = number("hora", 0.0);
+            point.steps = number("amostras", 0.0);
+            point.sps = number("am_s", 0.0);
+            point.fallFraction = 1.0 - number("queda_levantou", 1.0);
+            point.episodeSeconds = number("queda_tempo", 0.0);
+            history.iterations.push_back(point);
+            for (const auto& [drillName, stood, seconds] : { std::tuple { "levantar", "queda_levantou", "queda_tempo" },
+                     std::tuple { "levantar_movimento", "mov_levantou", "mov_tempo" },
+                     std::tuple { "evitar_queda", "evitar_evitou", "evitar_recompos_s" } }) {
+                if (!row.contains(stood) || !row[stood].is_number()) continue;
+                TrainingDrillPoint3D drill;
+                drill.iteration = point.iteration;
+                drill.time = point.time;
+                drill.drill = drillName;
+                drill.episodes = 1.0;
+                drill.stood = row[stood].get<double>();
+                drill.falls = 1.0 - drill.stood;
+                drill.seconds = number(seconds, 0.0);
+                history.drills.push_back(drill);
+            }
+            continue;
+        }
         TrainingIterationPoint3D point;
         point.iteration = row.value("rodada", 0ull);
         point.time = row.value("hora", 0.0);

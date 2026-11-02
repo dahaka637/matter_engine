@@ -980,7 +980,8 @@ void ReinforcementLearningScreen::refreshHistory() {
             // O rastreador grava os seus arquivos, nao o rl.db.
             if (MotorViewer3D::isMotorTask(directory / "tarefa.json"))
                 return MotorViewer3D::readHistory(directory, points, since);
-            if (TrackingViewer3D::isTrackingTask(directory / "tarefa.json"))
+            if (TrackingViewer3D::isTrackingTask(directory / "tarefa.json")
+                || std::filesystem::exists(directory / "log.jsonl"))
                 return TrackingViewer3D::readHistory(directory, points, since);
             TrainingHistory3D history = readTrainingHistory3D(database, run, since, points);
             // (Um treino parado ha mais que a janela: o fim dele.)
