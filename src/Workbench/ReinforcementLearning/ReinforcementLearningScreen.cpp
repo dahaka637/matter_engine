@@ -1014,6 +1014,7 @@ void ReinforcementLearningScreen::update(float deltaSeconds) {
         m_policyWatch = 2.0f;
         reloadPolicy(false);
         m_getUpTraining = TrackingViewer3D::getUpTraining();
+        refreshGetUpLive();
         if (TrackingViewer3D::isGetUpDrill(m_viewerDrill)) refreshGetUpCurve();
     }
     // (A leitura pedida chega no quadro seguinte em que ficar pronta.)
@@ -1336,6 +1337,7 @@ void ReinforcementLearningScreen::drawTrainer() {
         if (status.alive && status.cpuTemperature > 0.0) infoRow("CPU", decimal(status.cpuTemperature, 0) + " °C");
     }
     if (!status.message.empty()) ImGui::TextColored(WarningText, "%s", status.message.c_str());
+    drawGetUpLive();
     ImGui::Dummy({ 1.0f, ui(4.0f) });
     drawControls(status);
     drawModes(status);
@@ -1836,6 +1838,81 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         drawLocomotionCharts(height);
     else
         drawLegacyCharts(height);
+}
+
+void ReinforcementLearningScreen::refreshGetUpLive() {
+    GetUpLive live;
+    const std::filesystem::path log = TrackingViewer3D::getUpLog();
+    live.run = log.parent_path().filename().string();
+    std::ifstream statusFile(log.parent_path() / "status.json");
+    const nlohmann::json status = nlohmann::json::parse(statusFile, nullptr, false);
+    if (!status.is_discarded() && status.is_object()) {
+        live.known = true;
+        live.state = status.value("state", std::string());
+        live.iteration = status.value("iteration", std::uint64_t { 0 });
+        live.sps = status.value("sps", 0.0);
+        live.alive = trainerProcessAlive3D(status.value("pid", 0), live.run);
+    }
+    // (O ultimo teste: a ultima linha "aval" nos ultimos ~256 kB do log.)
+    std::ifstream file(log, std::ios::binary | std::ios::ate);
+    if (file) {
+        const std::streamoff size = file.tellg();
+        file.seekg(std::max<std::streamoff>(0, size - 262144));
+        std::string line;
+        nlohmann::json last;
+        while (std::getline(file, line))
+            if (line.find("\"aval\": true") != std::string::npos || line.find("\"aval\":true") != std::string::npos) {
+                const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
+                if (!row.is_discarded() && row.is_object()) last = row;
+            }
+        const auto number = [&](const char* key) {
+            return last.contains(key) && last[key].is_number() ? last[key].get<double>() : -1.0;
+        };
+        if (last.is_object()) {
+            live.stood = number("levantou");
+            live.seconds = number("tempo");
+            live.moving = number("mov_levantou");
+            live.avoided = number("evitar_evitou");
+            const double hora = number("hora");
+            if (hora > 0.0) {
+                const std::time_t t = static_cast<std::time_t>(hora);
+                char text[16];
+                std::strftime(text, sizeof(text), "%H:%M", std::localtime(&t));
+                live.testTime = text;
+            }
+        }
+    }
+    m_getUpLive = std::move(live);
+}
+
+std::string ReinforcementLearningScreen::getUpLiveText() const {
+    const GetUpLive& g = m_getUpLive;
+    if (!g.known) return "sem o treino do levantar";
+    return g.run + " " + (g.alive ? g.state : std::string("parado")) + ", rodada " + std::to_string(g.iteration)
+        + ", levantou " + decimal(g.stood * 100.0, 0) + "% em " + decimal(g.seconds, 2) + " s, em movimento "
+        + decimal(g.moving * 100.0, 0) + "%, evitou " + (g.avoided >= 0.0 ? decimal(g.avoided * 100.0, 0) + "%" : "-")
+        + " (teste " + g.testTime + ")" + (g.run == activeRun() ? " [o treino de cima]" : " [bloco proprio]");
+}
+
+void ReinforcementLearningScreen::drawGetUpLive() {
+    const GetUpLive& g = m_getUpLive;
+    if (!g.known || g.run == activeRun()) return;
+    ImGui::Dummy({ 1.0f, ui(4.0f) });
+    ImGui::Separator();
+    ImGui::TextColored(InfoText, "Levantar (%s)", g.run.c_str());
+    tooltip("O treino da rede do levantar (levantar do chão, em movimento e evitar a queda), que roda junto do treino acima.");
+    const StateLabel state = stateLabel(g.alive ? g.state : std::string("parado"));
+    ImGui::SameLine();
+    ImGui::TextColored(state.color, "%s", state.label);
+    infoRow("Rodada", std::to_string(g.iteration));
+    if (g.alive) infoRow("Velocidade", decimal(g.sps, 0) + " /s");
+    if (g.stood >= 0.0) {
+        infoRow("Levantou", decimal(g.stood * 100.0, 0) + "% · " + (g.seconds >= 0.0 ? decimal(g.seconds, 2) + " s" : "—"));
+        tooltip("O último teste sem ruído: quantos ficaram de pé e o tempo médio até ficar de pé.");
+    }
+    if (g.moving >= 0.0) infoRow("Em movimento", decimal(g.moving * 100.0, 0) + "%");
+    if (g.avoided >= 0.0) infoRow("Evitou a queda", decimal(g.avoided * 100.0, 0) + "%");
+    if (!g.testTime.empty()) infoRow("Teste", g.testTime);
 }
 
 void ReinforcementLearningScreen::refreshGetUpCurve() {

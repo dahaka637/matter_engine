@@ -1368,8 +1368,10 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         names.insert(names.end(), std::begin(HeadingClips), std::end(HeadingClips));
         names.insert(names.end(), std::begin(LocomotionStyleClips), std::end(LocomotionStyleClips));
     }
-    // (A rl_final: as quedas com protecao com o evitar a queda ou as quedas da locomocao ligados, no treino.)
-    if (!settings.evaluation && (settings.avoidFraction > 0.0f || settings.locomotionFallFraction > 0.0f))
+    // (A rl_final: as quedas com protecao com o evitar a queda ou as quedas da locomocao ligados, no treino - 02/11 00h45:
+    // so com a queda programada, que assume esses comecos ja caindo; sem ela, a rede se debatia na queda.)
+    if (!settings.evaluation && settings.protectiveFall
+        && (settings.avoidFraction > 0.0f || settings.locomotionFallFraction > 0.0f))
         names.insert(names.end(), std::begin(ProtectionClips), std::end(ProtectionClips));
     // (A rl_final: a corrida e o sprint so com as fatias deles - ou a avaliacao dessas faixas -, cada clipe uma vez.)
     if (settings.runFraction > 0.0f || settings.sprintFraction > 0.0f || settings.evaluationBand >= 2) {

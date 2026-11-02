@@ -27,6 +27,9 @@ struct TrainerPaths3D {
 [[nodiscard]] TrainerPaths3D defaultTrainerPaths3D(const std::filesystem::path& sourceRoot);
 
 // O que o treinador conta de si (o "status" do canal de controle).
+// O processo de pid vivo e sendo o treinador do treino `run` (--treino <run>; um pid reaproveitado nao conta).
+[[nodiscard]] bool trainerProcessAlive3D(int pid, const std::string& run);
+
 struct TrainerStatus3D {
     // O treinador respondeu agora; sem ele, os campos vem do status.json do
     // treino (o ultimo estado conhecido).

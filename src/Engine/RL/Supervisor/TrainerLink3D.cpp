@@ -96,6 +96,8 @@ std::filesystem::path stopFileOf(const std::filesystem::path& directory) {
 
 } // namespace
 
+bool trainerProcessAlive3D(int pid, const std::string& run) { return trainerProcessAlive(pid, run); }
+
 void TrainerLink3D::send(const std::string& command, const std::string& argumentsJson) {
     {
         // O treinador de processo proprio: parar (e pausar, que ele nao tem) e salvar por sinal.

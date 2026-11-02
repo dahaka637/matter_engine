@@ -634,7 +634,7 @@ def main() -> int:
         counters["segundos"] = trained_before + (time.time() - opened)
         data = {"run": args.treino, "task": args.treino, "state": state, "pid": os.getpid(),
                 "taskName": "rl_final: levantar, proteger-se e se locomover" if args.locomocao > 0
-                else "Rede do levantar: levantar, equilíbrio e locomoção",
+                else "Levantar do chão, em movimento e evitar a queda",
                 "iteration": counters["atualizacao"], "steps": counters["amostras"], "episodes": counters["episodios"],
                 "trainSeconds": counters["segundos"], "sps": last_status["sps"], "threads": args.threads,
                 "environments": n, "device": device.type, "cpuTemperature": cpu_temperature() or 0.0,

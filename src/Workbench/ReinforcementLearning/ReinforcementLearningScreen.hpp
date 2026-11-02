@@ -38,6 +38,8 @@ namespace MatterEngine::Workbench {
 // graficos do historico embaixo. Nada daqui muda a simulacao do treino.
 class ReinforcementLearningScreen {
 public:
+    // O resumo do bloco do levantar no painel TREINO (o teste com os treinos de verdade imprime).
+    [[nodiscard]] std::string getUpLiveText() const;
     struct Options {
         // A raiz do repositorio (o treinador e as tarefas ficam nela).
         std::filesystem::path sourceRoot;
@@ -156,6 +158,10 @@ private:
     // O levantar do chao (o treino a parte, 31/10): as avaliacoes dele nas 64 quedas fixas, relidas quando o log muda.
     void drawGetUpCharts(float height);
     void refreshGetUpCurve();
+    // O treino do levantar ao vivo no painel TREINO, junto do treino do canal (02/11, ele: "quero que no laboratorio
+    // mostre corretamente os treinos do B21 e do levantar do chao"): o status.json e o ultimo teste do log dele.
+    void refreshGetUpLive();
+    void drawGetUpLive();
     // O seletor do periodo dos graficos (o mesmo no recolhido e no expandido).
     void drawChartWindow(float width);
     [[nodiscard]] const TrainingCharts3D& charts(std::size_t slices);
@@ -256,6 +262,15 @@ private:
         std::vector<float> locoFall, locoFallTest, locoFallSeconds, locoFallSecondsTest, handoffSeconds;
         std::filesystem::file_time_type write {};
     } m_getUpCurve;
+    struct GetUpLive {
+        bool known = false, alive = false;
+        std::string run, state;
+        std::uint64_t iteration = 0;
+        double sps = 0.0;
+        // O ultimo teste (sem ruido): levantou, tempo, em movimento e evitou (< 0: sem o exercicio); a hora dele.
+        double stood = -1.0, seconds = -1.0, moving = -1.0, avoided = -1.0;
+        std::string testTime;
+    } m_getUpLive;
     float m_accumulator = 0.0f;
     // Onde a pelve aparece no ultimo quadro (0 a 1 na imagem; -1 fora dela).
     std::array<float, 2> m_pelvisOnScreen { -1.0f, -1.0f };

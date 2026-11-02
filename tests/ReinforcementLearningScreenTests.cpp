@@ -274,6 +274,7 @@ int realRun(const std::filesystem::path& out) {
     std::cout << "exercicios:";
     for (const std::string& drill : screen.drills()) std::cout << ' ' << drill;
     std::cout << '\n';
+    std::cout << "levantar: " << screen.getUpLiveText() << '\n';
     if (screen.status().task == "motor_basico")
         require(screen.drills() == std::vector<std::string>(MotorTraining3D::drillIds().begin(),MotorTraining3D::drillIds().end()), "o motor mostra os dez exercicios do Basico");
     require(!screen.history().iterations.empty(), "os graficos deveriam ter as rodadas do treino");
