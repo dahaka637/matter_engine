@@ -174,6 +174,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float avoidAt = -1.0f;
         float avoidEnd = -1.0f;
         float recomposedAt = -1.0f;
+        // O ponto do idle: onde o corpo estava quando o idle passou a ser seguido (o parado nao sai do lugar).
+        Vec3 idleAnchor {};
+        bool idleAnchored = false;
         // Caido agora, e se ja caiu depois de ter ficado de pe.
         bool down = false;
         bool fellAfterStanding = false;
@@ -699,6 +702,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.avoidAt = -1.0f;
         w.avoidEnd = -1.0f;
         w.recomposedAt = -1.0f;
+        w.idleAnchored = false;
         w.down = fallen(start, *w.body);
         w.fellAfterStanding = false;
         if (kind == 3 || kind == 5) {
@@ -821,6 +825,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
     float bodyYaw(const World& w) const { return trackingBodyYaw3D(profile->links[rootLink], w.body->links[rootLink]); }
     // (01/11 00h, o Codex: no giro, max(0, cos) fica plano alem de 90 graus - o alvo gira e foge, e dai ele nao tinha
     // sinal nenhum para virar; o erro ficou em ~95 graus por 1,5 h. No giro, o alinhamento continuo (1 + cos) / 2.)
+    // (01/11 22h, ele: "o da direita e esquerda, a maioria dos movimentos ele faz indo para diagonal... isso deveria ser
+    // punido": a velocidade de lado ao rumo pedido, na proporcao da pedida, corta a nota - 30% de lado, 76%; 50%, 47%.)
+    float sideDrift(const World& w, Vec3 v) const {
+        const float toward = moveDirection(w);
+        const float across = (-v.x * std::sin(toward) + v.y * std::cos(toward)) / std::max(0.5f, w.commandSpeed);
+        return std::exp(-3.0f * across * across);
+    }
     float facing(const World& w) const {
         const float c = std::cos(wrapAngle(faceDirection(w) - bodyYaw(w)));
         return w.startKind == 7 ? 0.5f * (1.0f + c) : std::max(0.0f, c);
@@ -894,7 +905,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // andar de costas devagar ~0,45. Agora o rumo do corpo e o portao de tudo: de costas para o rumo pedido, zero; a
         // 45 graus, 71%; ir para tras do pedido continua custando.)
         const float progress = std::clamp(ratio, 0.0f, 1.0f);
-        const float gate = facing(w);
+        const float gate = facing(w) * sideDrift(w, v);
         return gate * (0.6f * std::max(0.0f, speed) + progress * (0.25f + 0.15f * std::exp(-across * across)))
             + 0.6f * std::min(0.0f, speed);
     }
@@ -983,6 +994,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             // (Com o mesmo portao do rumo: passo virado para o lado errado nao vale.)
             state += settings.stepReward * steps * (steps > 0.0f ? facing(w) : 1.0f);
         }
+        if (!idleTracked(w)) w.idleAnchored = false;
         // A imitacao do clipe do passo (com o pedido, de pe ou nao: cair sai caro pela pose).
         if (settings.imitationWeight > 0.0f && clipTracked(w)) {
             const TrackingClipReference3D& reference = *references[w.trackClip];
@@ -1001,13 +1013,21 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 for (const PhysicsBodyState3D& link : w.body->links) spin += link.angularVelocity.lengthSquared();
                 // (01/11 21h30: exigir aqui tambem o rumo do idle - 20h20, ele girava devagar no parado - derrubou o levantar
                 // das quedas no treino de 97% para ~50% em meia hora; revertido.)
-                const float still = std::exp(-25.0f * (v.x * v.x + v.y * v.y))
+                // (01/11 22h, ele: "micromovimentos imperceptiveis nos pes que faz ele se arrastar para tras": a
+                // velocidade baixa quase nao custava; a quietude tambem exige ficar no ponto do idle - 0,3 m fora, 41%.)
+                if (!w.idleAnchored) {
+                    w.idleAnchor = root;
+                    w.idleAnchored = true;
+                }
+                const float dx = root.x - w.idleAnchor.x, dy = root.y - w.idleAnchor.y;
+                const float still = std::exp(-25.0f * (v.x * v.x + v.y * v.y)) * std::exp(-10.0f * (dx * dx + dy * dy))
                     * static_cast<float>(std::exp(-0.02 * spin / std::max<std::size_t>(1, w.body->links.size())));
                 state += settings.imitationWeight * (contract->reward(w.body->links, w.frame, 4.0f).total + 0.5f * still);
             } else {
                 const float toward = moveDirection(w);
                 const float progress =
-                    std::clamp((v.x * std::cos(toward) + v.y * std::sin(toward)) / w.commandSpeed, 0.0f, 1.0f);
+                    std::clamp((v.x * std::cos(toward) + v.y * std::sin(toward)) / w.commandSpeed, 0.0f, 1.0f)
+                    * sideDrift(w, v);
                 state += settings.imitationWeight * progress * contract->reward(w.body->links, w.frame, 4.0f).total;
             }
         }
