@@ -138,8 +138,7 @@ std::vector<std::array<const char*, 2>> getUpDrillList() {
     std::vector<std::array<const char*, 2>> list { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
         { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" } };
     // (01/11, a rl_final: a locomocao volta - as faixas primeiro, depois o parado, o giro e os rumos no trote. As quedas
-    // da locomocao eram as do B21, fora de uso; ele: "parece meio cagado... acho dispensavel": so fora da rl_final.)
-    if (!TrackingViewer3D::getUpLocomotion()) list.push_back({ TrackingViewer3D::LocomotionFallDrill, "Quedas da locomoção" });
+    // da locomocao - as do B21 - sairam; ele, 23h30: "nao vejo distincao para ele existir".)
     if (TrackingViewer3D::getUpLocomotion()) {
         // (Sem o andar: o jogo so usa trote, corrida e sprint - ele, 01/11 19h.)
         constexpr std::size_t Order[11] { 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7 };
@@ -2061,28 +2060,6 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
                 "com empurrões e, em laranja, depois de levantar de uma queda.");
         lineChart("##pose_equilibrio", { { &c.poseStanding, violet, false, "começando de pé" }, { &c.pose, amber, false, "depois de levantar" } },
             0.0f, 100.0f, size, last(c.poseStanding, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
-        ImGui::EndGroup();
-        return;
-    }
-    if (m_viewerDrill == TrackingViewer3D::LocomotionFallDrill) {
-        ImGui::BeginGroup();
-        ImGui::TextColored(InfoText, "%s", "Levantou (%) · Quedas da locomoção");
-        tooltip("Começando do instante em que a rede da locomoção (B21) caiu no treino dela: quantos ficam de pé. "
-                "Tracejado, o teste sem ruído nas 32 primeiras quedas que chegaram (fixas).");
-        lineChart("##quedas_loco", { { &c.locoFall, green, false, "treino" }, { &c.locoFallTest, green, true, "teste sem ruído" } },
-            0.0f, 100.0f, size, both(c.locoFallTest, c.locoFall, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
-        ImGui::EndGroup();
-        ImGui::SameLine();
-        ImGui::SetCursorPosY(rowTop);
-        ImGui::BeginGroup();
-        ImGui::TextColored(InfoText, "%s", "Tempo para levantar (s) · Quedas da locomoção");
-        tooltip("Da queda até ficar de pé: o treino e, tracejado, o teste. Em laranja, até a troca de rede (de pé e "
-                "firme por 0,5 s; dali a rede da locomoção assume).");
-        lineChart("##quedas_loco_tempo", { { &c.locoFallSeconds, violet, false, "treino" },
-                                             { &c.locoFallSecondsTest, violet, true, "teste sem ruído" },
-                                             { &c.handoffSeconds, amber, false, "troca" } },
-            0.0f, 6.0f, size, both(c.locoFallSecondsTest, c.locoFallSeconds, "%.2f s").c_str(), "s", &c.times, true,
-            "sem dados ainda");
         ImGui::EndGroup();
         return;
     }

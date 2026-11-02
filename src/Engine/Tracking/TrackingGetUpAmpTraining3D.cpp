@@ -117,6 +117,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // O rumo medio da pelve de cada clipe em relacao a frente dele (01/11 22h30: no parado em alerta, nos rumos do trote
     // e nas corridas de lado a pelve fica ~22 graus virada; nos clipes de frente e de costas do Mixamo, ~0).
     std::vector<float> yawOffsets;
+    // O agachado de cada clipe de levantar (s): o instante mais parecido com o comeco da arrancada agachada (ele, 23h35:
+    // "o crouched_to_sprint... e justamente o intermedio do ato de levantar-se com ir para ficar em pe").
+    std::vector<float> crouchTimes;
     // A velocidade de deslocamento que falta aos clipes no lugar (os pares do discriminador): constante (corrida) ou
     // em rampa desde zero (a arrancada, com o deslocamento da fonte), para a frente do clipe.
     struct Travel {
@@ -182,9 +185,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // O ponto do idle: onde o corpo estava quando o idle passou a ser seguido (o parado nao sai do lugar).
         Vec3 idleAnchor {};
         bool idleAnchored = false;
-        // A queda programada: a dela, a inclinacao da pelve na decisao anterior e o comeco ja caindo que ela assume.
+        // A queda programada: a dela e o comeco ja caindo que ela assume.
         std::unique_ptr<ProtectiveFall3D> fall;
-        float lastTilt = 0.0f;
         bool fallPending = false;
         bool fallActive = false;
         bool fallFromStart = false;
@@ -192,6 +194,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // trackFrom) * trackScale) e, de pe no fim dele, o parado em alerta.
         bool getUpGuided = false;
         bool idleAfterGetUp = false;
+        // No levantar em movimento guiado, a arrancada agachada no lugar do fim do clipe de levantar.
+        bool sprintGuided = false;
         float trackFrom = 0.0f;
         float trackScale = 1.0f;
         // Caido agora, e se ja caiu depois de ter ficado de pe.
@@ -657,6 +661,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.fallActive = false;
         w.getUpGuided = false;
         w.idleAfterGetUp = false;
+        w.sprintGuided = false;
         // (Um sorteio so, como antes: com as fatias novas em 0, os mesmos comecos de antes.)
         // (Tambem na avaliacao, que nao usa o sorteio: as mesmas 64 quedas fixas de antes.)
         const float draw = u(w.rng);
@@ -744,7 +749,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.idleAnchored = false;
         if (settings.protectiveFall && w.protectiveStart && !w.locomotion) w.fallPending = true;
         if (settings.getUpGuide && !w.locomotion && !w.fallPending && !start.standing) beginGetUpGuide(w);
-        w.lastTilt = ProtectiveFall3D::pelvisTilt(*profile, *w.body);
         w.down = fallen(start, *w.body);
         w.fellAfterStanding = false;
         if (kind == 3 || kind == 5) {
@@ -929,6 +933,16 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // 0 parado, 1 na pedida, caindo acima dela e negativa se afasta.)
     // (Nos rumos, o rumo do corpo e o do comeco: andar e trotar de costas e de lado sem virar para a direcao.)
     float moveReward(World& w, const TrackingGetUpPosture3D& posture) {
+        // (01/11 23h30, ele: no levantar em movimento, "recompensar ele principalmente para durante o ato de levantar
+        // ir-se virando ao alvo e se impulsionando ao objetivo enquanto levanta" - com o levantar guiado: ainda no chao,
+        // a velocidade ao alvo e o rumo para ele na proporcao do quanto ja subiu; deitado vale zero, rastejar nao paga.)
+        if (!posture.standing && settings.getUpGuide && !w.locomotion) {
+            const float rise = std::clamp((posture.headHeight - 0.15f) / 1.35f, 0.0f, 1.0f);
+            const Vec3 v = rlBodyCenterOfMassVelocity3D(*profile, w.body->links);
+            const float toward = moveDirection(w);
+            const float along = v.x * std::cos(toward) + v.y * std::sin(toward);
+            return rise * (0.6f * std::clamp(along / w.commandSpeed, -0.5f, 1.0f) + 0.25f * facing(w));
+        }
         if (!posture.standing) return 0.0f;
         const Vec3 v = rlBodyCenterOfMassVelocity3D(*profile, w.body->links);
         const float toward = moveDirection(w);
@@ -992,12 +1006,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
         return d;
     }
     // O levantar guiado (01/11 23h10): o clipe de levantar e o instante mais parecidos com a pose de agora (os quatro, a
-    // cada 0,1 s nos primeiros 60%), o rumo dele alinhando a pelve dele a do corpo.
+    // cada 0,1 s nos primeiros 30% - a parte deitada; 02/11 00h: com 60% e refazendo no fim, ele aprendeu a ficar deitado
+    // de bracos erguidos imitando o comeco do clipe de costas), o rumo dele alinhando a pelve dele a do corpo.
     void beginGetUpGuide(World& w) {
         float best = std::numeric_limits<float>::max(), bestTime = 0.0f;
         std::size_t bestClip = std::numeric_limits<std::size_t>::max();
         for (std::size_t c = 0; c < std::size(GetUpClips) && c < references.size(); ++c)
-            for (float t = 0.0f; t <= 0.6f * references[c]->durationSeconds(); t += 0.1f) {
+            for (float t = 0.0f; t <= 0.3f * references[c]->durationSeconds(); t += 0.1f) {
                 references[c]->frame(t, {}, 0.0f, w.frame);
                 const float d = poseDistance(*w.body, w.frame);
                 if (d < best) {
@@ -1015,16 +1030,28 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.trackYaw = wrapAngle(bodyYaw(w) - trackingBodyYaw3D(profile->links[rootLink], w.frame.links[rootLink]));
         w.getUpGuided = true;
         w.idleAfterGetUp = false;
+        w.sprintGuided = false;
+    }
+    // No levantar em movimento guiado, agachado (crouchTimes): a arrancada agachada (crouched_to_sprint)
+    // apontada para o alvo - ele, 23h30: "observa-se especial relevancia ao clipe do crouch to sprint".
+    void beginSprintGuide(World& w) {
+        const Vec3 root = w.body->links[rootLink].position;
+        w.trackClip = sprintStartIndex;
+        w.trackStart = 0.0f;
+        w.trackFrom = w.time;
+        w.trackScale = 1.0f;
+        w.trackYaw = planarAngle({ w.target.x - root.x, w.target.y - root.y, 0.0f });
+        w.sprintGuided = true;
     }
     // No fim do clipe de levantar: de pe, o parado em alerta (o normal ou o espelho, o mais perto da pose), na pelve do
     // corpo; com o pedido de deslocamento, a rede livre; ainda no chao, outro clipe de onde ele esta.
     void endGetUpGuide(World& w, bool standing) {
+        // (02/11 00h: sem refazer o clipe - o alvo fica o ultimo quadro dele, de pe, ate ele ficar de pe; refazendo, ele
+        // voltava ao comeco deitado e a imitacao pagava para sempre.)
+        if (!standing) return;
         w.getUpGuided = false;
+        w.sprintGuided = false;
         w.trackClip = std::numeric_limits<std::size_t>::max();
-        if (!standing) {
-            beginGetUpGuide(w);
-            return;
-        }
         if (w.commandSpeed > 0.0f) return;
         references[standingIndex]->frame(0.0f, {}, 0.0f, w.frame);
         const float normal = poseDistance(*w.body, w.frame);
@@ -1071,13 +1098,14 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.trackStart = -w.time;
             w.pendingClip = std::numeric_limits<std::size_t>::max();
         }
-        // (A queda programada: a queda sem volta - a da locomocao fisica, a pelve alem de ~50 graus e tombando - de quem
-        // ja ficou de pe no episodio e esta alto, ou o comeco ja caindo.)
+        // (A queda programada: a queda de verdade de quem ja ficou de pe no episodio, ou o comeco ja caindo. 23h35: o
+        // "committing" da locomocao fisica - a pelve alem de ~50 graus e tombando - disparava na arrancada inclinada do
+        // levantar em movimento; agora a cabeca descendo rapido abaixo de 1,1 m, ou a pelve deitada no ar - alem de 70
+        // graus ainda alta.)
         const float tilt = ProtectiveFall3D::pelvisTilt(*profile, *w.body);
-        if (!w.fallActive && settings.protectiveFall && !w.locomotion
-            && (w.fallPending
-                || (w.stoodAt >= 0.0f && was.pelvisHeight > 0.5f * profile->standingRootHeightMeters
-                    && ProtectiveFall3D::committed(tilt, (tilt - w.lastTilt) / (TicksPerDecision * TickSeconds)))))
+        const bool falling = (was.headHeight < 1.1f && w.body->links[contract->headLink()].linearVelocity.z < -1.2f)
+            || (tilt > 1.22f && was.pelvisHeight > 0.5f * profile->standingRootHeightMeters);
+        if (!w.fallActive && settings.protectiveFall && !w.locomotion && (w.fallPending || (w.stoodAt >= 0.0f && falling)))
             beginProtectiveFall(w);
         const bool programmed = w.fallActive;
         if (settings.clipBlend < 1.0f && clipTracked(w)) {
@@ -1100,9 +1128,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
             settle(w, TicksPerDecision);
             w.time += TicksPerDecision * TickSeconds;
         }
-        w.lastTilt = ProtectiveFall3D::pelvisTilt(*profile, *w.body);
         features->compute(w.body->links, std::span<float>(w.ampPair).subspan(a, a));
         const TrackingGetUpPosture3D now = posture->measure(w.body->links);
+        if (w.getUpGuided && !w.sprintGuided && w.commandSpeed > 0.0f && !w.locomotion
+            && sprintStartIndex < references.size()
+            && w.trackClip < crouchTimes.size() && trackTime(w, 0.0f) >= crouchTimes[w.trackClip])
+            beginSprintGuide(w);
         if (w.getUpGuided && trackTime(w, 0.0f) >= references[w.trackClip]->durationSeconds() - 1.0e-3f)
             endGetUpGuide(w, now.standing);
         // O alvo alcancado: dai o pedido e ficar parado (a nota do parado, com a pose).
@@ -1172,8 +1203,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
                     * static_cast<float>(std::exp(-0.02 * spin / std::max<std::size_t>(1, w.body->links.size())));
                 state += settings.imitationWeight * (contract->reward(w.body->links, w.frame, 4.0f).total + 0.5f * still);
             } else if (w.getUpGuided) {
-                // (O levantar guiado: a imitacao inteira - o clipe sobe, e o centro de massa dele puxa o do corpo.)
-                state += settings.imitationWeight * contract->reward(w.body->links, w.frame, 4.0f).total;
+                // (O levantar guiado: a imitacao na proporcao da altura do corpo sobre a do clipe - 02/11 00h: inteira, deitado
+                // imitando o comeco do clipe pagava tanto quanto levantar.)
+                const float height = std::clamp(
+                    rlBodyCenterOfMass3D(*profile, w.body->links).z / std::max(0.05f, w.frame.centerOfMass.z), 0.0f, 1.0f);
+                state += settings.imitationWeight * height * contract->reward(w.body->links, w.frame, 4.0f).total;
             } else {
                 const float toward = moveDirection(w);
                 const float progress =
@@ -1186,7 +1220,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         reward = state + 0.99f * (posture->risePotential(now) + posture->turnPotential(now) + facePotential(w, now)) - before;
         const bool down = fallen(now, *w.body);
         if (down && !w.down && w.stoodAt >= 0.0f) {
-            reward -= FallPenalty;
+            // (01/11 23h35: no levantar em movimento a queda depois de ficar de pe custava 10 e, de pe, so a velocidade ao
+            // alvo pagava - correr logo depois de levantar quase sempre caia, e ele aprendeu a nao levantar: 27% -> 1% em
+            // 20 min. Com o levantar guiado, ali 2.)
+            reward -= settings.getUpGuide && (w.startKind == 3 || w.startKind == 5) ? 0.2f * FallPenalty : FallPenalty;
             w.fellAfterStanding = true;
         }
         // (A janela da protecao: nos comecos que ja vem caindo - as quedas da locomocao e as quedas com protecao -, antes
@@ -1410,6 +1447,30 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
             y += std::sin(yaw);
         }
         impl.yawOffsets.push_back(std::atan2(y, x));
+    }
+    // (O agachado de cada clipe de levantar: o quadro, de 0,05 em 0,05 s entre 30% e 95% dele, de juntas e baixo da pelve
+    // mais perto do primeiro da arrancada agachada.)
+    if (impl.sprintStartIndex < impl.references.size()) {
+        TrackingClipFrame3D start, frame;
+        impl.references[impl.sprintStartIndex]->frame(0.0f, {}, 0.0f, start);
+        RagdollState3D pose;
+        pose.links = start.links;
+        pose.joints.resize(start.coordinates.size());
+        for (std::size_t i = 0; i < start.coordinates.size(); ++i)
+            pose.joints[i].positionRadians = { start.coordinates[i].x, start.coordinates[i].y, start.coordinates[i].z };
+        for (std::size_t c = 0; c < std::size(GetUpClips) && c < impl.references.size(); ++c) {
+            const float duration = impl.references[c]->durationSeconds();
+            float best = std::numeric_limits<float>::max(), bestTime = 0.65f * duration;
+            for (float t = 0.3f * duration; t <= 0.95f * duration; t += 0.05f) {
+                impl.references[c]->frame(t, {}, 0.0f, frame);
+                const float d = impl.poseDistance(pose, frame);
+                if (d < best) {
+                    best = d;
+                    bestTime = t;
+                }
+            }
+            impl.crouchTimes.push_back(bestTime);
+        }
     }
     for (std::size_t i = 0; i < impl.profile->links.size(); ++i) {
         if (impl.profile->links[i].parentIndex < 0) impl.rootLink = static_cast<std::uint32_t>(i);
