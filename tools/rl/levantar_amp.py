@@ -727,7 +727,12 @@ def main() -> int:
             ret = adv + roll["val"]
             flat = lambda x: x.reshape(T * n, *x.shape[2:])  # noqa: E731
             f_obs, f_act, f_adv, f_ret = flat(roll["obs"]), flat(roll["act"]), flat(adv), flat(ret)
-            f_adv = (f_adv - f_adv.mean()) / (f_adv.std() + 1e-8)
+            # (01/11 21h50: normalizar tudo junto afogava o levantar - a imitacao x4 da locomocao varia muito mais e a
+            # vantagem do levantar ia a ~0; ele: "a calibragem de recompensa dele esta bem defeituosa". Cada grupo a parte.)
+            f_loco = flat(loco) > 0.5
+            for group in (f_loco, ~f_loco):
+                if int(group.sum()) > 1:
+                    f_adv[group] = (f_adv[group] - f_adv[group].mean()) / (f_adv[group].std() + 1e-8)
             anchor = model.distribution(model.norm(f_obs)).log_prob(f_act).sum(-1)
             weight = torch.exp(anchor - flat(roll["logp"])).clamp(max=2.0)
         replay = torch.cat([replay, pairs])[-100_000:]
