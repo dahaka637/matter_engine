@@ -427,6 +427,9 @@ def main() -> int:
                         help="deitado, o clipe de levantar mais parecido guia (nos motores e na imitacao); de pe, o idle")
     parser.add_argument("--levantar-segundos", type=float, default=1.7,
                         help="o levantar guiado: o clipe de levantar acelerado para durar isto")
+    parser.add_argument("--estilo-chao", type=float, default=None,
+                        help="o peso do estilo com a pelve abaixo de --chao-altura (a tarefa fica 1 - isto): o virar-se no chao")
+    parser.add_argument("--chao-altura", type=float, default=0.6, help="a altura da pelve (m) abaixo da qual vale --estilo-chao")
     parser.add_argument("--so-clipe", default="", help="nos rumos, so os passos deste clipe (o imitador de um clipe)")
     parser.add_argument("--imitacao", type=float, default=0.0,
                         help="na locomocao, o peso da imitacao do clipe do passo pedido (DeepMimic; 0: sem)")
@@ -478,7 +481,8 @@ def main() -> int:
                   "troca_pedido": list(args.troca_pedido), "peso_tarefa_loco": args.peso_tarefa_loco,
                   "peso_estilo_loco": args.peso_estilo_loco, "suave_loco": args.suave_loco, "passo": args.passo,
                   "mistura_clipe": args.mistura_clipe, "queda_programada": args.queda_programada,
-                  "levantar_guiado": args.levantar_guiado, "levantar_segundos": args.levantar_segundos}
+                  "levantar_guiado": args.levantar_guiado, "levantar_segundos": args.levantar_segundos,
+                  "estilo_chao": args.estilo_chao, "chao_altura": args.chao_altura}
     (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
@@ -722,6 +726,13 @@ def main() -> int:
             task_w = args.peso_tarefa + (args.peso_tarefa_loco - args.peso_tarefa) * loco
             style_w = args.peso_estilo + (args.peso_estilo_loco - args.peso_estilo) * loco
             jerk_w = args.suave + (args.suave_loco - args.suave) * loco
+            if args.estilo_chao is not None:
+                # (02/11 00h30, ele: "a unica coisa que precisa melhorar nela e o movimento de virar-se ser mais natural": no
+                # chao - a pelve abaixo de --chao-altura, onde ela gira de costas meio no ar com o braco jogado para cima -
+                # o estilo, o juiz dos clipes, pesa mais; de pe e na rapidez, como estava.)
+                low = (roll["obs"][..., 0] < args.chao_altura).float() * (1.0 - loco)
+                style_w = style_w + (args.estilo_chao - style_w) * low
+                task_w = task_w + ((1.0 - args.estilo_chao) - task_w) * low
             rew = (1.0 - gamma) * (task_w * roll["task"] + style_w * style
                                    - (1.0 - args.protecao_alivio * roll["prot"])
                                    * (jerk_w * roll["jerk"] + args.limite * roll["limit"])) + gamma * roll["boot"]
