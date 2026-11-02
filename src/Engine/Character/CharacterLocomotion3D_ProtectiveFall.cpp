@@ -7,7 +7,7 @@ namespace MatterEngine {
 namespace {
 
 // No chao com o tronco parado por isto: a vez de levantar. A locomocao fisica se arruma depois de SettleRestBeforeGather
-// (0,2 s) e leva ~0,7 s voltando o tonus; aqui meio segundo largado, para o encolher e a posicao fetal aparecerem.
+// (0,2 s) e leva ~0,7 s voltando o tonus; aqui meio segundo largado.
 constexpr float RestSeconds = 0.5f;
 // No chao ha isto sem parar (escorregando, rolando devagar): assentado mesmo assim.
 constexpr float GroundLimitSeconds = 3.0f;
@@ -52,8 +52,6 @@ void ProtectiveFall3D::begin(std::uint32_t seed) {
     m_groundSeconds = 0.0f;
     m_restSeconds = 0.0f;
     m_settleTone = SettleImpactTone;
-    m_fetal = 0.0f;
-    m_faceUp = false;
     m_settled = false;
 }
 
@@ -101,18 +99,14 @@ void ProtectiveFall3D::step(const RagdollState3D& state, float groundHeight, flo
         if (m_fallDirection.lengthSquared() > 1e-6f) m_fallDirection = m_fallDirection.normalized();
     }
     const float coreSpeed = std::max(pelvis.linearVelocity.length(), chest.linearVelocity.length());
-    const float chestFacing = chest.orientation.rotate({ 1.0f, 0.0f, 0.0f }).z;
     if (!m_grounded && (body || pelvis.position.z - groundHeight < 0.35f)) {
         m_grounded = true;
         m_groundSeconds = 0.0f;
         m_settleTone = SettleImpactTone;
-        m_faceUp = chestFacing > 0.0f;
     }
     if (m_grounded) {
-        // Deitado (o assentar da locomocao fisica): de costas ou de brucos com folga, o tronco parado e o tonus cedendo.
+        // Deitado (o assentar da locomocao fisica): o tronco parado e o tonus cedendo.
         m_groundSeconds += deltaTime;
-        if (m_faceUp && chestFacing < -0.25f) m_faceUp = false;
-        else if (!m_faceUp && chestFacing > 0.25f) m_faceUp = true;
         const float restLimit = m_restSeconds > 0.25f ? 0.80f : 0.35f;
         m_restSeconds = coreSpeed < restLimit ? m_restSeconds + deltaTime : 0.0f;
         m_settleTone = std::max(SettleRestingTone, m_settleTone - deltaTime * 2.5f);
@@ -122,8 +116,8 @@ void ProtectiveFall3D::step(const RagdollState3D& state, float groundHeight, flo
         m_reflex += (1.0f - m_reflex) * std::clamp(deltaTime * 18.0f, 0.0f, 1.0f);
         m_commit += (1.0f - m_commit) * std::clamp(deltaTime * 18.0f, 0.0f, 1.0f);
     }
-    // A pose: a de agora do corpo (o que os reflexos nao tocam fica largado), os reflexos (no chao saem em 0,3 s), o
-    // equilibrio no ar e, no chao de costas, a posicao fetal.
+    // A pose: a de agora do corpo (o que os reflexos nao tocam fica largado), os reflexos (no chao saem em 0,3 s) e o
+    // equilibrio no ar.
     float reflex = m_reflex, legReflex = std::min(m_reflex, m_commit);
     if (m_grounded) {
         reflex *= GroundAlive ? 1.0f - smoothStep(m_groundSeconds / 0.3f) : 1.0f - smoothStep(m_groundSeconds / 0.6f);
@@ -139,10 +133,8 @@ void ProtectiveFall3D::step(const RagdollState3D& state, float groundHeight, flo
     const float bodySpin = dot(chest.angularVelocity, chest.orientation.rotate({ 0.0f, 1.0f, 0.0f }));
     if (AirBalanceNew) applyAirBalance(profile, m_coordinates, m_time, m_flail, bodySpin);
     else applyAirborneFlail(profile, m_coordinates, m_time, m_flail);
-    const float fetalWanted = FetalEnabled && m_grounded && m_faceUp ? 1.0f : 0.0f;
-    m_fetal += (fetalWanted - m_fetal) * (1.0f - std::exp(-deltaTime / 0.12f));
-    applyFetalPose(profile, state, m_coordinates, m_hands, m_chest, smoothStep(m_fetal) * (m_grounded ? 1.0f : 0.0f),
-        m_time, m_seed, std::clamp(coreSpeed / 1.5f, 0.0f, 1.0f));
+    // (02/11 00h10, ele: "no levantar-se, eu nao quero esses movimentos recontorcidos ai" - sem a posicao fetal: no chao,
+    // largado, e dai a rede levanta.)
     // O tonus (o de CharacterLocomotion3D_Drives): caindo, firme o bastante para os reflexos e sem a rigidez de pe, freio
     // baixo; deitado, largado - quase sem mola nem freio, o teto de torque baixo.
     for (std::size_t i = 0; i < n; ++i) {

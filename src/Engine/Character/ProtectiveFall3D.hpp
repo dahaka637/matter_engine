@@ -16,7 +16,7 @@ namespace MatterEngine {
 //
 // O mesmo codigo e as mesmas constantes de CharacterLocomotion3D (o cabecalho interno dela): os reflexos (a cabeca e a
 // coluna se protegem, o tronco gira para cair de lado, as pernas cedem - de frente ajoelha, de costas senta), o
-// equilibrio no ar, a posicao fetal no chao (de costas) e o tonus da queda e do deitado. Sem o levantar dela: assentado,
+// equilibrio no ar e o tonus da queda e do deitado. Sem o levantar dela: assentado,
 // a vez e de quem levanta.
 class ProtectiveFall3D {
 public:
@@ -59,8 +59,6 @@ private:
     float m_groundSeconds = 0.0f;
     float m_restSeconds = 0.0f;
     float m_settleTone = 0.0f;
-    float m_fetal = 0.0f;
-    bool m_faceUp = false;
     bool m_settled = false;
 };
 
