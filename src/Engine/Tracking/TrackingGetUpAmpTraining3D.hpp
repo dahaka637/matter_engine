@@ -9,6 +9,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace MatterEngine {
@@ -115,6 +116,11 @@ struct TrackingGetUpAmpSettings3D {
     // locomocao, o alvo de cada junta e o do clipe do passo (no quadro do fim da decisao) vezes (1 - clipBlend) mais o da
     // rede vezes clipBlend - o clipe comanda as juntas e a rede so corrige. 1: a rede livre (como antes); soltar = subir.
     float clipBlend = 1.0f;
+    // O rolar pelo clipe (02/11 01h40, ele: "nos ja tinhamos a principio o movimento do rolar-se no chao, porque nao esta
+    // sendo usado para referencia?"): deitado de costas, o trecho do rolamento do levantar de costas (stand_up_back_kimodo,
+    // 0 a 0,75 s: a barriga de cima para baixo) nos motores - o alvo = clipe x (1 - rollBlend) + rede x rollBlend -, sem
+    // nota de imitacao (nada a trapacear); o resto do levantar com a rede livre. 1: desligado; o desmame sobe ate 1.
+    float rollBlend = 1.0f;
     // A queda programada (01/11 22h50, ele: "quando ele de fato cai, eu preferia aquele nosso ragdoll que temos na
     // locomocao fisica... tenta cobrir a cabeca e se encolher... fica meio mole... e ai o ato de levantar ocorresse apos
     // isso"): fora da locomocao, a queda sem volta de quem ja ficou de pe (e os comecos ja caindo) e a da locomocao
@@ -163,6 +169,25 @@ struct TrackingGetUpAmpSettings3D {
     // atravessado em cima dele (20-60 kg, como um boneco por cima).
     float obstacleFraction = 0.0f;
     float weightFraction = 0.0f;
+    // Os ambientes (02/11, ele: "parede ao lado, paredes aos lados, pilares, corpos ragdoll embaixo dele (1..2 ou mais) e
+    // tambem em cima dele, em terrenos inclinados" e acidentados), so no treino, cada um sorteado por si: as paredes dos
+    // dois lados (o corredor, 4-44 cm do corpo, 1-2,5 m de altura), 1-4 pilares em volta, a rampa (6-18 graus) e o chao
+    // acidentado (calombos de 2-8 cm) embaixo da queda, 1-3 corpos soltos embaixo da queda e um corpo solto caindo em
+    // cima dele ja no chao.
+    float corridorFraction = 0.0f;
+    float pillarFraction = 0.0f;
+    float slopeFraction = 0.0f;
+    float roughFraction = 0.0f;
+    float bodiesUnderFraction = 0.0f;
+    float bodyOnTopFraction = 0.0f;
+    // A variante ambientada do evitar a queda (02/11, ele: "com obstaculos, paredes, corpos, pilares, rampas e tudo mais,
+    // bem diversificado, para ele aprender a evitar quedas em ambientes diversos"): a fatia dos episodios do evitar com
+    // um ambiente garantido (parede, corredor, pilares, rampa suave, chao acidentado em volta ou corpos caidos em volta)
+    // mais os outros nas fatias de cima; o chao entra antes de ele ficar de pe.
+    float avoidSceneryFraction = 0.0f;
+    // Os ambientes tambem na avaliacao (o laboratorio, o exercicio "levantar_ambientes"); o treino nunca liga. Cada
+    // episodio dela tem um dos ambientes garantido (sorteado), mais os outros nas fatias.
+    bool evaluationScenery = false;
     // Na avaliacao, o que se mede: 0 as quedas (o levantar), 1 o levantar em movimento, 2 o evitar a queda, 3 o
     // equilibrio parado (de pe, um empurrao com a regua do parado com empurrao forte do B21: o curto de 900-1200 N ou,
     // em 30%, o continuo de 205-275 N por 1-3 s), 4 os rumos (de pe, no meio do trote, mantendo o rumo do corpo, um
@@ -284,6 +309,9 @@ public:
     // Depois do chao, a fase do clipe do passo (sen, cos de 2 pi t/T; zeros sem clipe): a entrada de fase do DeepMimic,
     // sem a qual a imitacao no tempo do clipe nao tem como sincronizar (01/11 18h, o layout levantar-v4).
     static constexpr std::size_t PhaseSize = 2;
+    // Depois da fase, o ambiente (02/11, o layout levantar-v5): a altura de cada parte ao que esta embaixo dela, a
+    // inclinacao do chao e os raios horizontais no quadril e no peito (TrackingGetUpContract3D::observeEnvironment).
+    static constexpr std::size_t EnvironmentSize = TrackingGetUpContract3D::EnvironmentObservationSize;
 
     explicit TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSettings3D& settings);
     ~TrackingGetUpAmpTraining3D();
@@ -332,6 +360,10 @@ public:
     [[nodiscard]] const RagdollProfile3D& profile() const;
     [[nodiscard]] std::string frameLines(std::size_t world) const;
     [[nodiscard]] TrackingGetUpAmpWorldView3D worldView(std::size_t world) const;
+    // O cenario do mundo em arame (no mundo): as arestas das caixas (a rampa cortada em 2,5 m em volta do meio).
+    void scenerySegments(std::size_t world, std::vector<std::pair<Vec3, Vec3>>& out) const;
+    // Os corpos soltos do mundo (do mesmo perfil do corpo; validos ate o proximo passo).
+    void sceneryBodies(std::size_t world, std::vector<const RagdollState3D*>& out) const;
 
 private:
     struct Impl;

@@ -688,6 +688,11 @@ public:
     // evita fingir que cada osso é um rigid body público independente.
     [[nodiscard]] bool raycastRagdoll(const Ray3D& ray,
         float maximumDistance, PhysicsRagdollRayHit3D& hit) const;
+    // O raio em tudo - o mundo parado, os corpos e os links de articulacao -
+    // menos os links de um ragdoll (o proprio corpo de quem olha: 02/11, a
+    // rede do levantar percebendo paredes, pilares e outros corpos).
+    [[nodiscard]] bool raycastIgnoringRagdoll(const Ray3D& ray,
+        float maximumDistance, RagdollHandle3D ignored, PhysicsRayHit3D& hit) const;
     [[nodiscard]] bool sweepSphereRagdoll(const Ray3D& ray, float radius,
         float maximumDistance, PhysicsRagdollRayHit3D& hit) const;
     // Consulta conservadora de ocupação usada antes de criar entidades.

@@ -290,6 +290,10 @@ void CharacterLocomotion3D::stepFeet(Tick& t) {
         // arrastado, ele da passos.
         footInput.allowRecovery = m_fallCommit < 0.5f
             && m_sinceGetUpSeconds > 0.8f;
+        // (A trava da cadencia e da locomocao: caindo, levantando e acomodando a base depois, os passos nao a tem -
+        // com ela o levantar ficava ~2 s mais lento, 02/11.)
+        // (Nem reagindo a um empurrao, m_reactiveShare: os passos dali sao os de se salvar.)
+        footInput.cadenceCap = m_cadenceCapActive && m_sinceGetUpSeconds > 0.8f;
         m_telemetry.footworkStanding = standing;
         m_telemetry.footworkAllowSteps = footInput.allowSteps;
         m_telemetry.footworkAllowRecovery = footInput.allowRecovery;

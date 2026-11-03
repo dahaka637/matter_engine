@@ -282,6 +282,17 @@ struct TrackingViewer3D::Impl {
             s.getUpSeconds = v2.value("levantar_segundos", 1.7f);
             // (O rolar pelo clipe, como no treino: 02/11 01h40.)
             s.rollBlend = v2.value("rolar_clipe", 1.0f);
+            // (Os ambientes nas fatias do treino, so no exercicio deles.)
+            if (getUpDrill == SceneryDrill || getUpDrill == AvoidSceneryDrill) {
+                s.evaluationScenery = true;
+                s.obstacleFraction = v2.value("obstaculo", 0.0f);
+                s.weightFraction = v2.value("peso_em_cima", 0.0f);
+                if (v2.contains("ambientes") && v2["ambientes"].is_array() && v2["ambientes"].size() == 6) {
+                    float* fractions[6] { &s.corridorFraction, &s.pillarFraction, &s.slopeFraction, &s.roughFraction,
+                        &s.bodiesUnderFraction, &s.bodyOnTopFraction };
+                    for (std::size_t k = 0; k < 6; ++k) *fractions[k] = v2["ambientes"][k].get<float>();
+                }
+            }
             // (Os rumos e o giro com a regua fixa da avaliacao do treino: 2,5 m/s e, se o treino tem empurroes em
             // movimento, os do comeco do B21 - os padroes daqui; sem eles no treino, sem eles aqui.)
             s.trotMinimumSpeed = s.trotMaximumSpeed = 2.5f;
@@ -326,9 +337,11 @@ struct TrackingViewer3D::Impl {
             auto policy = std::make_unique<PolicyRuntime3D>(getUpExport());
             // (A rede do contrato v2, sem as entradas do chao do v3 no fim, le so o comeco da observacao.)
             const std::size_t size = policy->observationSize();
+            // (As do ambiente, do levantar-v5, vem por ultimo: a rede do v4 le tudo menos elas.)
+            constexpr std::size_t environment = TrackingGetUpAmpTraining3D::EnvironmentSize;
             constexpr std::size_t phase = TrackingGetUpAmpTraining3D::PhaseSize;
-            const std::size_t full = getUp->observationSize();
-            if ((size == full || size + phase == full
+            const std::size_t full = getUp->observationSize() - environment;
+            if ((size == full + environment || size == full || size + phase == full
                     || size + phase + TrackingGetUpAmpTraining3D::GroundObservationSize == full)
                 && policy->actionSize() == getUp->actionSize()) {
                 getUpPolicy = std::move(policy);
@@ -373,7 +386,9 @@ TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& run
             history.iterations.push_back(point);
             for (const auto& [drillName, stood, seconds] : { std::tuple { "levantar", "queda_levantou", "queda_tempo" },
                      std::tuple { "levantar_movimento", "mov_levantou", "mov_tempo" },
-                     std::tuple { "evitar_queda", "evitar_evitou", "evitar_recompos_s" } }) {
+                     std::tuple { "evitar_queda", "evitar_evitou", "evitar_recompos_s" },
+                     std::tuple { "levantar_ambientes", "queda_sujo_levantou", "queda_sujo_tempo" },
+                     std::tuple { "evitar_queda_ambientes", "evitar_evitou_ambientes", "evitar_recompos_s" } }) {
                 if (!row.contains(stood) || !row[stood].is_number()) continue;
                 TrainingDrillPoint3D drill;
                 drill.iteration = point.iteration;
@@ -627,7 +642,8 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
         impl.assets = assetsDirectory;
         impl.seed = seed;
         impl.getUpDrill = drill;
-        impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == AvoidFallDrill ? 2u : drill == BalanceDrill ? 3u
+        impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == AvoidFallDrill || drill == AvoidSceneryDrill ? 2u
+            : drill == BalanceDrill                                                                     ? 3u
             : drill == LocomotionFallDrill                                                                      ? 7u
             : drill == LocomotionDrills[0]                                                                      ? 5u
             : drill == LocomotionDrills[1]                                                                      ? 6u
@@ -635,16 +651,16 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
                                                                                                                 : 0u;
         impl.startGetUp();
         impl.loadGetUpPolicy();
-        // (01/11, a rl_final: ela faz tudo - sem a troca para a rede da locomocao ao ficar de pe; ele: "no levantar em
-        // movimento ele ainda faz a troca de rede quando ele se levanta".)
-        if (!getUpLocomotion()) impl.partnerDirectory = partnerRun();
+        // (02/11 22h45, ele: "faz ele nem trocar o mundo da locomocao, faz ele ficar do comeco ao fim no RL final sem
+        // troca de RL": a rl_final dirige o episodio inteiro, no mundo dela - o cenario dos ambientes fica ate o fim -,
+        // sem a parceira da locomocao.)
         if (impl.getUpKind == 2) impl.startAvoid();
     }
 }
 
 bool TrackingViewer3D::isGetUpDrill(const std::string& drill) {
     return drill == GetUpDrill || drill == MovingGetUpDrill || drill == AvoidFallDrill || drill == BalanceDrill
-        || drill == LocomotionFallDrill || isLocomotionDrill(drill);
+        || drill == LocomotionFallDrill || drill == SceneryDrill || drill == AvoidSceneryDrill || isLocomotionDrill(drill);
 }
 
 bool TrackingViewer3D::isGetUpTask(const std::filesystem::path& taskPath) {
@@ -856,6 +872,8 @@ BodyWorldView3D TrackingViewer3D::view() const {
             view.pushForce = world.pushForce;
             view.pushFade = 1.0f;
         }
+        impl.getUp->scenerySegments(0, view.scenery);
+        impl.getUp->sceneryBodies(0, view.otherBodies);
         return view;
     }
     const RagdollState3D& body = impl.batch->body(0);

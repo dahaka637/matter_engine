@@ -16,6 +16,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace MatterEngine {
@@ -160,6 +161,10 @@ struct BodyWorldView3D {
     Vec3 pushForce;
     // O quanto o desenho dele aparece (1 durante; some depois que acaba).
     float pushFade = 1.0f;
+    // O cenario em arame (no mundo): as paredes, os pilares, a rampa, os calombos e os corpos soltos do levantar.
+    std::vector<std::pair<Vec3, Vec3>> scenery;
+    // Os outros corpos da cena (os soltos do levantar nos ambientes), do mesmo perfil: desenhados pelos colisores.
+    std::vector<const RagdollState3D*> otherBodies;
 };
 
 // Os mundos de treino do Corpo v2: centenas de bonecos sem janela, avancados

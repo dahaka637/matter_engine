@@ -71,6 +71,11 @@ public:
     static constexpr const char* AvoidFallDrill = "evitar_queda";
     // O equilibrio parado (31/10 21h25): de pe, um empurrao com a regua do parado com empurrao forte do B21.
     static constexpr const char* BalanceDrill = "equilibrio_parado";
+    // O levantar nos ambientes (02/11): as quedas do levantar com o cenario do treino - o corredor, os pilares, a rampa,
+    // o chao acidentado, os corpos soltos embaixo e em cima, a parede e o peso -, nas fatias do treino de agora.
+    static constexpr const char* SceneryDrill = "levantar_ambientes";
+    // O evitar a queda nos ambientes (02/11, a variante ambientada): o evitar com o cenario do evitar ambientado do treino.
+    static constexpr const char* AvoidSceneryDrill = "evitar_queda_ambientes";
     // As quedas da locomocao (01/11, a interligacao das redes): o levantar do instante em que a rede da locomocao caiu
     // no treino dela - as 32 fixas da avaliacao do treino.
     static constexpr const char* LocomotionFallDrill = "quedas_locomocao";

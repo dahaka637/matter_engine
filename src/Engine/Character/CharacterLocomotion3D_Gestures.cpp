@@ -148,6 +148,16 @@ void CharacterLocomotion3D::stepGestures(Tick& t) {
             const float cycle = std::max(0.05f, selectedClip->durationSeconds);
             if (!(gaitMoving && standUpClip == nullptr && !jumpPose)) {
                 legSampleTime[side] = sampleTime;
+                m_appliedLegLead[side] = 0.0f;
+            } else if (m_cadenceCapActive) {
+                // A trava da cadencia: o avanco da perna (o do contato e o da rede) atrasa livre e adianta so dentro
+                // da sobra do ciclo neste tick, repartida entre as duas.
+                const float own = input.corrections != nullptr && input.corrections->footwork
+                    ? legPhaseLead3D(input.corrections, side, m_waitingLeg == static_cast<int>(side)) : 0.0f;
+                const float wanted = m_legPhaseLead[side] + own;
+                float& applied = m_appliedLegLead[side];
+                applied = wanted <= applied ? wanted : applied + std::min(wanted - applied, 0.5f * m_cadenceLeftover);
+                legSampleTime[side] = std::fmod(sampleTime + applied * selectedClip->durationSeconds + 2.0f * cycle, cycle);
             } else if (input.corrections == nullptr || !input.corrections->footwork) {
                 legSampleTime[side] = std::fmod(sampleTime + m_legPhaseLead[side] * selectedClip->durationSeconds, cycle);
             } else {

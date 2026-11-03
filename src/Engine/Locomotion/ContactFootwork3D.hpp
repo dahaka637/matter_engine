@@ -198,6 +198,8 @@ struct ContactFootworkInput3D {
     // Passos de recuperacao liberados (modo fisico, recem-levantado ha mais
     // de 0,8 s, sem queda comprometida).
     bool allowRecovery = false;
+    // A trava da cadencia (HumanCadence3D) vale para os passos deste tick.
+    bool cadenceCap = true;
     // Refazer a base a partir do corpo (depois de levantar): pes rentes ao
     // chao viram apoio onde estao, os outros dao um passo ate a base.
     bool seedFromBody = false;
@@ -476,6 +478,12 @@ private:
     std::array<std::size_t, 2> m_feet {};
     std::size_t m_linkCount = 0;
     std::uint32_t m_nextStepId = 1;
+    // A trava da cadencia (HumanCadence3D): o tempo desde o ultimo pouso e a velocidade do centro de massa.
+    float m_secondsSinceTouchdown = 10.0f;
+    float m_cadenceSpeed = 0.0f;
+    std::array<float, 2> m_minimumSwing {};
+    std::array<bool, 2> m_footDown { true, true };
+    void updatePlan(const RagdollProfile3D& profile, const ContactFootworkInput3D& rawInput, float deltaTime);
     // Giro parado: o pe que ainda deve o segundo passo (-1 nenhum).
     int m_pendingTurnFoot = -1;
     float m_sinceRecoveryNeeded = 10.0f;

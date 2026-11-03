@@ -101,6 +101,13 @@ struct AthleteRuntimeSettings3D {
     // locomotionPolicy), no fisico, na queda iminente - o criterio do fim do episodio do treino da locomocao e o tronco
     // tombando (GetUpPolicy3D) - ela dirige o corpo como no treino dela e, de pe e firme, devolve a rede da locomocao.
     bool getUpPolicy = false;
+    // Com ela, a queda da locomocao fisica antes (02/11, ele: "quando ele caisse, ficasse naquele nosso euphoria style
+    // ragdoll, e ai fosse para a RL de levantar so na hora de levantar"; "nao da para usar apenas a mesma que a locomocao
+    // fisica ja usa?"): caindo, o classico cuida da queda inteira, do jeito dele - os reflexos no ar e o vivo no chao -, e
+    // a rede assume so quando ele comeca a levantar. Desligada, a rede assume ja na queda iminente, como antes.
+    // (Desligada desde 02/11 20h, ele: "vamos desativar por enquanto o ragdoll euphoria do RL... o RL passa a evitar
+    // quedas, sendo a rede do RL final atuar no evitamento de quedas tambem".)
+    bool protectiveFallBeforeGetUp = false;
     // O ritmo do clipe dele (28/10, pedido do usuario: "levantar-se rapido no
     // geral"; era 1).
     float animatedGetUpSpeed = 1.3f;
@@ -248,8 +255,10 @@ struct AthleteRuntimeSettings3D {
     // aceleracao (m/s2), por ate returnRampSeconds (s) (plano v4, etapa C: a
     // capsula ia a pedida a 14 m/s2 e o corpo, mais devagar no fisico,
     // disparava atras dela).
-    float returnAcceleration = 2.5f;
-    float returnRampSeconds = 0.8f;
+    // (02/11, ele: a troca para o padrao comecava "amarrada, lenta, pesada"; a
+    // 2,5 m/s2 ir de 2 a 8 m/s levava >2 s. O padrao acelera a ~14.)
+    float returnAcceleration = 9.0f;
+    float returnRampSeconds = 0.5f;
     ActiveBodySettings3D activeBodySettings;
     ActiveStanceSettings3D activeStanceSettings;
     float activeEnterImpulse = 1.0f;

@@ -147,7 +147,10 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // pancada no levantar tem a regra dela, getUpHitWeakens.)
         if (modeTable && state.bodyMode == LegacyBodyMode3D::Physical) {
             const CharacterLocomotionState3D now = state.locomotion.telemetry().state;
-            if (now == CharacterLocomotionState3D::Fallen || now == CharacterLocomotionState3D::GettingUp)
+            // (E a rede do levantar depois de ir ao chao: o choque tambem ja foi gasto - 02/11, sem isto a ponte
+            // da volta abortava por "ajuda caiu".)
+            if (now == CharacterLocomotionState3D::Fallen || now == CharacterLocomotionState3D::GettingUp
+                || (athlete.getUpRecovery.active && athlete.getUpRecovery.down))
                 state.impactAssist.reset();
         }
     }
@@ -244,8 +247,37 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             capsule.position = { root.position.x, root.position.y, 0.0f };
             capsule.velocity = { root.linearVelocity.x, root.linearVelocity.y, 0.0f };
         } else {
-            const Vec3 planar = bodyForecastCapsuleStep3D({ capsule.velocity.x, capsule.velocity.y, 0.0f }, wanted,
-                response, deltaTime);
+            // Empurrado no padrao (02/11, ele: "se eu tento empurrar o corpo ele nao sai do lugar... o correto seria
+            // empurrar a capsula"): o impulso de quem encosta e se move - outro jogador, um objeto -, no plano, sobre a
+            // massa, entra na velocidade dela; a locomocao padrao anda junto, com os passos, e a resposta a gasta.
+            // (O peso, 02/11, ele: "os bonecos tem PESO, nao deve ser tao facil assim empurrar um boneco de 80 quilos":
+            // entre dois corpos de massa parecida quem empurra divide o embalo - metade - e o empurrado firma os pes
+            // contra, PushResist; e a forca e a de um corpo empurrando, PushAcceleration (m/s2, ~300 N em 80 kg).)
+            constexpr float VirtualPushSeconds = 0.35f, VirtualPushMaximum = 3.0f;
+            constexpr float PushShare = 0.5f, PushResist = 0.25f, PushAcceleration = 4.0f;
+            Vec3& pushVelocity = state.virtualPushVelocity;
+            const Vec3 own = Vec3 { capsule.velocity.x, capsule.velocity.y, 0.0f } - pushVelocity;
+            pushVelocity = pushVelocity * std::exp(-deltaTime / VirtualPushSeconds);
+            if (state.bodyMode != LegacyBodyMode3D::Physical) {
+                // (Como personagem empurrando personagem: na direcao do contato a capsula anda ao menos na velocidade
+                // de quem empurra - pelo impulso ela ia a ~0,5 m/s com o outro a 1,4, e ele passava por cima.)
+                for (const RagdollInteraction3D& contact : body.interactions) {
+                    if (contact.otherMotion == RagdollContactMotion3D::Static || contact.linkIndex >= body.links.size())
+                        continue;
+                    Vec3 normal { contact.normalWorld.x, contact.normalWorld.y, 0.0f };
+                    if (normal.lengthSquared() < 0.25f) continue;
+                    normal = normal.normalized();
+                    const Vec3 other = body.links[contact.linkIndex].linearVelocity - contact.relativeVelocityWorld;
+                    const float pusher = dot(Vec3 { other.x, other.y, 0.0f }, normal) * PushShare * (1.0f - PushResist);
+                    const float now = dot(own + pushVelocity, normal);
+                    if (pusher > 0.05f && pusher > now)
+                        pushVelocity += normal * std::min(pusher - now, PushAcceleration * deltaTime);
+                }
+                if (pushVelocity.length() > VirtualPushMaximum) pushVelocity = pushVelocity * (VirtualPushMaximum / pushVelocity.length());
+            } else {
+                pushVelocity = {};
+            }
+            const Vec3 planar = bodyForecastCapsuleStep3D(own, wanted, response, deltaTime) + pushVelocity;
             capsule.velocity = { planar.x, planar.y, 0.0f };
             capsule.position += (capsule.velocity
                 + Vec3 { state.virtualFollowVelocity.x, state.virtualFollowVelocity.y, 0.0f }) * deltaTime;
@@ -479,7 +511,30 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         }
         // (So o controlado: com 2+ atletas o ultimo da lista apagava a rampa
         // de volta do controlado.)
-        if (command.controlled) output.controlledSpeedScale = state.returnSpeedScale;
+        // (E quem empurra sente o peso - 02/11: no padrao, andando contra outro corpo de pe, a capsula dele vai na
+        // velocidade dividida com o outro, PushingSpeedShare, subindo e descendo em ~0,15 s.)
+        if (command.controlled) {
+            constexpr float PushingSpeedShare = 0.45f;
+            bool pushing = false;
+            if (state.bodyMode != LegacyBodyMode3D::Physical)
+                for (const RagdollInteraction3D& contact : body.interactions) {
+                    if (contact.otherMotion == RagdollContactMotion3D::Static || contact.linkIndex >= athlete.contactBody.regions.size()
+                        || athlete.contactBody.regions[contact.linkIndex] == BodyRegion3D::Foot)
+                        continue;
+                    Vec3 normal { contact.normalWorld.x, contact.normalWorld.y, 0.0f };
+                    if (normal.lengthSquared() < 0.25f) continue;
+                    // (So de frente contra ele - ate ~25 graus do contato e o toque a frente da pelve, nao ao lado -: de
+                    // raspao, passando de ombro, nao freia; a 45 graus o passe de ombro saia a 72% da velocidade.)
+                    const Vec3 wanted { command.intent.requestedVelocityWorld.x, command.intent.requestedVelocityWorld.y, 0.0f };
+                    const float speed = wanted.length();
+                    const Vec3 offset = contact.positionWorld - body.links.front().position;
+                    if (speed > 0.3f && -dot(wanted, normal.normalized()) > 0.9f * speed
+                        && dot(Vec3 { offset.x, offset.y, 0.0f }, wanted) > 0.12f * speed)
+                        pushing = true;
+                }
+            state.pushingShare += ((pushing ? 1.0f : 0.0f) - state.pushingShare) * std::min(1.0f, deltaTime / 0.15f);
+            output.controlledSpeedScale = state.returnSpeedScale * (1.0f - (1.0f - PushingSpeedShare) * state.pushingShare);
+        }
     }
     command.balanceFootPlacement = e5 && settings.e5FootPlacement;
     command.walkingAssist = state.adaptivePhysics.settings().walkingAssistScale;
@@ -841,7 +896,14 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 const bool shiftHeld = command.intent.effort > 0.5f;
                 const bool handoff = settings.defaultGetUpHandoff && settings.defaultSeedFromBody && !hit
                     && shiftHeld && state.locomotion.telemetry().getUpHandoffReady;
-                if (handoff || (ready && state.returnBoost >= 1.0f)) {
+                // (02/11, ele: depois de levantar, "assim que ele recem se ergue" ja o padrao, sem esperar de pe -
+                // se nada encosta: outro boneco, objeto ou parede.)
+                bool touched = hit;
+                for (const RagdollInteraction3D& contact : body.interactions)
+                    if (contact.otherMotion != RagdollContactMotion3D::Static || contact.normalWorld.z < 0.6f) touched = true;
+                const bool risenReturn = state.getUpSeen && standingState && upright && capsule.grounded && !touched
+                    && now != CharacterLocomotionState3D::GettingUp;
+                if (handoff || risenReturn || (ready && state.returnBoost >= 1.0f)) {
                     state.returnBoost = 0.0f;
                     // A volta: a pose fisica de agora (raiz em relacao a base
                     // da capsula, juntas) misturada ate a animada.
@@ -948,8 +1010,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         state.contactBridge = false;
                         state.bridgeSeconds = 0.0f;
                         const bool moving = handoff || command.intent.requestedVelocityWorld.lengthSquared() > 0.25f;
-                        state.bridgeDuration = (moving ? settings.bridgeMovingSeconds : settings.bridgeSeconds)
-                            / std::max(0.25f, settings.defaultReturnRate);
+                        // (A rapidez nao a encurta - 02/11: a ponte ja e o padrao rodando; curta, ela nao deixava a
+                        // volta mais rapida, so o encaixe mais brusco: a 300%, 0,1 s e picos de 2000 m/s2.)
+                        state.bridgeDuration = moving ? settings.bridgeMovingSeconds : settings.bridgeSeconds;
                         if (!settings.returnSmoothing) state.bridgeDuration = moving ? 0.30f : 0.45f;
                     } else {
                         scene.setRagdollGuided(slot.handle, true);
@@ -1791,10 +1854,15 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             // plano (pancada, parede): a pose ancora onde o corpo esta.
             // Parado, a raiz-alvo fica sobre os pes (ActiveStance3D): a
             // capsula vai para onde a base real a quer.
-            Vec3 follow = athlete.stance.baseShift().lengthSquared() > 1e-8f
+            // (A raiz indo para cima da base real no ritmo de uma troca de peso, BaseShiftSpeed: sem limite, depois de
+            // levantar a capsula ia a 2,3 m/s para os pes e arrastava o corpo 0,3 m - o puxao de volta; 02/11.)
+            constexpr float BaseShiftSpeed = 0.8f;
+            const bool baseShift = athlete.stance.baseShift().lengthSquared() > 1e-8f;
+            Vec3 follow = baseShift
                 ? navigationFollowVelocity3D(rootPosition, plannedRoot, 0.0f)
                 : navigationFollowVelocity3D(body.links.front().position, rootPosition,
                     state.contactBridge ? settings.contactBridgeFollowSlack : settings.activeFollowSlack);
+            if (baseShift && follow.length() > BaseShiftSpeed) follow = follow * (BaseShiftSpeed / follow.length());
             // (Na ponte de contato a capsula leva o golpe pendente junto com o
             // corpo: fora da inercia do controlador, que o anularia num tick.)
             if (state.contactBridge) follow += Vec3 { state.contactKick.x, state.contactKick.y, 0.0f };
@@ -1812,29 +1880,34 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         || athlete.active.secondsActive() > settings.activeReturnTimeout))) {
                 // O guiado parte do corpo de agora (juntas e pelve) e vai a
                 // pose do padrao pela inercia da volta: sem estalo nos pes
-                // (a base do Ativo nao e a do clipe). Da ponte, o corpo ja
-                // esta na pose-alvo (a autoridade cheia no fim): o guiado
-                // segue a mesma pose, com a inercia que ela ja tinha
-                // (recomecada do corpo andando, a pelve voltava um quadro).
-                if (!state.bridge || state.bridgeStance) {
+                // (a base do Ativo nao e a do clipe).
+                // (02/11, ele: "tranco... como se realocasse o corpo para encaixar", pior a 300%: da ponte andando o
+                // guiado ia direto a pose do clipe, e o pe que a ponte nao alcancara saltava ate ela - 0,23 m num tick,
+                // 3360 m/s2. Agora pela inercia, do corpo de verdade, e com a primeira pose ja neste tick. A ponte de
+                // contato andando segue a pose de antes: o corpo nunca saiu do padrao, e partir dele herdava o golpe.)
+                if (!state.bridge || state.bridgeStance || !state.contactBridge) {
                     const PhysicsBodyState3D& pelvis = body.links.front();
-                    // (Da ponte, a partida e o alvo deste passo - o corpo, colado
-                    // nele, termina o passo ali -, nao o corpo publicado, um passo
-                    // atras: a primeira pose da volta so sai no passo seguinte e
-                    // voltava o que ele andou, ~0,25 m/s ao contrario num tick, o
-                    // tranco que a camera presa ao peito mostrava; 28/10.)
-                    const bool fromTarget = state.bridge && coordinates.size() == profile.links.size();
                     state.returnCoordinates.assign(profile.links.size(), {});
                     std::vector<Vec3> velocities(profile.links.size());
                     for (std::size_t i = 1; i < profile.links.size() && i < body.joints.size(); ++i) {
                         const auto& joint = body.joints[i].positionRadians;
                         const auto& rate = body.joints[i].velocityRadiansPerSecond;
-                        state.returnCoordinates[i] = fromTarget ? coordinates[i] : Vec3 { joint[0], joint[1], joint[2] };
+                        state.returnCoordinates[i] = Vec3 { joint[0], joint[1], joint[2] };
                         velocities[i] = { rate[0], rate[1], rate[2] };
                     }
-                    state.returnInertia.start(state.returnCoordinates, velocities, fromTarget ? rootPosition : pelvis.position,
-                        fromTarget ? rootOrientation : pelvis.orientation, pelvis.linearVelocity, pelvis.angularVelocity,
+                    state.returnInertia.start(state.returnCoordinates, velocities, pelvis.position,
+                        pelvis.orientation, pelvis.linearVelocity, pelvis.angularVelocity,
                         settings.returnSmoothing ? ActiveExitHalfLife : 0.10f, settings.returnSmoothing ? ActiveExitSeconds : 0.40f);
+                    // (E ja neste tick, sobre a pose crua do padrao - a de agora traz a inercia da entrada na ponte,
+                    // que esta substitui -: o guiado seguia o ultimo alvo, o da ponte, e o pe ia ao clipe e voltava.)
+                    std::vector<Vec3> first = out.coordinates;
+                    Vec3 firstRoot = out.rootPosition;
+                    Quaternion firstOrientation = out.rootOrientation;
+                    state.returnInertia.apply(first, firstRoot, firstOrientation, deltaTime);
+                    RagdollAnimationPose3D firstPose = pose;
+                    defaultLocomotionPose3D(profile, firstRoot, firstOrientation, first, firstPose);
+                    scene.setRagdollGuidePose(slot.handle, firstPose.linkPositions, firstPose.linkOrientations,
+                        std::vector<float>(profile.links.size(), 1.0f));
                 }
                 scene.setRagdollGuided(slot.handle, true);
                 state.guided = true;
@@ -2019,6 +2092,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             state.adaptivePhysics.reset(profile);
             Log::info(std::string("corpo: rede do levantar -> rede da locomocao (") + why + ")");
         };
+        const bool programmedFall = settings.protectiveFallBeforeGetUp;
         if (!allowed) {
             if (rl.active) release("desligada");
             rl.trunkTiltValid = false;
@@ -2045,12 +2119,17 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 if (state.locomotion.telemetry().state == CharacterLocomotionState3D::Fallen) imminent = true;
                 const float tilt = GetUpPolicy3D::trunkTilt(profile, body.links);
                 const float decision = static_cast<float>(GetUpPolicy3D::TicksPerDecision) * deltaTime;
-                if (rl.trunkTiltValid && tilt > GetUpPolicy3D::ImminentTiltDegrees
+                if (!programmedFall && rl.trunkTiltValid && tilt > GetUpPolicy3D::ImminentTiltDegrees
                     && (tilt - rl.trunkTilt) / decision > GetUpPolicy3D::ImminentTiltRate)
                     imminent = true;
                 rl.trunkTilt = tilt;
                 rl.trunkTiltValid = true;
             }
+            // A queda da locomocao fisica antes (settings.protectiveFallBeforeGetUp; 02/11, ele: "nao da para usar apenas a
+            // mesma que a locomocao fisica ja usa?"): caindo e deitado, o classico cuida de tudo, do jeito dele; a rede
+            // assume so quando ele comeca a levantar.
+            if (programmedFall) imminent = !rl.waitStand
+                && state.locomotion.telemetry().state == CharacterLocomotionState3D::GettingUp;
             if (imminent) {
                 rl.active = true;
                 rl.ticks = 0;
@@ -2062,7 +2141,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     scene.setRagdollGuided(slot.handle, false);
                     state.guided = false;
                 }
-                Log::info("corpo: queda iminente -> rede do levantar");
+                Log::info(programmedFall ? "corpo: classico comeca a levantar -> rede do levantar"
+                                         : "corpo: queda iminente -> rede do levantar");
             }
         }
         if (rl.active) {
@@ -2072,7 +2152,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const bool moving = rl.down && std::hypot(wanted.x, wanted.y) > GetUpPolicy3D::MovingRequestSpeed;
             try {
                 if (rl.ticks % GetUpPolicy3D::TicksPerDecision == 0)
-                    policy->decide(profile, body, rl.drives, moving ? wanted : Vec3 {}, groundHeight(body.links.front().position));
+                    policy->decide(profile, body, rl.drives, moving ? wanted : Vec3 {}, groundHeight(body.links.front().position),
+                        &scene, slot.handle);
             } catch (const std::exception& error) {
                 Log::warn(std::string("rede do levantar: ") + error.what());
                 rl.drives.clear();
@@ -2109,9 +2190,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 rl.stuckSeconds = !rising && std::hypot(com.x, com.y) < 0.15f && std::abs(com.z) < 0.15f
                     ? rl.stuckSeconds + deltaTime : 0.0f;
                 const bool stuck = rl.stuckSeconds >= GetUpStuckSeconds;
+                // (02/11, ele: no padrao, "assim que ele recem se ergue" ja volta a ele: erguido - a pelve na altura e
+                // o tronco em pe - basta, sem firmar.)
+                const bool risen = defaultMode && rl.down && height > 0.85f * profile.standingRootHeightMeters && upright > 0.85f;
                 const float needed = moving ? GetUpPolicy3D::MovingHandoffSeconds : GetUpPolicy3D::FirmSeconds;
-                if (rl.firmSeconds < needed && rl.seconds < GetUpRecoveryLimitSeconds && !stuck) return;
-                const bool stood = rl.firmSeconds >= needed;
+                if (!risen && rl.firmSeconds < needed && rl.seconds < GetUpRecoveryLimitSeconds && !stuck) return;
+                const bool stood = risen || rl.firmSeconds >= needed;
                 athlete.getUpHandoff = { GetUpPolicy3D::BlendSeconds, rl.drives };
                 state.getUpSeen = true;
                 rl.waitStand = !stood;
@@ -2398,7 +2482,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     athlete.referenceSeconds = 0.0f;
     // (Com a rede ligada, so quem ela pode dirigir - o controlado e os
     // comandados - le a sombra; os bonecos soltos nao pagam por ela.)
-    const bool policyReads = settings.locomotionPolicy && (command.controlled || slot.command != nullptr);
+    // (Os bonecos soltos tambem, 02/11: a rede agora os dirige.)
+    const bool policyReads = settings.locomotionPolicy;
     if ((settings.physicalReference || policyReads) && !animated && !down) {
         const auto begin = std::chrono::steady_clock::now();
         if (!state.referenceShadowActive) {
@@ -2479,16 +2564,16 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             state.navigationAnchor += state.navigationAnchorVelocity * deltaTime;
         }
     }
-    if (command.controlled) {
+    if (command.controlled || looseNavigation) {
         // A capsula vai atras do corpo quando ele se afasta da pelve de
         // referencia mais de 10 cm (empurrao, tropeco, parede): o corpo
         // e a verdade; depois de um contato externo, sem folga. Com a
         // opcao desligada o corpo e carregado e isso nunca acontece.
-        output.followVelocitySet = true;
-        output.followVelocityWorld = adaptive && !down
+        // (E a virtual do boneco solto, 02/11: parada no lugar, empurrado ele era puxado de volta a ela.)
+        setFollow(adaptive && !down
             ? navigationFollowVelocity3D(body.links.front().position,
                 locomotionOutput.navigationAnchorWorld, followSlack)
-            : Vec3 {};
+            : Vec3 {});
     }
     state.previousAnimationPose = state.animationPose.linkPositions.empty()
         ? locomotionOutput.targetPose : state.animationPose;

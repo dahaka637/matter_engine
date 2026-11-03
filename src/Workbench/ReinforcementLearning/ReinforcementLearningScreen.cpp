@@ -136,7 +136,8 @@ constexpr std::array<double, 4> BandTestSpeeds { 1.11, 2.62, 4.33, 6.0 };
 // o equilibrio parado tambem, de pe quem fica e a rede da locomocao, a do levantar so assume na queda iminente.)
 std::vector<std::array<const char*, 2>> getUpDrillList() {
     std::vector<std::array<const char*, 2>> list { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
-        { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" } };
+        { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" }, { TrackingViewer3D::SceneryDrill, "Levantar nos ambientes" },
+        { TrackingViewer3D::AvoidSceneryDrill, "Evitar a queda nos ambientes" } };
     // (01/11, a rl_final: a locomocao volta - as faixas primeiro, depois o parado, o giro e os rumos no trote. As quedas
     // da locomocao - as do B21 - sairam; ele, 23h30: "nao vejo distincao para ele existir".)
     if (TrackingViewer3D::getUpLocomotion()) {
@@ -1071,6 +1072,40 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         com.segments.push_back({ m_skeleton->toSkeleton(center), m_skeleton->toSkeleton({ center.x, center.y, 0.0f }) });
         highlights.push_back(std::move(com));
         highlights.push_back(cross(m_skeleton->toSkeleton({ center.x, center.y, 0.0f }), 0.04f, Palette::Focus));
+    }
+    if (!view.scenery.empty()) {
+        // (O cenario do levantar nos ambientes: as caixas e os corpos soltos em arame.)
+        Highlight scenery;
+        scenery.color = Palette::Info;
+        for (const auto& [a, b] : view.scenery)
+            scenery.segments.push_back({ m_skeleton->toSkeleton(a), m_skeleton->toSkeleton(b) });
+        highlights.push_back(std::move(scenery));
+    }
+    if (m_colliders) {
+        // (02/11, ele: os corpos que nascem em cima ou embaixo "terem suas caixas e colisoes humanas igual o nosso": o
+        // mesmo perfil, desenhado pelos colisores, nas cores dos lados.)
+        std::array<Highlight, 3> sides;
+        sides[0].color = Palette::Center;
+        sides[1].color = Palette::Left;
+        sides[2].color = Palette::Right;
+        for (const RagdollState3D* other : view.otherBodies) {
+            if (other == nullptr || other->links.size() != profile.links.size()) continue;
+            std::vector<Vec3> at(other->links.size());
+            std::vector<Quaternion> turn(other->links.size());
+            for (std::size_t i = 0; i < other->links.size(); ++i) {
+                at[i] = other->links[i].position;
+                turn[i] = other->links[i].orientation;
+            }
+            const RagdollColliderWireframe3D wireframe = poseRagdollColliderWireframe3D(profile, *m_colliders, at, turn, false);
+            for (const RagdollColliderWireframeLink3D& link : wireframe.links) {
+                const std::size_t side = link.side == RagdollColliderWireframeSide3D::Left ? 1
+                    : link.side == RagdollColliderWireframeSide3D::Right ? 2 : 0;
+                for (const auto& [a, b] : link.segments)
+                    sides[side].segments.push_back({ m_skeleton->toSkeleton(a), m_skeleton->toSkeleton(b) });
+            }
+        }
+        for (Highlight& side : sides)
+            if (!side.segments.empty()) highlights.push_back(std::move(side));
     }
     if (m_showContacts)
         for (const RagdollContactPoint3D& contact : state.contacts)

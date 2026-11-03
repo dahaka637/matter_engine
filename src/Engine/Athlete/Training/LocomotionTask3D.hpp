@@ -46,6 +46,10 @@ struct LocomotionRewardWeights3D {
     // As pernas cruzadas (30/10, o trote lateral; a regra dele do giro parado: os pes nunca cruzam): o custo por
     // segundo de LocomotionStepMeasure3D::crossover. 0 (o padrao): sem o custo.
     float crossover = 0.0f;
+    // A cadencia acima da humana correndo (LocomotionStepMeasure3D::cadence), por segundo. 0 (o padrao): sem o custo.
+    float cadence = 0.0f;
+    // O voo que falta correndo (LocomotionStepMeasure3D::flight), por segundo. 0 (o padrao): sem o custo.
+    float flight = 0.0f;
     float fall = 1.0f;
     // O levantar (so nos exercicios dele): o quanto esta de pe por segundo.
     float getUp = 0.0f;
@@ -119,6 +123,10 @@ struct LocomotionSpeedCurriculum3D {
     // o treino so pedia ate o teto, ~3 m/s, e o jogo pede 6-8): o pedido inteiro do piloto, para aprender a correr no
     // que consegue sem cair quando o pedido passa do que ele faz. Fora do rastreio da fronteira e das quedas do curriculo.
     float uncappedFraction = 0.0f;
+    // O teto sobe com a forca auxiliar sorteada (02/11, ele: com a ajuda alta ele nao sabe pegar impulso nem pairar
+    // no ar entre os passos): teto + (pedido - teto) x ajuda x assistLift - na ajuda cheia, o pedido inteiro, para
+    // aprender a correr de verdade com o equilibrio dado. O pedido acima do teto fica fora do rastreio da fronteira.
+    float assistLift = 0.0f;
 };
 
 // Os comecos em estados guardados (RSI/STI): instantaneos do treino em

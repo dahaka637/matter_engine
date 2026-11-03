@@ -77,11 +77,11 @@ TrackingGetUpPostureProbe3D::TrackingGetUpPostureProbe3D(const RagdollProfile3D&
         m_spine.push_back(linkIndex(profile, id));
 }
 
-TrackingGetUpPosture3D TrackingGetUpPostureProbe3D::measure(std::span<const PhysicsBodyState3D> links) const {
+TrackingGetUpPosture3D TrackingGetUpPostureProbe3D::measure(std::span<const PhysicsBodyState3D> links, float floor) const {
     const RagdollProfile3D& profile = *m_profile;
     TrackingGetUpPosture3D out;
-    out.headHeight = rlLinkCenterOfMass3D(profile.links[m_head], links[m_head]).z;
-    out.pelvisHeight = links[m_root].position.z;
+    out.headHeight = rlLinkCenterOfMass3D(profile.links[m_head], links[m_head]).z - floor;
+    out.pelvisHeight = links[m_root].position.z - floor;
     out.upright = bodyOrientation(profile.links[m_root], links[m_root]).rotate({ 0.0f, 0.0f, 1.0f }).z;
     out.chestFacingUp = bodyOrientation(profile.links[m_chest], links[m_chest]).rotate({ 1.0f, 0.0f, 0.0f }).z;
     out.standing = out.headHeight > 1.4f && out.pelvisHeight > 0.75f && out.upright > 0.8f;

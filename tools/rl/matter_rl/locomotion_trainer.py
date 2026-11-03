@@ -326,6 +326,40 @@ def body_strata(rows: np.ndarray, columns: list[str], reasons: list[str]) -> dic
     return out
 
 
+def assist_strata(rows: np.ndarray, columns: list[str], reasons: list[str]) -> dict:
+    """As quedas, a velocidade e a passada por faixa da forca auxiliar sorteada (02/11, ele: com a ajuda alta corre
+    rapido mas mexe bracos e pernas freneticamente): passos por segundo e o comprimento do passo; "sem_teto" os
+    episodios no pedido de verdade (a corrida rapida)."""
+    col = {name: i for i, name in enumerate(columns)}
+    if not len(rows) or "ajuda_nivel" not in col:
+        return {}
+    fall_codes = [reasons.index(name) for name in ("queda", "numerico", "falha") if name in reasons]
+    level = rows[:, col["ajuda_nivel"]]
+    out: dict = {}
+    for name, low, high in (("0", -1.0, 0.5), ("1-25", 0.5, 25.0), ("25-50", 25.0, 50.0), ("50-75", 50.0, 75.0),
+                            ("75-100", 75.0, 101.0)):
+        part = rows[(level > low) & (level <= high)]
+        if not len(part):
+            continue
+
+        def gait(p):
+            steps = p[:, col["pousos_por_segundo"]]
+            speed = p[:, col["velocidade_media"]]
+            ok = steps > 0.2
+            return {"episodes": int(len(p)), "speed": float(speed.mean()),
+                    "requested": float(p[:, col["pedido_medio"]].mean()),
+                    "steps_per_second": float(steps[ok].mean()) if ok.any() else None,
+                    "step_meters": float((speed[ok] / steps[ok]).mean()) if ok.any() else None,
+                    "falls": float(np.isin(p[:, col["razao"]].astype(int), fall_codes).mean())}
+
+        out[name] = gait(part)
+        if "sem_teto" in col:
+            fast = part[part[:, col["sem_teto"]] > 0.5]
+            if len(fast):
+                out[name]["sem_teto"] = gait(fast)
+    return out
+
+
 class LocomotionTrainer:
     def __init__(self, run: str, task: str | None = None, mode: str | None = None, environments: int | None = None,
                  device: str = "auto", seed: int | None = None, socket_path: Path | None = None,
@@ -1092,6 +1126,9 @@ class LocomotionTrainer:
         bodies = body_strata(rows, self.episode_columns, self.end_reasons)
         if bodies:
             details["bodies"] = bodies
+        assists = assist_strata(rows, self.episode_columns, self.end_reasons)
+        if assists:
+            details["ajuda"] = assists
         # A interligacao das redes (01/11): os episodios que comecaram de onde a rede do levantar devolveu, quanto ela
         # levou e quantos deles cairam nos primeiros 2 s (a harmonia da troca).
         if "levantar_rede_s" in col and len(rows):

@@ -1,4 +1,5 @@
 #include "Engine/Locomotion/ContactFootwork3D.hpp"
+#include "Engine/Locomotion/HumanCadence3D.hpp"
 
 #include "Engine/Character/CharacterFootGeometry3D.hpp"
 #include "Engine/Character/CharacterStateEstimator3D.hpp"
@@ -493,6 +494,15 @@ void ContactFootwork3D::startStep(const RagdollProfile3D& profile,
             foot.swingDurationSeconds = HeldTurnSwingSlow + (HeldTurnSwingFast - HeldTurnSwingSlow) * need;
         }
     }
+    // A trava da cadencia: o pouso deste passo nunca antes do intervalo humano desde o ultimo (qualquer motivo,
+    // a recuperacao tambem - 02/11, ele: "NUNCA em hipotese alguma").
+    // (Os passos que salvam - a recuperacao, o restabelecer o apoio, o pouso - nao tem a trava: com ela o pe nao pousava e o
+    // boneco empurrado caia - 4 passos em 6 s, a captura a 1,15 m fora; sem ela, 16 passos e a captura abaixo de 0,2 m.
+    // 02/11. Ela e da passada, contra o frenetico.)
+    const bool saving = reason == StepReason3D::Recovery || reason == StepReason3D::ReestablishSupport
+        || reason == StepReason3D::Landing;
+    m_minimumSwing[side] = input.cadenceCap && !saving ? minimumStepInterval3D(m_cadenceSpeed) - m_secondsSinceTouchdown : 0.0f;
+    foot.swingDurationSeconds = std::max(foot.swingDurationSeconds, m_minimumSwing[side]);
     ++m_plan.stepsStarted;
 }
 
@@ -674,6 +684,7 @@ void ContactFootwork3D::land(const RagdollProfile3D& profile,
     foot.physicalRelease = PhysicalRelease3D::Grounded;
     foot.phase = FootPhase3D::Loading;
     foot.phaseSeconds = 0.0f;
+    m_secondsSinceTouchdown = 0.0f;
     foot.targetWorld = anchor;
     foot.targetOrientationWorld = orientation;
 }
@@ -1341,6 +1352,18 @@ void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
 
 void ContactFootwork3D::update(const RagdollProfile3D& profile,
     const ContactFootworkInput3D& rawInput, float deltaTime) {
+    updatePlan(profile, rawInput, deltaTime);
+    // A trava da cadencia vale por cima de qualquer duracao que o passo receba depois de comecar (a freada, o
+    // tropeco, a passada reescrevem-na).
+    for (std::size_t side = 0; side < 2; ++side) {
+        FootPlan3D& foot = m_plan.feet[side];
+        if (foot.phase == FootPhase3D::Unloading || foot.phase == FootPhase3D::Swing)
+            foot.swingDurationSeconds = std::max(foot.swingDurationSeconds, m_minimumSwing[side]);
+    }
+}
+
+void ContactFootwork3D::updatePlan(const RagdollProfile3D& profile,
+    const ContactFootworkInput3D& rawInput, float deltaTime) {
     if (!m_initialized || m_linkCount != profile.links.size()) reset(profile);
     // Giro parado com a ajuda cheia: enquanto gira (e um instante depois) a
     // base de referencia e a compacta - pes lado a lado na largura do
@@ -1350,6 +1373,15 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
     // joelhos tortos. Tudo no planejador (torcao da base, alvos, acomodacao)
     // usa a mesma base.
     ContactFootworkInput3D input = rawInput;
+    m_secondsSinceTouchdown += std::isfinite(deltaTime) ? std::max(0.0f, deltaTime) : 0.0f;
+    m_cadenceSpeed = std::hypot(rawInput.planningComVelocityWorld.x, rawInput.planningComVelocityWorld.y);
+    // (E qualquer pe que encosta no chao - os passos da passada nao pousam por aqui.)
+    if (rawInput.physical != nullptr && rawInput.physical->feet.size() >= 2)
+        for (std::size_t side = 0; side < 2; ++side) {
+            const bool down = rawInput.physical->feet[side].touching || rawInput.physical->feet[side].supporting;
+            if (down && !m_footDown[side]) m_secondsSinceTouchdown = 0.0f;
+            m_footDown[side] = down;
+        }
     // Pes roteirizados: nenhum passo do planejador (o clipe decide).
     if (rawInput.scripted[0].active || rawInput.scripted[1].active) input.allowSteps = false;
     {
@@ -2597,6 +2629,7 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
                 foot.anchorOrientationWorld = flat;
                 foot.phase = FootPhase3D::Loading;
                 foot.phaseSeconds = 0.0f;
+                m_secondsSinceTouchdown = 0.0f;
                 foot.targetWorld = landing;
                 foot.targetOrientationWorld = flat;
             } else {

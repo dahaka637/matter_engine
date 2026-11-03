@@ -1,5 +1,7 @@
 #include "Engine/Character/CharacterLocomotion3DInternal.hpp"
 
+#include <limits>
+
 namespace MatterEngine {
 
 void CharacterLocomotion3D::stepCycle(Tick& t) {
@@ -240,6 +242,8 @@ void CharacterLocomotion3D::stepCycle(Tick& t) {
         m_waitingLeg = -1;
         m_touchdownWaitSeconds = 0.0f;
     }
+    // (Sem a passada andando, sem a trava: ela e da corrida.)
+    m_cadenceCapActive = false;
     if (gaitMoving && selectedClip != nullptr) {
         const float authoredSpeed = authoredHorizontalSpeed(*selectedClip);
         if (authoredSpeed > 0.05f) {
@@ -350,6 +354,18 @@ void CharacterLocomotion3D::stepCycle(Tick& t) {
                 if (earlyTouch) phaseRate *= ContactEarlyBoost;
             }
             const float phaseBefore = m_cyclePhase;
+            // A trava da cadencia: o quanto a fase pode andar neste tick, somando a recuperacao das pernas e o ritmo.
+            float cadenceBudget = std::numeric_limits<float>::infinity();
+            // (So correndo - o pedido de trote ou corrida, CadenceCapRequest -, fora do tropeco e da reacao a um
+            // empurrao: parado e se equilibrando os pes ficam livres. 02/11 20h40: com ela em todo passo a B21 parada
+            // caia 3-4 em 6 empurroes medios; sem ela, 0 - o "cai parado com muita facilidade" dele.)
+            constexpr float CadenceCapRequest = 2.0f;
+            m_cadenceCapActive = humanCadenceCap3D() > 0.0f && !stumbling && m_reactiveShare < 0.01f && m_fallCommit < 0.5f
+                && std::hypot(input.intent.requestedVelocityWorld.x, input.intent.requestedVelocityWorld.y) >= CadenceCapRequest;
+            if (m_cadenceCapActive) {
+                const float comSpeed = std::hypot(physical.centerOfMassVelocityWorld.x, physical.centerOfMassVelocityWorld.y);
+                cadenceBudget = deltaTime * humanCadenceCap3D() * humanStepsPerSecond3D(comSpeed) * 0.5f;
+            }
             // O ciclo recupera a diferenca das pernas: a parte comum vai para
             // ele de uma vez (nenhuma perna muda), o resto aos poucos.
             {
@@ -370,7 +386,12 @@ void CharacterLocomotion3D::stepCycle(Tick& t) {
                         extra += absorb;
                     }
                 }
-                m_cyclePhase = std::fmod(m_cyclePhase + extra + 1.0f, 1.0f);
+                // (O que passa da trava volta as duas pernas: sai nos ticks seguintes, dentro dela.)
+                const float used = std::min(extra, cadenceBudget);
+                m_legPhaseLead[0] += extra - used;
+                m_legPhaseLead[1] += extra - used;
+                cadenceBudget -= used;
+                m_cyclePhase = std::fmod(m_cyclePhase + used + 1.0f, 1.0f);
             }
             m_telemetry.touchdownWaitSeconds = m_touchdownWaitSeconds;
             m_telemetry.legPhaseLead = m_legPhaseLead;
@@ -389,8 +410,12 @@ void CharacterLocomotion3D::stepCycle(Tick& t) {
                 m_phaseRateScale += (wanted - m_phaseRateScale) * (1.0f - std::exp(-deltaTime / std::max(0.005f, tau)));
                 phaseRate = playbackRate * m_phaseRateScale;
             }
-            m_cyclePhase = std::fmod(m_cyclePhase + deltaTime * phaseRate
-                / std::max(0.1f, selectedClip->durationSeconds), 1.0f);
+            {
+                const float advance = std::min(cadenceBudget, deltaTime * phaseRate
+                    / std::max(0.1f, selectedClip->durationSeconds));
+                m_cadenceLeftover = cadenceBudget - advance;
+                m_cyclePhase = std::fmod(m_cyclePhase + advance, 1.0f);
+            }
             // TEMPTUNE: os bracos andam numa fase propria, suave: seguem o
             // ritmo medio do ciclo e se prendem a ele devagar. Esperando o
             // toque o ciclo para, mas o corredor nao congela os bracos no ar.

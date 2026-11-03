@@ -98,6 +98,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // A arrancada agachada (crouched_to_sprint), quando carregada: o peso maior no estilo. E os clipes da arrancada e
     // da corrida, os comecos do tipo 5 (o RSI do DeepMimic/AMP: ele vive os estados de corrida e aprende a seguir).
     std::size_t sprintStartIndex = std::numeric_limits<std::size_t>::max();
+    // O rolar pelo clipe: o levantar de costas e o espelho dele, e o eixo da pelve que aponta para cima no comeco dele.
+    std::vector<std::size_t> rollIndices;
+    Vec3 rollBellyAxis { 1.0f, 0.0f, 0.0f };
     std::vector<std::size_t> runStartIndices;
     // Os clipes do trote por rumo (os 8) e os do andar (a frente, a esquerda, de costas e a direita; as diagonais nao
     // tem), quando carregados.
@@ -230,6 +233,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float lastClipYaw = 0.0f;
         // O alvo misturado com o do clipe (clipBlend).
         std::vector<float> blendAction;
+        // O rolar pelo clipe: o clipe (max: sem), o tempo dele e quando comecou; e quando pode comecar outro.
+        std::size_t rollClip = std::numeric_limits<std::size_t>::max();
+        float rollStart = 0.0f;
+        float rollFrom = 0.0f;
+        float rollAgain = 0.0f;
         // A imitacao: o clipe do passo pedido (max: sem), o tempo dele no comeco do episodio e o rumo.
         std::size_t trackClip = std::numeric_limits<std::size_t>::max();
         float trackStart = 0.0f;
@@ -252,6 +260,24 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // O cenario sujo do episodio: a parede e o peso (desfeitos no comeco seguinte).
         std::vector<PhysicsBodyHandle3D> obstacles;
         bool obstructed = false;
+        // Os corpos soltos do episodio (embaixo e em cima) e a rampa: a normal dela e a altura dela no meio (m).
+        std::vector<RagdollHandle3D> extras;
+        // As caixas do cenario, para as folhas (o corpo, e a caixa nele).
+        struct SceneryBox {
+            PhysicsBodyHandle3D body;
+            Vec3 local;
+            Quaternion orientation;
+            Vec3 half;
+        };
+        std::vector<SceneryBox> boxes;
+        bool sloped = false;
+        Vec3 slopeNormal { 0.0f, 0.0f, 1.0f };
+        float slopeHeight = 0.0f;
+        // Quanto a queda sobe a mais por causa dos corpos embaixo (m).
+        float underLift = 0.0f;
+        // O ambiente garantido do episodio (so com evaluationScenery; -1 sem): 0 a parede, 1 o corredor, 2 os pilares,
+        // 3 o peso, 4 o corpo em cima, 5 a rampa, 6 o acidentado, 7 os corpos embaixo.
+        int forcedScenery = -1;
         // O premio do passo: o tempo no ar de cada pe (s) e se ele estava no chao.
         float footAir[2] { 0.0f, 0.0f };
         bool footDown[2] { true, true };
@@ -295,9 +321,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 PhysicsBodyState3D& s = w.frame.links[i];
                 s.position = center + turn.rotate(s.position - center);
                 s.orientation = (turn * s.orientation).normalized();
-                lowest = std::min(lowest, rlLinkCenterOfMass3D(profile->links[i], s).z);
+                const Vec3 com = rlLinkCenterOfMass3D(profile->links[i], s);
+                lowest = std::min(lowest, com.z - terrainHeight(w, com));
             }
-            const Vec3 lifted = center + Vec3 { 0.0f, 0.0f, 0.35f + 0.5f * u(w.rng) - lowest };
+            const Vec3 lifted = center + Vec3 { 0.0f, 0.0f, 0.35f + 0.5f * u(w.rng) - lowest + w.underLift };
             const Vec3 spin = Vec3 { gauss(w.rng), gauss(w.rng), gauss(w.rng) } * 1.5f;
             const Vec3 drift { 2.0f * u(w.rng) - 1.0f, 2.0f * u(w.rng) - 1.0f, 0.0f };
             for (PhysicsBodyState3D& s : w.frame.links) {
@@ -326,7 +353,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             } else {
                 settle(w, static_cast<int>((0.9f + 0.6f * u(w.rng)) / TickSeconds));
             }
-            if (posture->measure(w.body->links).headHeight < 1.0f) return;
+            if (posture->measure(w.body->links, floorUnder(w)).headHeight < 1.0f) return;
         }
     }
 
@@ -426,6 +453,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.lastClipTime = t;
         w.lastClipYaw = yaw;
         reference.frame(t, {}, yaw, w.frame);
+        // (Na rampa do evitar ambientado: o corpo sobe ate o chao embaixo das partes de baixo dele.)
+        float lift = 0.0f;
+        for (const PhysicsBodyState3D& s : w.frame.links)
+            if (s.position.z < 0.3f) lift = std::max(lift, terrainHeight(w, s.position));
+        for (PhysicsBodyState3D& s : w.frame.links) s.position.z += lift;
         w.scene->resetRagdollState(w.handle, w.frame.links);
         w.body = w.scene->ragdollStateView(w.handle);
     }
@@ -612,33 +644,204 @@ struct TrackingGetUpAmpTraining3D::Impl {
         return false;
     }
 
-    // O cenario sujo do comeco (so no treino): a parede ou caixa fixa encostada no corpo e o peso caindo em cima.
-    void placeObstacles(World& w) {
+    // A altura do chao (m) embaixo de p: a rampa do episodio (que acaba no chao plano, z = 0) ou o plano.
+    float terrainHeight(const World& w, Vec3 p) const {
+        if (!w.sloped) return 0.0f;
+        const Vec3& n = w.slopeNormal;
+        return std::max(0.0f, w.slopeHeight - (n.x * p.x + n.y * p.y) / n.z);
+    }
+    float floorUnder(const World& w) const {
+        return w.body != nullptr && !w.body->links.empty() ? terrainHeight(w, w.body->links[rootLink].position) : 0.0f;
+    }
+
+    // O que o episodio anterior deixou (as paredes, os pesos, o chao e os corpos soltos), antes de qualquer queda.
+    void clearScenery(World& w) {
         for (const PhysicsBodyHandle3D handle : w.obstacles)
             if (w.scene->contains(handle)) w.scene->destroyBody(handle);
         w.obstacles.clear();
-        if (settings.evaluation || w.body->links.empty()) return;
+        w.boxes.clear();
+        for (const RagdollHandle3D handle : w.extras)
+            if (w.scene->contains(handle)) w.scene->destroyRagdoll(handle);
+        w.extras.clear();
+        w.sloped = false;
+        w.slopeNormal = { 0.0f, 0.0f, 1.0f };
+        w.slopeHeight = 0.0f;
+        w.underLift = 0.0f;
+    }
+
+    // Um corpo solto (passivo, meio mole) deitado num rumo sorteado, com a pelve em pelvis.
+    void spawnLooseBody(World& w, Vec3 pelvis) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
-        const Vec3 root = w.body->links[rootLink].position;
-        if (u(w.rng) < settings.obstacleFraction) {
+        RagdollSpawnDefinition3D spawn;
+        spawn.entityId = 2 + w.extras.size();
+        spawn.active = false;
+        spawn.rigidityPercent = 10.0f + 30.0f * u(w.rng);
+        spawn.pelvisPosition = pelvis;
+        const float axis = 2.0f * Pi * u(w.rng);
+        spawn.orientation = Quaternion::fromAxisAngle({ std::cos(axis), std::sin(axis), 0.0f }, 0.5f * Pi * (0.85f + 0.3f * u(w.rng)));
+        w.extras.push_back(w.scene->createRagdoll(*profile, spawn));
+    }
+
+    // O chao da queda (so no treino, antes dela): a rampa, os calombos e os corpos soltos embaixo.
+    void placeTerrain(World& w) {
+        if (settings.evaluation && !settings.evaluationScenery) return;
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        if (u(w.rng) < settings.slopeFraction || w.forcedScenery == 5) {
             const float angle = 2.0f * Pi * u(w.rng);
-            const Vec3 direction { std::cos(angle), std::sin(angle), 0.0f };
-            // (Do link mais longe nesse lado, para comecar encostada sem atravessar o corpo.)
-            float reach = 0.0f;
-            for (const PhysicsBodyState3D& link : w.body->links) reach = std::max(reach, dot(link.position - root, direction));
+            const float tilt = (6.0f + 12.0f * u(w.rng)) * Pi / 180.0f;
+            const Quaternion turn = Quaternion::fromAxisAngle({ -std::sin(angle), std::cos(angle), 0.0f }, tilt);
+            w.sloped = true;
+            w.slopeNormal = turn.rotate({ 0.0f, 0.0f, 1.0f });
+            w.slopeHeight = 0.3f * u(w.rng);
             PhysicsShape3D shape;
             shape.type = PhysicsShapeType3D::Box;
-            shape.halfExtents = { 0.15f + 0.25f * u(w.rng), 0.5f + 1.0f * u(w.rng), 0.2f + 0.55f * u(w.rng) };
+            shape.halfExtents = { 8.0f, 8.0f, 1.0f };
             shape.materialId = "concrete";
-            PhysicsBodyDefinition3D wall;
-            wall.motionType = PhysicsMotionType3D::Static;
-            wall.position = root + direction * (reach + 0.04f + 0.4f * u(w.rng) + shape.halfExtents.x);
-            wall.position.z = shape.halfExtents.z;
-            wall.orientation = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, angle);
-            wall.materialId = "concrete";
-            w.obstacles.push_back(w.scene->createBody(wall, std::span<const PhysicsShape3D>(&shape, 1)));
+            PhysicsBodyDefinition3D ramp;
+            ramp.motionType = PhysicsMotionType3D::Static;
+            ramp.position = Vec3 { 0.0f, 0.0f, w.slopeHeight } - w.slopeNormal * shape.halfExtents.z;
+            ramp.orientation = turn;
+            ramp.materialId = "concrete";
+            w.obstacles.push_back(w.scene->createBody(ramp, std::span<const PhysicsShape3D>(&shape, 1)));
+            w.boxes.push_back({ w.obstacles.back(), {}, {}, shape.halfExtents });
         }
-        if (u(w.rng) < settings.weightFraction) {
+        if (u(w.rng) < settings.roughFraction || w.forcedScenery == 6) {
+            std::vector<PhysicsShape3D> bumps(std::uniform_int_distribution<std::size_t>(10, 20)(w.rng));
+            for (PhysicsShape3D& bump : bumps) {
+                const float a = 2.0f * Pi * u(w.rng), r = 2.2f * std::sqrt(u(w.rng));
+                bump.type = PhysicsShapeType3D::Box;
+                bump.halfExtents = { 0.08f + 0.27f * u(w.rng), 0.08f + 0.27f * u(w.rng), 0.02f + 0.06f * u(w.rng) };
+                bump.localPosition = { r * std::cos(a), r * std::sin(a), 0.0f };
+                bump.localPosition.z = terrainHeight(w, bump.localPosition);
+                bump.localOrientation = (Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, 2.0f * Pi * u(w.rng))
+                    * Quaternion::fromAxisAngle({ 1.0f, 0.0f, 0.0f }, 0.3f * (u(w.rng) - 0.5f))).normalized();
+                bump.materialId = "concrete";
+            }
+            PhysicsBodyDefinition3D ground;
+            ground.motionType = PhysicsMotionType3D::Static;
+            ground.materialId = "concrete";
+            w.obstacles.push_back(w.scene->createBody(ground, std::span<const PhysicsShape3D>(bumps)));
+            for (const PhysicsShape3D& bump : bumps)
+                w.boxes.push_back({ w.obstacles.back(), bump.localPosition, bump.localOrientation, bump.halfExtents });
+        }
+        if (u(w.rng) < settings.bodiesUnderFraction || w.forcedScenery == 7) {
+            const int count = std::uniform_int_distribution<int>(1, 3)(w.rng);
+            for (int k = 0; k < count; ++k) {
+                const float a = 2.0f * Pi * u(w.rng), r = 0.5f * std::sqrt(u(w.rng));
+                Vec3 pelvis { r * std::cos(a), r * std::sin(a), 0.0f };
+                pelvis.z = terrainHeight(w, pelvis) + 0.25f + 0.35f * static_cast<float>(k);
+                spawnLooseBody(w, pelvis);
+            }
+            w.underLift = 0.3f * static_cast<float>(count);
+        }
+    }
+
+    // O chao do evitar ambientado (antes de ficar de pe, no meio): a rampa suave com ele em cima dela, os calombos fora
+    // do lugar dos pes e os corpos caidos em volta (0,6-1,6 m), para tropecar ou pisar.
+    void placeAvoidTerrain(World& w) {
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        if (u(w.rng) < settings.slopeFraction || w.forcedScenery == 5) {
+            const float angle = 2.0f * Pi * u(w.rng);
+            const float tilt = (4.0f + 8.0f * u(w.rng)) * Pi / 180.0f;
+            const Quaternion turn = Quaternion::fromAxisAngle({ -std::sin(angle), std::cos(angle), 0.0f }, tilt);
+            w.sloped = true;
+            w.slopeNormal = turn.rotate({ 0.0f, 0.0f, 1.0f });
+            w.slopeHeight = 0.2f + 0.3f * u(w.rng);
+            PhysicsShape3D shape;
+            shape.type = PhysicsShapeType3D::Box;
+            shape.halfExtents = { 8.0f, 8.0f, 1.0f };
+            shape.materialId = "concrete";
+            PhysicsBodyDefinition3D ramp;
+            ramp.motionType = PhysicsMotionType3D::Static;
+            ramp.position = Vec3 { 0.0f, 0.0f, w.slopeHeight } - w.slopeNormal * shape.halfExtents.z;
+            ramp.orientation = turn;
+            ramp.materialId = "concrete";
+            w.obstacles.push_back(w.scene->createBody(ramp, std::span<const PhysicsShape3D>(&shape, 1)));
+            w.boxes.push_back({ w.obstacles.back(), {}, {}, shape.halfExtents });
+        }
+        if (u(w.rng) < settings.roughFraction || w.forcedScenery == 6) {
+            std::vector<PhysicsShape3D> bumps(std::uniform_int_distribution<std::size_t>(10, 20)(w.rng));
+            for (PhysicsShape3D& bump : bumps) {
+                const float a = 2.0f * Pi * u(w.rng), r = 0.45f + 1.75f * std::sqrt(u(w.rng));
+                bump.type = PhysicsShapeType3D::Box;
+                bump.halfExtents = { 0.08f + 0.2f * u(w.rng), 0.08f + 0.2f * u(w.rng), 0.02f + 0.06f * u(w.rng) };
+                bump.localPosition = { r * std::cos(a), r * std::sin(a), 0.0f };
+                bump.localPosition.z = terrainHeight(w, bump.localPosition);
+                bump.localOrientation = (Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, 2.0f * Pi * u(w.rng))
+                    * Quaternion::fromAxisAngle({ 1.0f, 0.0f, 0.0f }, 0.3f * (u(w.rng) - 0.5f))).normalized();
+                bump.materialId = "concrete";
+            }
+            PhysicsBodyDefinition3D ground;
+            ground.motionType = PhysicsMotionType3D::Static;
+            ground.materialId = "concrete";
+            w.obstacles.push_back(w.scene->createBody(ground, std::span<const PhysicsShape3D>(bumps)));
+            for (const PhysicsShape3D& bump : bumps)
+                w.boxes.push_back({ w.obstacles.back(), bump.localPosition, bump.localOrientation, bump.halfExtents });
+        }
+        if (u(w.rng) < settings.bodiesUnderFraction || w.forcedScenery == 7) {
+            const int count = std::uniform_int_distribution<int>(1, 3)(w.rng);
+            for (int k = 0; k < count; ++k) {
+                const float a = 2.0f * Pi * u(w.rng), r = 0.6f + 1.0f * u(w.rng);
+                Vec3 pelvis { r * std::cos(a), r * std::sin(a), 0.0f };
+                pelvis.z = terrainHeight(w, pelvis) + 0.25f;
+                spawnLooseBody(w, pelvis);
+            }
+        }
+    }
+
+    // O cenario sujo do comeco (so no treino, com o corpo ja assentado): a parede ou caixa fixa encostada nele, o
+    // corredor, os pilares, o peso e o corpo solto caindo em cima.
+    void placeObstacles(World& w) {
+        if ((settings.evaluation && !settings.evaluationScenery) || w.body->links.empty()) {
+            w.obstructed = !w.obstacles.empty() || !w.extras.empty();
+            return;
+        }
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        const Vec3 root = w.body->links[rootLink].position;
+        // (Do link mais longe nesse lado, para comecar encostada sem atravessar o corpo.)
+        const auto reachToward = [&](Vec3 direction) {
+            float reach = 0.0f;
+            for (const PhysicsBodyState3D& link : w.body->links) reach = std::max(reach, dot(link.position - root, direction));
+            return reach;
+        };
+        // (A base enterrada meio metro: na rampa a parede nao fica com vao embaixo.)
+        const auto wall = [&](float angle, float gap, Vec3 half, float height) {
+            const Vec3 direction { std::cos(angle), std::sin(angle), 0.0f };
+            Vec3 position = root + direction * (reachToward(direction) + gap + half.x);
+            const float top = terrainHeight(w, position) + height;
+            half.z = 0.5f * (top + 0.5f);
+            position.z = top - half.z;
+            PhysicsShape3D shape;
+            shape.type = PhysicsShapeType3D::Box;
+            shape.halfExtents = half;
+            shape.materialId = "concrete";
+            PhysicsBodyDefinition3D body;
+            body.motionType = PhysicsMotionType3D::Static;
+            body.position = position;
+            body.orientation = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, angle);
+            body.materialId = "concrete";
+            w.obstacles.push_back(w.scene->createBody(body, std::span<const PhysicsShape3D>(&shape, 1)));
+            w.boxes.push_back({ w.obstacles.back(), {}, {}, half });
+        };
+        if (u(w.rng) < settings.obstacleFraction || w.forcedScenery == 0) {
+            const Vec3 half { 0.15f + 0.25f * u(w.rng), 0.5f + 1.0f * u(w.rng), 0.0f };
+            wall(2.0f * Pi * u(w.rng), 0.04f + 0.4f * u(w.rng), half, 0.4f + 1.1f * u(w.rng));
+        }
+        if (u(w.rng) < settings.corridorFraction || w.forcedScenery == 1) {
+            const float angle = 2.0f * Pi * u(w.rng);
+            for (const float side : { 0.0f, Pi }) {
+                const Vec3 half { 0.15f + 0.15f * u(w.rng), 1.0f + 1.0f * u(w.rng), 0.0f };
+                wall(angle + side, 0.04f + 0.4f * u(w.rng), half, 1.0f + 1.5f * u(w.rng));
+            }
+        }
+        if (u(w.rng) < settings.pillarFraction || w.forcedScenery == 2) {
+            const int count = std::uniform_int_distribution<int>(1, 4)(w.rng);
+            for (int k = 0; k < count; ++k) {
+                const float side = 0.12f + 0.13f * u(w.rng);
+                wall(2.0f * Pi * u(w.rng), 0.1f + 0.6f * u(w.rng), { side, side, 0.0f }, 1.5f + 1.0f * u(w.rng));
+            }
+        }
+        if (u(w.rng) < settings.weightFraction || w.forcedScenery == 3) {
             const std::size_t link = std::uniform_int_distribution<std::size_t>(0, w.body->links.size() - 1)(w.rng);
             PhysicsShape3D shape;
             shape.type = PhysicsShapeType3D::Box;
@@ -651,17 +854,30 @@ struct TrackingGetUpAmpTraining3D::Impl {
             weight.massKg = 20.0f + 40.0f * u(w.rng);
             weight.materialId = "wood";
             w.obstacles.push_back(w.scene->createBody(weight, std::span<const PhysicsShape3D>(&shape, 1)));
+            w.boxes.push_back({ w.obstacles.back(), {}, {}, shape.halfExtents });
         }
-        w.obstructed = !w.obstacles.empty();
+        // (So com ele no chao: de pe, um corpo caindo em cima seria outro exercicio.)
+        if (w.down && (u(w.rng) < settings.bodyOnTopFraction || w.forcedScenery == 4)) {
+            float top = root.z;
+            for (const PhysicsBodyState3D& link : w.body->links) top = std::max(top, link.position.z);
+            spawnLooseBody(w, { root.x + 0.3f * (2.0f * u(w.rng) - 1.0f), root.y + 0.3f * (2.0f * u(w.rng) - 1.0f),
+                                  top + 0.35f + 0.4f * u(w.rng) });
+        }
+        w.obstructed = !w.obstacles.empty() || !w.extras.empty();
     }
 
     void begin(World& w) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        // (Antes da queda: ate 02/11 a parede e o peso do episodio anterior ficavam na cena enquanto a queda assentava.)
+        clearScenery(w);
+        w.forcedScenery = settings.evaluationScenery ? std::uniform_int_distribution<int>(0, 7)(w.rng) : -1;
         w.fallPending = false;
         w.fallActive = false;
         w.getUpGuided = false;
         w.idleAfterGetUp = false;
         w.sprintGuided = false;
+        w.rollClip = std::numeric_limits<std::size_t>::max();
+        w.rollAgain = 0.0f;
         // (Um sorteio so, como antes: com as fatias novas em 0, os mesmos comecos de antes.)
         // (Tambem na avaliacao, que nao usa o sorteio: as mesmas 64 quedas fixas de antes.)
         const float draw = u(w.rng);
@@ -681,6 +897,14 @@ struct TrackingGetUpAmpTraining3D::Impl {
             else if (draw < (edge += settings.locomotionFallFraction)) kind = 8;
         }
         if (kind == 5 && runStartIndices.empty()) kind = 3;
+        // (O evitar ambientado: o ambiente garantido e o chao antes de ele ficar de pe; as paredes e os pilares depois.)
+        if (kind == 4 && (settings.evaluation ? settings.evaluationScenery : u(w.rng) < settings.avoidSceneryFraction)) {
+            constexpr int AvoidScenery[6] { 0, 1, 2, 5, 6, 7 };
+            w.forcedScenery = AvoidScenery[std::uniform_int_distribution<int>(0, 5)(w.rng)];
+            placeAvoidTerrain(w);
+        } else if (kind == 4) {
+            w.forcedScenery = -1;
+        }
         if (kind == 8 && fallStarts.empty()) kind = 0;
         // (O evitar a queda com a parceira: ela de pe primeiro; sem a queda iminente dela, uma queda sorteada.)
         float partnerPushLeft = -1.0f;
@@ -717,6 +941,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.trackClip = std::numeric_limits<std::size_t>::max();
         w.pendingClip = std::numeric_limits<std::size_t>::max();
         w.startKind = kind;
+        if (kind == 0 || kind == 3) placeTerrain(w);
         if (kind == 0 || kind == 3) beginFall(w);
         else if (kind == 5) beginSprintStart(w);
         else if (kind == 6) beginHeading(w);
@@ -731,7 +956,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.trackStart = w.lastClipTime;
             w.trackYaw = w.lastClipYaw;
         }
-        const TrackingGetUpPosture3D start = posture->measure(w.body->links);
+        const TrackingGetUpPosture3D start = posture->measure(w.body->links, floorUnder(w));
         w.startSide = kind == 6 ? w.heading : start.chestFacingUp < -0.5f ? 0u : start.chestFacingUp > 0.5f ? 1u : 2u;
         w.startHead = start.headHeight;
         w.time = 0.0f;
@@ -891,7 +1116,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const std::size_t b = contract->bodyObservationSize();
         contract->observeBody(w.body->links, std::span<float>(w.observation).first(b));
         // (O contrato v3: o corpo contra o chao, depois do comando; o chao do treino e o plano z = 0.)
-        contract->observeGround(w.body->links, w.body->interactions, 0.0f,
+        contract->observeGround(w.body->links, w.body->interactions, floorUnder(w),
             std::span<float>(w.observation).subspan(b + CommandSize, TrackingGetUpContract3D::GroundObservationSize));
         {
             float* phase = w.observation.data() + b + CommandSize + GroundObservationSize;
@@ -903,6 +1128,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 phase[1] = std::cos(2.0f * Pi * t / duration);
             }
         }
+        contract->observeEnvironment(w.scene.get(), w.handle, w.body->links, floorUnder(w),
+            std::span<float>(w.observation).subspan(b + CommandSize + GroundObservationSize + PhaseSize, EnvironmentSize));
         float* c = w.observation.data() + b;
         const bool moving = w.commandSpeed > 0.0f;
         if (!moving && !w.locomotion) {
@@ -1032,6 +1259,28 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.idleAfterGetUp = false;
         w.sprintGuided = false;
     }
+    // O rolar pelo clipe: o levantar de costas (ou o espelho) no instante dos primeiros 0,5 s mais parecido com a pose.
+    static constexpr float RollEndSeconds = 0.75f;
+    static constexpr float RollSpeed = 1.25f;
+    static constexpr float RollBellyUp = 0.5f;
+    static constexpr float RollPelvisHeight = 0.45f;
+    void beginRoll(World& w) {
+        float best = std::numeric_limits<float>::max();
+        for (const std::size_t c : rollIndices)
+            for (float t = 0.0f; t <= 0.5f; t += 0.05f) {
+                references[c]->frame(t, {}, 0.0f, w.frame);
+                const float d = poseDistance(*w.body, w.frame);
+                if (d < best) {
+                    best = d;
+                    w.rollClip = c;
+                    w.rollStart = t;
+                }
+            }
+        w.rollFrom = w.time;
+    }
+    float rollTime(const World& w, float ahead) const {
+        return w.rollStart + (w.time + ahead - w.rollFrom) * RollSpeed;
+    }
     // No levantar em movimento guiado, agachado (crouchTimes): a arrancada agachada (crouched_to_sprint)
     // apontada para o alvo - ele, 23h30: "observa-se especial relevancia ao clipe do crouch to sprint".
     void beginSprintGuide(World& w) {
@@ -1088,7 +1337,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         std::uint8_t& truncated) {
         const std::size_t a = features->size();
         features->compute(w.body->links, std::span<float>(w.ampPair).first(a));
-        const TrackingGetUpPosture3D was = posture->measure(w.body->links);
+        const TrackingGetUpPosture3D was = posture->measure(w.body->links, floorUnder(w));
         const float before = posture->risePotential(was) + posture->turnPotential(was) + facePotential(w, was);
         maybePush(w, was);
         maybeAvoidPush(w);
@@ -1108,7 +1357,28 @@ struct TrackingGetUpAmpTraining3D::Impl {
         if (!w.fallActive && settings.protectiveFall && !w.locomotion && (w.fallPending || (w.stoodAt >= 0.0f && falling)))
             beginProtectiveFall(w);
         const bool programmed = w.fallActive;
-        if (settings.clipBlend < 1.0f && clipTracked(w)) {
+        // (O rolar pelo clipe: deitado de costas e baixo, com a rede no comando, o trecho do rolamento do levantar de
+        // costas; acaba no fim do trecho - dai a rede livre -, e outro so 1 s depois.)
+        if (settings.rollBlend < 1.0f && !w.locomotion && !programmed && w.rollClip >= references.size()
+            && w.time >= w.rollAgain && !rollIndices.empty()) {
+            const PhysicsBodyState3D& pelvis = w.body->links[rootLink];
+            const Vec3 belly = (pelvis.orientation * profile->links[rootLink].modelOrientation.conjugate()).normalized()
+                .rotate(rollBellyAxis);
+            if (belly.z > RollBellyUp && pelvis.position.z - floorUnder(w) < RollPelvisHeight) beginRoll(w);
+        }
+        if (w.rollClip < references.size() && rollTime(w, 0.0f) >= RollEndSeconds) {
+            w.rollClip = std::numeric_limits<std::size_t>::max();
+            w.rollAgain = w.time + 1.0f;
+        }
+        if (w.rollClip < references.size() && !programmed) {
+            references[w.rollClip]->frame(rollTime(w, TicksPerDecision * TickSeconds), {}, 0.0f, w.frame);
+            w.blendAction.assign(action.size(), 0.0f);
+            contract->actionOf(w.frame.coordinates, w.blendAction);
+            const float s = std::clamp(settings.rollBlend, 0.0f, 1.0f);
+            for (std::size_t k = 0; k < action.size(); ++k)
+                w.blendAction[k] = (1.0f - s) * w.blendAction[k] + s * (std::isfinite(action[k]) ? action[k] : w.blendAction[k]);
+            contract->driveTargets(w.blendAction, w.drives);
+        } else if (settings.clipBlend < 1.0f && clipTracked(w)) {
             const TrackingClipReference3D& reference = *references[w.trackClip];
             reference.frame(trackTime(w, TicksPerDecision * TickSeconds), {}, 0.0f, w.frame);
             w.blendAction.assign(action.size(), 0.0f);
@@ -1129,7 +1399,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.time += TicksPerDecision * TickSeconds;
         }
         features->compute(w.body->links, std::span<float>(w.ampPair).subspan(a, a));
-        const TrackingGetUpPosture3D now = posture->measure(w.body->links);
+        const TrackingGetUpPosture3D now = posture->measure(w.body->links, floorUnder(w));
         if (w.getUpGuided && !w.sprintGuided && w.commandSpeed > 0.0f && !w.locomotion
             && sprintStartIndex < references.size()
             && w.trackClip < crouchTimes.size() && trackTime(w, 0.0f) >= crouchTimes[w.trackClip])
@@ -1390,6 +1660,8 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         impl.clipNames.push_back(name);
         if (name == "idle_to_sprint") impl.startClipIndex = impl.references.size() - 1;
         if (name == "crouched_to_sprint") impl.sprintStartIndex = impl.references.size() - 1;
+        if (name == "stand_up_back_kimodo" || name == "stand_up_back_kimodo_espelho")
+            impl.rollIndices.push_back(impl.references.size() - 1);
         if (std::find(std::begin(ProtectionClips), std::end(ProtectionClips), name) != std::end(ProtectionClips))
             impl.protectionIndices.push_back(impl.references.size() - 1);
         if (std::find(std::begin(MovingClips), std::end(MovingClips), name) != std::end(MovingClips))
@@ -1489,6 +1761,14 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         impl.supportContact.push_back(impl.allowedContact.back() && id.find("Foot") == std::string::npos
             && id.find("Toe") == std::string::npos);
     }
+    // (O rolar pelo clipe: o eixo da barriga, o da pelve que aponta para cima no primeiro quadro do levantar de costas.)
+    if (!impl.rollIndices.empty()) {
+        TrackingClipFrame3D first;
+        impl.references[impl.rollIndices.front()]->frame(0.0f, {}, 0.0f, first);
+        const Quaternion pelvis = (first.links[impl.rootLink].orientation
+            * impl.profile->links[impl.rootLink].modelOrientation.conjugate()).normalized();
+        impl.rollBellyAxis = pelvis.conjugate().rotate({ 0.0f, 0.0f, 1.0f });
+    }
     // (Os nomes do corpo: os do levantar do DeepMimic sem a fase, a ultima; depois os do comando.)
     impl.observationNames.assign(impl.contract->observationNames().begin(), impl.contract->observationNames().end() - 1);
     for (const char* name : { "comando.alvo_cos", "comando.alvo_sen", "comando.distancia", "comando.velocidade",
@@ -1497,6 +1777,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     for (const std::string& name : TrackingGetUpContract3D::groundObservationNames()) impl.observationNames.push_back(name);
     impl.observationNames.emplace_back("fase.sen");
     impl.observationNames.emplace_back("fase.cos");
+    for (const std::string& name : TrackingGetUpContract3D::environmentObservationNames()) impl.observationNames.push_back(name);
     const std::uint32_t hardware = std::max(1u, std::thread::hardware_concurrency());
     impl.workers = settings.threads > 0 ? settings.threads : std::max(1u, hardware > 2 ? hardware - 2 : 1u);
     impl.scheduler = std::make_shared<TaskScheduler>(TaskSchedulerSettings { std::max(1u, impl.workers - 1) });
@@ -1512,7 +1793,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         spawn.pelvisPosition = { 0.0f, 0.0f, impl.profile->standingRootHeightMeters };
         w.handle = w.scene->createRagdoll(*impl.profile, spawn);
         w.fall = std::make_unique<ProtectiveFall3D>(*impl.profile);
-        w.observation.assign(impl.contract->bodyObservationSize() + CommandSize + GroundObservationSize + PhaseSize, 0.0f);
+        w.observation.assign(impl.contract->bodyObservationSize() + CommandSize + GroundObservationSize + PhaseSize + EnvironmentSize, 0.0f);
         w.finalObservation.assign(w.observation.size(), 0.0f);
         w.ampPair.assign(2 * impl.features->size(), 0.0f);
         w.pose.assign(impl.contract->actionSize(), 0.0f);
@@ -1526,7 +1807,7 @@ TrackingGetUpAmpTraining3D::~TrackingGetUpAmpTraining3D() {
 
 std::size_t TrackingGetUpAmpTraining3D::environmentCount() const { return m_impl->worlds.size(); }
 std::size_t TrackingGetUpAmpTraining3D::observationSize() const {
-    return m_impl->contract->bodyObservationSize() + CommandSize + GroundObservationSize + PhaseSize;
+    return m_impl->contract->bodyObservationSize() + CommandSize + GroundObservationSize + PhaseSize + EnvironmentSize;
 }
 std::size_t TrackingGetUpAmpTraining3D::actionSize() const { return m_impl->contract->actionSize(); }
 std::size_t TrackingGetUpAmpTraining3D::ampSize() const { return m_impl->features->size(); }
@@ -1676,6 +1957,33 @@ TrackingGetUpAmpWorldView3D TrackingGetUpAmpTraining3D::worldView(std::size_t wo
     return view;
 }
 
+void TrackingGetUpAmpTraining3D::scenerySegments(std::size_t world, std::vector<std::pair<Vec3, Vec3>>& out) const {
+    const Impl& impl = *m_impl;
+    const Impl::World& w = impl.worlds.at(world);
+    out.clear();
+    for (const Impl::World::SceneryBox& box : w.boxes) {
+        if (!w.scene->contains(box.body)) continue;
+        const PhysicsBodyState3D state = w.scene->bodyState(box.body);
+        const Vec3 center = state.position + state.orientation.rotate(box.local);
+        const Quaternion orientation = (state.orientation * box.orientation).normalized();
+        const Vec3 half { std::min(box.half.x, 2.5f), std::min(box.half.y, 2.5f), box.half.z };
+        const auto corner = [&](int k) {
+            return center + orientation.rotate({ (k & 1) ? half.x : -half.x, (k & 2) ? half.y : -half.y, (k & 4) ? half.z : -half.z });
+        };
+        for (int k = 0; k < 8; ++k)
+            for (const int bit : { 1, 2, 4 })
+                if ((k & bit) == 0) out.emplace_back(corner(k), corner(k | bit));
+    }
+}
+
+void TrackingGetUpAmpTraining3D::sceneryBodies(std::size_t world, std::vector<const RagdollState3D*>& out) const {
+    const Impl::World& w = m_impl->worlds.at(world);
+    out.clear();
+    for (const RagdollHandle3D extra : w.extras)
+        if (w.scene->contains(extra))
+            if (const RagdollState3D* other = w.scene->ragdollStateView(extra); other != nullptr) out.push_back(other);
+}
+
 std::string TrackingGetUpAmpTraining3D::frameLines(std::size_t world) const {
     const Impl& impl = *m_impl;
     const Impl::World& w = impl.worlds.at(world);
@@ -1694,6 +2002,25 @@ std::string TrackingGetUpAmpTraining3D::frameLines(std::size_t world) const {
         out << "P " << contact.position.x << ' ' << contact.position.y << ' ' << contact.position.z << ' '
             << contact.linkIndex << ' ' << contact.normal.x << ' ' << contact.normal.y << ' ' << contact.normal.z << ' '
             << contact.normalImpulseNewtonSeconds << '\n';
+    // (O cenario: as caixas, "O" - centro, orientacao e meias medidas -, e os corpos soltos, "D", um depois do outro.)
+    for (const Impl::World::SceneryBox& box : w.boxes) {
+        if (!w.scene->contains(box.body)) continue;
+        const PhysicsBodyState3D state = w.scene->bodyState(box.body);
+        const Vec3 center = state.position + state.orientation.rotate(box.local);
+        const Quaternion orientation = (state.orientation * box.orientation).normalized();
+        out << "O " << center.x << ' ' << center.y << ' ' << center.z << ' ' << orientation.x << ' ' << orientation.y << ' '
+            << orientation.z << ' ' << orientation.w << ' ' << box.half.x << ' ' << box.half.y << ' ' << box.half.z << '\n';
+    }
+    for (const RagdollHandle3D extra : w.extras) {
+        const RagdollState3D* other = w.scene->contains(extra) ? w.scene->ragdollStateView(extra) : nullptr;
+        if (other == nullptr) continue;
+        for (std::size_t i = 0; i < impl.profile->links.size() && i < other->links.size(); ++i) {
+            const RagdollLinkDefinition3D& link = impl.profile->links[i];
+            const PhysicsBodyState3D& state = other->links[i];
+            const Vec3 center = state.position + state.orientation.rotate(link.collider.localPosition);
+            out << "D " << link.id << ' ' << center.x << ' ' << center.y << ' ' << center.z << " 0 0 0 1\n";
+        }
+    }
     // (O alvo do levantar em movimento, como o "A" das folhas da locomocao.)
     if (w.startKind == 3 || w.startKind == 5)
         out << "A " << w.target.x << ' ' << w.target.y << " 0 " << ArriveRadius << '\n';

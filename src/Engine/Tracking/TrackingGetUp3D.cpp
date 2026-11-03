@@ -163,6 +163,51 @@ void TrackingGetUpContract3D::observeGround(std::span<const PhysicsBodyState3D> 
     out[n++] = other ? 1.0f : 0.0f;
 }
 
+void TrackingGetUpContract3D::observeEnvironment(const PhysicsScene3D* scene, RagdollHandle3D self,
+    std::span<const PhysicsBodyState3D> links, float groundHeight, std::span<float> out) const {
+    const RagdollProfile3D& profile = *m_profile;
+    std::size_t n = 0;
+    const auto below = [&](Vec3 from, Vec3* normal) {
+        PhysicsRayHit3D hit;
+        if (scene != nullptr && scene->raycastIgnoringRagdoll({ from, { 0.0f, 0.0f, -1.0f } }, EnvironmentDrop, self, hit)) {
+            if (normal != nullptr) *normal = hit.normal;
+            return hit.distance;
+        }
+        if (normal != nullptr) *normal = { 0.0f, 0.0f, 1.0f };
+        return scene != nullptr ? EnvironmentDrop : std::clamp(from.z - groundHeight, 0.0f, EnvironmentDrop);
+    };
+    for (std::uint32_t i : m_groundLinks)
+        out[n++] = i < links.size() ? below(rlLinkCenterOfMass3D(profile.links[i], links[i]), nullptr) : EnvironmentDrop;
+    const PhysicsBodyState3D& root = links[m_root];
+    const float yaw = trackingBodyYaw3D(profile.links[m_root], root);
+    const Vec3 forward { std::cos(yaw), std::sin(yaw), 0.0f }, left { -std::sin(yaw), std::cos(yaw), 0.0f };
+    Vec3 normal { 0.0f, 0.0f, 1.0f };
+    below(rlLinkCenterOfMass3D(profile.links[m_root], root), &normal);
+    out[n++] = dot(normal, forward);
+    out[n++] = dot(normal, left);
+    for (const std::uint32_t origin : { m_root, m_chest }) {
+        const Vec3 from = rlLinkCenterOfMass3D(profile.links[origin], links[origin]);
+        for (std::size_t k = 0; k < EnvironmentRays; ++k) {
+            const float angle = yaw + 6.2831853f * static_cast<float>(k) / static_cast<float>(EnvironmentRays);
+            PhysicsRayHit3D hit;
+            const bool blocked = scene != nullptr
+                && scene->raycastIgnoringRagdoll({ from, { std::cos(angle), std::sin(angle), 0.0f } }, EnvironmentReach, self, hit);
+            out[n++] = blocked ? std::clamp(hit.distance / EnvironmentReach, 0.0f, 1.0f) : 1.0f;
+        }
+    }
+}
+
+std::vector<std::string> TrackingGetUpContract3D::environmentObservationNames() {
+    std::vector<std::string> names;
+    for (const char* link : GroundLinks) names.push_back(std::string("amb.altura.") + link);
+    names.emplace_back("amb.inclinacao.frente");
+    names.emplace_back("amb.inclinacao.lado");
+    for (const char* origin : { "pelve", "peito" })
+        for (std::size_t k = 0; k < EnvironmentRays; ++k)
+            names.push_back(std::string("amb.raio.") + origin + "." + std::to_string(k * 45));
+    return names;
+}
+
 std::vector<std::string> TrackingGetUpContract3D::groundObservationNames() {
     std::vector<std::string> names;
     for (const char* frame : { "chao.baixo_pelve", "chao.baixo_peito", "chao.vel_cm_peito" })

@@ -105,6 +105,11 @@ struct LegacyAthleteState3D {
     PhysicsCharacterState3D virtualCapsule;
     bool virtualCapsuleValid = false;
     Vec3 virtualFollowVelocity;
+    // O empurrao na capsula virtual (02/11): ao menos a velocidade de quem encosta e se move, na direcao do contato,
+    // gasta em VirtualPushSeconds depois, por fora da frenagem dela (sem pedido, ela o apagava no mesmo tick).
+    Vec3 virtualPushVelocity;
+    // Empurrando outro corpo de pe (0..1; o controlado vai na velocidade dividida com ele).
+    float pushingShare = 0.0f;
     // Neste fisico ele ja esteve levantando (o fim do levantar vai direto a
     // ponte).
     bool getUpSeen = false;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Engine/Locomotion/HumanCadence3D.hpp"
+
 // Os ajudantes internos do controle fisico (a reescrita: o update em blocos, cada um num
 // arquivo CharacterLocomotion3D_<bloco>.cpp): as contas e as constantes que antes moravam no
 // namespace anonimo de CharacterLocomotion3D.cpp. So os arquivos CharacterLocomotion3D*.cpp incluem.

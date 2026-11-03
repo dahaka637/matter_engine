@@ -8,6 +8,7 @@
 #include "Engine/Physics/PhysicsScene3D.hpp"
 
 #include <array>
+#include <limits>
 #include <span>
 #include <cstdint>
 #include <functional>
@@ -998,6 +999,12 @@ private:
     // ciclo (fracao), se o pe ja tocou no apoio atual do clipe, e de que lado
     // e cada link de perna (-1 nao e perna).
     std::array<float, 2> m_legPhaseLead {};
+    // A trava da cadencia (HumanCadence3D): a sobra deste tick (ciclos) e o avanco proprio de cada perna ja aplicado -
+    // ele so cresce dentro da sobra (a perna adiantando-se era passo rapido por fora da trava).
+    float m_cadenceLeftover = std::numeric_limits<float>::infinity();
+    // A trava vale neste tick (so correndo, fora do tropeco e da reacao a empurrao; o ciclo decide).
+    bool m_cadenceCapActive = false;
+    std::array<float, 2> m_appliedLegLead {};
     std::array<bool, 2> m_legTouchedInStance {};
     std::vector<int> m_legSideOfLink;
     // Os nomes dos links viram bandeiras uma vez por perfil (os drives

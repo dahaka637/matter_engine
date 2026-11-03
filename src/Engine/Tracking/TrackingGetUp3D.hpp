@@ -56,6 +56,20 @@ public:
     void observeGround(std::span<const PhysicsBodyState3D> links, std::span<const RagdollInteraction3D> contacts,
         float groundHeight, std::span<float> out) const;
     [[nodiscard]] static std::vector<std::string> groundObservationNames();
+    // O ambiente (02/11, o contrato v5 - ele: "para que ele consiga identificar ambiente, altura com o chao, partes do
+    // corpo com altura do chao, velocidade e direcao, para atuar melhor no evitamento de quedas"; o levantar com paredes,
+    // pilares, corpos embaixo e em cima, terreno inclinado): a altura de cada GroundLink ate o que esta embaixo dele (o
+    // raio para baixo, tudo menos o proprio corpo: o chao, o degrau, a rampa, outro corpo; ate EnvironmentDrop m), a
+    // inclinacao do chao embaixo da pelve no rumo do corpo (frente e lado) e oito raios horizontais na pelve e oito no
+    // peito alto, no rumo do corpo a cada 45 graus, ate EnvironmentReach m (a fracao livre: 1, nada). Sem a cena (scene
+    // nulo), o plano em groundHeight e nada em volta.
+    static constexpr std::size_t EnvironmentRays = 8;
+    static constexpr float EnvironmentReach = 1.5f;
+    static constexpr float EnvironmentDrop = 2.5f;
+    static constexpr std::size_t EnvironmentObservationSize = std::size(GroundLinks) + 2 + 2 * EnvironmentRays;
+    void observeEnvironment(const PhysicsScene3D* scene, RagdollHandle3D self, std::span<const PhysicsBodyState3D> links,
+        float groundHeight, std::span<float> out) const;
+    [[nodiscard]] static std::vector<std::string> environmentObservationNames();
     // O minimo e o maximo (rad) de cada eixo da acao, os da junta no perfil (o levantar livre normaliza a acao neles).
     [[nodiscard]] std::vector<float> actionRanges() const;
     // As coordenadas de junta de uma pose na ordem da acao (o alvo que a reproduz).

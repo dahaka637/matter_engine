@@ -126,7 +126,7 @@ def export(model: Policy, path: Path, meta: dict) -> None:
     header.update({"schema": "matter-rl-policy-1", "observationSize": layers[0]["inputs"],
                    "actionSize": layers[-1]["outputs"], "activation": "relu",
                    "normalizer": {"mean": mean_at, "invStd": inv_at, "clip": 5.0}, "actionLimit": 3.14159,
-                   "layers": layers, "observationLayout": "levantar-v4", "actionLayout": "levantar-v1",
+                   "layers": layers, "observationLayout": "levantar-v5", "actionLayout": "levantar-v1",
                    "createdUtc": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     text = json.dumps(header, ensure_ascii=False).encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -215,6 +215,8 @@ def summarize(rows: np.ndarray, prefix: str) -> dict:
                         # (O cenario sujo: quantos levantaram com a parede ou o peso.)
                         dirty = rows[:, 24] > 0
                         out[f"{prefix}sujo_levantou"] = float((rows[dirty, 5] >= 0).mean()) if dirty.any() else None
+                        stood = dirty & (rows[:, 5] >= 0)
+                        out[f"{prefix}sujo_tempo"] = float(rows[stood, 5].mean()) if stood.any() else None
         avoid = rows[:, 1] == 4
         if avoid.any():
             ok = avoid & (rows[:, 14] >= 0)
@@ -222,6 +224,10 @@ def summarize(rows: np.ndarray, prefix: str) -> dict:
             out[f"{prefix}evitou"] = float((rows[avoid, 21 if rows.shape[1] > 21 else 13] == 0).mean())
             out[f"{prefix}recompos"] = float(ok.sum() / avoid.sum())
             out[f"{prefix}recompos_s"] = float(rows[ok, 14].mean()) if ok.any() else None
+            if rows.shape[1] > 24:
+                # (O evitar ambientado: so os episodios do evitar com o cenario.)
+                scenery = avoid & (rows[:, 24] > 0)
+                out[f"{prefix}evitou_ambientes"] = float((rows[scenery, 21] == 0).mean()) if scenery.any() else None
     return out
 
 
@@ -392,6 +398,13 @@ def main() -> int:
     # ou um boneco por cima": as paredes e caixas encostadas e os pesos caindo em cima.)
     parser.add_argument("--obstaculo", type=float, default=0.0, help="a fatia com uma parede ou caixa encostada no corpo")
     parser.add_argument("--peso-em-cima", type=float, default=0.0, help="a fatia com um peso caindo em cima do corpo")
+    # (02/11, ele: "parede ao lado, paredes aos lados, pilares, corpos ragdoll embaixo dele... e tambem em cima dele, em
+    # terrenos inclinados": as fatias de cada ambiente, sorteadas uma a uma.)
+    parser.add_argument("--ambientes", type=float, nargs=6, default=[0.0] * 6,
+                        metavar=("CORREDOR", "PILARES", "RAMPA", "ACIDENTADO", "CORPOS_EMBAIXO", "CORPO_EM_CIMA"),
+                        help="as fatias do corredor, dos pilares, da rampa, do chao acidentado, dos corpos embaixo e do corpo em cima")
+    parser.add_argument("--evitar-ambientes", type=float, default=0.0,
+                        help="a fatia dos episodios do evitar a queda com um ambiente garantido (a variante ambientada)")
     # (01/11, ele: o levantar do chao "com gestos mais sutis e suaves, menos exagerados, sem o boneco ficar distorcido ou
     # fazer coisas inumanas"; a velocidade deixa de ser o foco. O discriminador separava tudo - clipes +0,90, a rede
     # -0,90 - e a nota de estilo ficava em ~0,08 para qualquer movimento: o gp maior o suaviza. E o custo dos alvos perto
@@ -423,6 +436,9 @@ def main() -> int:
                         help="na locomocao, o alvo = clipe x (1 - isto) + rede x isto (1: a rede livre)")
     parser.add_argument("--queda-programada", action="store_true",
                         help="a queda sem volta e a da locomocao fisica ate assentar (sem a rede); dai a rede levanta")
+    parser.add_argument("--rolar-clipe", type=float, default=1.0,
+                        help="deitado de costas, o rolamento do clipe de levantar de costas nos motores: alvo = clipe x (1 - isto)"
+                             " + rede x isto (1: desligado)")
     parser.add_argument("--levantar-guiado", action="store_true",
                         help="deitado, o clipe de levantar mais parecido guia (nos motores e na imitacao); de pe, o idle")
     parser.add_argument("--levantar-segundos", type=float, default=1.7,
@@ -469,7 +485,8 @@ def main() -> int:
                   "evitar_com_parceiro": args.evitar_com_parceiro, "toque_punicao": args.toque_punicao,
                   "disc_gp": args.disc_gp, "limite": args.limite, "apoio_premio": args.apoio_premio,
                   "protecao_alivio": args.protecao_alivio, "flexao": args.flexao, "obstaculo": args.obstaculo,
-                  "peso_em_cima": args.peso_em_cima,
+                  "peso_em_cima": args.peso_em_cima, "ambientes": list(args.ambientes),
+                  "evitar_ambientes": args.evitar_ambientes,
                   "andar_velocidade": list(args.andar_velocidade), "trote_velocidade": list(args.trote_velocidade),
                   "empurrao_mov_forca": list(args.empurrao_mov_forca), "empurrao_mov_continuo": args.empurrao_mov_continuo,
                   "empurrao_mov_continuo_forca": list(args.empurrao_mov_continuo_forca),
@@ -482,7 +499,7 @@ def main() -> int:
                   "peso_estilo_loco": args.peso_estilo_loco, "suave_loco": args.suave_loco, "passo": args.passo,
                   "mistura_clipe": args.mistura_clipe, "queda_programada": args.queda_programada,
                   "levantar_guiado": args.levantar_guiado, "levantar_segundos": args.levantar_segundos,
-                  "estilo_chao": args.estilo_chao, "chao_altura": args.chao_altura}
+                  "estilo_chao": args.estilo_chao, "chao_altura": args.chao_altura, "rolar_clipe": args.rolar_clipe}
     (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
@@ -495,6 +512,9 @@ def main() -> int:
               locomotion_seconds=args.locomocao_segundos, locomotion_termination=args.queda_encerra,
               **({"clip_blend": args.mistura_clipe} if args.mistura_clipe < 1.0 else {}),
               **({"protective_fall": True} if args.queda_programada else {}),
+              **({"roll_blend": args.rolar_clipe} if args.rolar_clipe < 1.0 else {}),
+              **({"scenery": tuple(args.ambientes)} if any(args.ambientes) else {}),
+              **({"avoid_scenery_fraction": args.evitar_ambientes} if args.evitar_ambientes > 0 else {}),
               **({"get_up_guide": True, "get_up_seconds": args.levantar_segundos} if args.levantar_guiado else {}))
     batch = native.GetUpAmpBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
                                  seed=args.semente, clip_start_fraction=args.comeco_clipe,

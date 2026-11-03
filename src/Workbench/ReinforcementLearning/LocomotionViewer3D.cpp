@@ -232,7 +232,8 @@ struct LocomotionViewer3D::Impl {
         const bool moving = getUpDown && getUpVelocity.length() > GetUpPolicy3D::MovingRequestSpeed;
         for (int k = 0; k < TicksPerDecision; ++k) {
             if (getUpTicks++ % GetUpPolicy3D::TicksPerDecision == 0)
-                getUpPolicy->decide(profile, body, getUpDrives, moving ? getUpVelocity : Vec3 {}, athlete.groundHeight);
+                getUpPolicy->decide(profile, body, getUpDrives, moving ? getUpVelocity : Vec3 {}, athlete.groundHeight,
+                    scene.get(), handle);
             scene->setRagdollActiveDriveTargets(handle, getUpDrives, false);
             scene->setRagdollFrictionScale(handle, 1.0f);
             scene->simulate(TickSeconds);

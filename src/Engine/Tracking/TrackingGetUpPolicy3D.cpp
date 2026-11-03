@@ -20,11 +20,12 @@ constexpr float CommandMaximumSpeed = 5.0f;
 
 TrackingGetUpPolicy3D::TrackingGetUpPolicy3D(const std::filesystem::path& file) : m_policy(std::make_unique<PolicyRuntime3D>(file)) {
     const std::string& layout = m_policy->info().observationLayout;
-    if (layout != "levantar-v2" && layout != "levantar-v3" && layout != "levantar-v4")
-        throw std::runtime_error("rede do levantar: layout " + layout + " (esperado levantar-v2, v3 ou v4)");
+    if (layout != "levantar-v2" && layout != "levantar-v3" && layout != "levantar-v4" && layout != "levantar-v5")
+        throw std::runtime_error("rede do levantar: layout " + layout + " (esperado levantar-v2 a v5)");
     m_ground = layout != "levantar-v2";
     // shortcut: no jogo a fase do clipe vai em zero (sem o relogio do passo); quando soltar a imitacao, gerar a fase.
-    m_phase = layout == "levantar-v4" ? 2 : 0;
+    m_phase = layout == "levantar-v4" || layout == "levantar-v5" ? 2 : 0;
+    m_environment = layout == "levantar-v5" ? TrackingGetUpContract3D::EnvironmentObservationSize : 0;
 }
 
 TrackingGetUpPolicy3D::~TrackingGetUpPolicy3D() = default;
@@ -37,7 +38,8 @@ const TrackingGetUpContract3D& TrackingGetUpPolicy3D::contractOf(const RagdollPr
         if (known == &profile) return *contract;
     auto contract = std::make_unique<TrackingGetUpContract3D>(profile);
     const std::size_t ground = m_ground ? TrackingGetUpContract3D::GroundObservationSize : 0;
-    if (contract->bodyObservationSize() + std::size(NoCommand) + ground + m_phase != m_policy->observationSize()
+    if (contract->bodyObservationSize() + std::size(NoCommand) + ground + m_phase + m_environment
+            != m_policy->observationSize()
         || contract->actionSize() != m_policy->actionSize())
         throw std::runtime_error("rede do levantar: o corpo nao bate com a rede");
     m_contracts.emplace_back(&profile, std::move(contract));
@@ -45,7 +47,8 @@ const TrackingGetUpContract3D& TrackingGetUpPolicy3D::contractOf(const RagdollPr
 }
 
 void TrackingGetUpPolicy3D::decide(const RagdollProfile3D& profile, const RagdollState3D& state,
-    std::vector<RagdollDriveTarget3D>& drives, Vec3 velocity, float groundHeight) const {
+    std::vector<RagdollDriveTarget3D>& drives, Vec3 velocity, float groundHeight, const PhysicsScene3D* scene,
+    RagdollHandle3D self) const {
     const TrackingGetUpContract3D& contract = contractOf(profile);
     const std::span<const PhysicsBodyState3D> links(state.links);
     // (Por thread: os mundos do lote decidem em paralelo; a rede ja tem o rascunho dela por thread.)
@@ -57,6 +60,10 @@ void TrackingGetUpPolicy3D::decide(const RagdollProfile3D& profile, const Ragdol
     if (m_ground)
         contract.observeGround(links, state.interactions, groundHeight,
             std::span<float>(observation).subspan(body + std::size(NoCommand), TrackingGetUpContract3D::GroundObservationSize));
+    if (m_environment > 0)
+        contract.observeEnvironment(scene, self, links, groundHeight,
+            std::span<float>(observation).subspan(body + std::size(NoCommand) + TrackingGetUpContract3D::GroundObservationSize
+                + m_phase, m_environment));
     float* command = observation.data() + body;
     const float speed = std::hypot(velocity.x, velocity.y);
     if (speed > GetUpPolicy3D::MovingRequestSpeed && !links.empty()) {

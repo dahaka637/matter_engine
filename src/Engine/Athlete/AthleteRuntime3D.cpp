@@ -129,9 +129,11 @@ void AthleteRuntime3D::update(PhysicsScene3D& scene, const AthleteRuntimeAssets3
         AthleteState3D& athlete = *slot.athlete;
         const bool controlled = slot.entityId == tickControl.controlledEntityId;
         // (01/11: parada enquanto a rede do levantar dirige; na volta ela comeca do zero.)
+        // (02/11, ele: empurrado, o boneco que ele nao controla "nao da esses passos de recuperacao... ja que treinamos
+        // isso exaustivamente no RL": ela so dirigia o controlado e os comandados - o boneco solto rodava o classico
+        // puro. Agora ele tambem, parado no rumo dele, como no exercicio parado com empurroes do treino.)
         const bool driven = m_locomotionPolicy != nullptr && settings.locomotionPolicy
-            && (controlled || slot.command != nullptr) && athleteTelemetry3D(athlete).mode == BodyModeKind3D::Physical
-            && !athlete.getUpRecovery.active;
+            && athleteTelemetry3D(athlete).mode == BodyModeKind3D::Physical && !athlete.getUpRecovery.active;
         if (driven) {
             AthleteCommand3D command;
             if (controlled) {
@@ -139,8 +141,10 @@ void AthleteRuntime3D::update(PhysicsScene3D& scene, const AthleteRuntimeAssets3
                 command.facingYawRadians = tickControl.facingYawRadians;
                 command.lookPitchRadians = tickControl.lookPitchRadians;
                 command.sprinting = tickControl.sprinting;
-            } else {
+            } else if (slot.command != nullptr) {
                 command = *slot.command;
+            } else {
+                command.facingYawRadians = athlete.legacy.guideFacingYawRadians;
             }
             m_locomotionPolicy->before(athlete, *slot.state, command, deltaTime, assets);
             athlete.policyFromRuntime = true;

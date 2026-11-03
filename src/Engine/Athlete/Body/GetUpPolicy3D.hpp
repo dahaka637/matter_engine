@@ -53,9 +53,11 @@ public:
     virtual ~GetUpPolicy3D() = default;
     [[nodiscard]] virtual std::uint64_t iteration() const = 0;
     // body: os links e os contatos de agora; velocity: o pedido de deslocamento no chao (m/s, no mundo; zero, de pe no
-    // lugar): ela levanta virando para la; groundHeight: a altura do chao embaixo dele (m).
+    // lugar): ela levanta virando para la; groundHeight: a altura do chao embaixo dele (m); scene e self: a cena e o
+    // proprio corpo, para a rede ver o ambiente (os raios do layout levantar-v5; sem cena, o chao plano e nada em volta).
     virtual void decide(const RagdollProfile3D& profile, const RagdollState3D& body,
-        std::vector<RagdollDriveTarget3D>& drives, Vec3 velocity = {}, float groundHeight = 0.0f) const = 0;
+        std::vector<RagdollDriveTarget3D>& drives, Vec3 velocity = {}, float groundHeight = 0.0f,
+        const PhysicsScene3D* scene = nullptr, RagdollHandle3D self = {}) const = 0;
 };
 
 } // namespace MatterEngine

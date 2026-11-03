@@ -46,7 +46,8 @@ class TrackingGetUpPostureProbe3D final {
 public:
     explicit TrackingGetUpPostureProbe3D(const RagdollProfile3D& profile);
 
-    [[nodiscard]] TrackingGetUpPosture3D measure(std::span<const PhysicsBodyState3D> links) const;
+    // floor: a altura do chao embaixo da pelve (m; a rampa do treino): as alturas da cabeca e da pelve contam dele.
+    [[nodiscard]] TrackingGetUpPosture3D measure(std::span<const PhysicsBodyState3D> links, float floor = 0.0f) const;
     // A nota de estado da tarefa: so de pe, 0,3 mais o centro de massa parado no chao 0,1 (exp(-2 v^2)) mais a pose do
     // parado 0,35 e a coluna reta 0,25 (31/10 07h50, ele: de pe "nao tem referencia da pose do parado idle" - a cabeca
     // ia para tras e o peito arqueava; 21h25: "reforcar... que quando de pe fique o mais proximo possivel do nosso idle

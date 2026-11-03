@@ -817,6 +817,23 @@ std::vector<Scenario> scenarios() {
         rival("boneco_ombro_anda", 0.5f, { 5.0f, 0.4f, 0.0f }, 0.0f);
         rival("boneco_ombro_corre", 1.0f, { 8.0f, 0.4f, 0.0f }, 0.0f);
         rival("boneco_frente_corre", 1.0f, { 8.0f, 0.0f, 0.0f }, Pi);
+        // (02/11, ele: empurrando um boneco que nao controla, ele nao sai do lugar no padrao - devia empurrar a capsula e
+        // dar os passos -; derrubado, ao levantar leva um puxao de volta.)
+        {
+            Scenario s { "boneco_empurra", 7.0f, runKeys(0.33f) };
+            s.rival = true;
+            s.rivalStart = { 2.5f, 0.0f, 0.0f };
+            s.rivalYaw = 0.0f;
+            list.push_back(s);
+        }
+        {
+            Scenario s { "boneco_derruba", 12.0f, [](float t) { Keys k; k.forward = t > 0.3f && t < 1.45f ? 1.0f : t > 1.45f && t < 2.0f ? -1.0f : 0.0f;
+                k.sprint = true; return k; } };
+            s.rival = true;
+            s.rivalStart = { 7.0f, 0.0f, 0.0f };
+            s.rivalYaw = 0.0f;
+            list.push_back(s);
+        }
         {
             // (O carrinho no boneco parado de costas: o carrinho fica no padrao, o
             // boneco leva o carrinho e vai ao fisico.)
@@ -1080,6 +1097,19 @@ std::vector<Scenario> scenarios() {
         list.push_back(s);
     }
     {
+        // (02/11 20h, ele: "o auto-equilibrio do b21 esta HORRIVEL... consegue cair parado com muita facilidade": parado
+        // 20 s, e parado com empurroes a cada 3 s, de rumos variados e forca crescente - Dv de ~0,4 a ~1,6 m/s em 80 kg.)
+        {
+            Scenario still { "parado_20", 20.0f, [](float) { return Keys {}; } };
+            list.push_back(still);
+            Scenario pushed { "parado_empurroes", 21.0f, [](float) { return Keys {}; } };
+            const float forces[6] = { 350.0f, 500.0f, 650.0f, 800.0f, 1000.0f, 1300.0f };
+            const float angles[6] = { 1.57f, -1.57f, 0.0f, 3.14f, 0.8f, -2.3f };
+            for (int k = 0; k < 6; ++k)
+                pushed.pushes.push_back({ 2.0f + 3.0f * k, 0.1f,
+                    { forces[k] * std::cos(angles[k]), forces[k] * std::sin(angles[k]), 0.0f } });
+            list.push_back(pushed);
+        }
         Scenario s { "empurrao_leve", 3.0f, [](float) { return Keys {}; } };
         s.pushes.push_back({ 1.0f, 0.1f, { 0.0f, 350.0f, 0.0f } });
         list.push_back(s);
@@ -1820,7 +1850,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         const auto runtimeBegin = std::chrono::steady_clock::now();
         std::array<AthleteSlot3D, 2> slots { slot, AthleteSlot3D { 2, rivalHandle, &rivalState, true, false, &rivalAthlete } };
         AthleteRuntimeSettings3D tickSettings = step < 0 ? warmSettings : policySettings;
-        if (scenario.rival) tickSettings.looseDefaultLocomotion = true;
+        // (XBONECOFISICO=1: o boneco no fisico, sem o padrao dos bonecos - 02/11, o empurrao nele.)
+        if (scenario.rival) tickSettings.looseDefaultLocomotion = std::getenv("XBONECOFISICO") == nullptr;
         // A IA de captura: o boneco joga pelo piloto (o controlado e o jogador).
         AthleteCommand3D pilotCommand;
         if (scenario.rivalPilot && step >= 0 && !rivalState.links.empty()) {
@@ -2145,6 +2176,29 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     std::hypot(pelvis.x - scenario.rivalStart.x, pelvis.y - scenario.rivalStart.y));
             }
             metrics.rivalFinalMode = now;
+            // XRIVAL=1: a pelve, a capsula virtual e o modo do boneco a cada 0,1 s, e todo salto da pelve num tick
+            // (o puxao de volta, 02/11).
+            if (std::getenv("XRIVAL") && step >= 0 && !rivalState.links.empty()) {
+                static Vec3 last; static bool valid = false;
+                const Vec3 p = rivalState.links.front().position, v = rivalState.links.front().linearVelocity;
+                const Vec3 c = rivalAthlete.legacy.virtualCapsule.position;
+                const float jump = valid ? (p - (last + v * Dt)).length() : 0.0f;
+                if (step % 12 == 0 || jump > 0.02f)
+                    std::printf("  rival t %.3f %s pelve %.2f %.2f %.2f capsula %.2f %.2f vel %.2f salto %.3f estado %d capvel %.2f %.2f "
+                                "seguir %.2f %.2f base %.2f\n", t,
+                        bodyModeName3D(now), p.x, p.y, p.z, c.x, c.y, std::hypot(v.x, v.y), jump,
+                        static_cast<int>(rivalAthlete.legacy.locomotion.telemetry().state),
+                        rivalAthlete.legacy.virtualCapsule.velocity.x, rivalAthlete.legacy.virtualCapsule.velocity.y,
+                        rivalAthlete.legacy.virtualFollowVelocity.x, rivalAthlete.legacy.virtualFollowVelocity.y,
+                        rivalAthlete.stance.baseShift().length());
+                if (step % 12 == 0 && std::getenv("XRIVAL")[0] == '2') {
+                    const CharacterLocomotionTelemetry3D& rt = rivalAthlete.legacy.locomotion.telemetry();
+                    std::printf("    passos %d captura-fora %.2f recuperacao %d reativo %.2f\n",
+                        static_cast<int>(rivalAthlete.legacy.locomotion.contactPlan().stepsStarted), rt.captureOutsideMeters,
+                        rt.footworkAllowRecovery ? 1 : 0, rt.reactiveShare);
+                }
+                last = p; valid = true;
+            }
         }
         if (scenario.rival && step >= 0 && !bodyState.links.empty() && !rivalState.links.empty()) {
             const Vec3 a = bodyState.links.front().position, b = rivalState.links.front().position;
@@ -2762,6 +2816,68 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 if ((left || right) && !lt.footPlanted[left ? 0 : 1] && i < bodyState.links.size())
                     effect.footPeak = std::max(effect.footPeak, bodyState.links[i].position.z - athlete.groundHeight);
             }
+        }
+        // XCADENCIA=1: os pousos por segundo contra os humanos na velocidade do corpo, por janela de 1 s (02/11:
+        // a B21 frenetica). No fim, o pior excesso.
+        if (std::getenv("XCADENCIA") && step >= 0) {
+            static int touch = 0, ticks = 0; static float speedSum = 0.0f, worst = 0.0f; static bool planted[2] = { true, true };
+            // (O pouso pelo pe de verdade: acima de 7 cm e depois abaixo de 4,5 cm do chao.)
+            for (int side = 0; side < 2; ++side) {
+                std::size_t foot = 0;
+                for (std::size_t i = 0; i < profile.links.size(); ++i)
+                    if (profile.links[i].id == (side == 0 ? "LeftFoot" : "RightFoot")) foot = i;
+                const float height = bodyState.links[foot].position.z - athlete.groundHeight;
+                if (planted[side] && height > 0.07f) planted[side] = false;
+                else if (!planted[side] && height < 0.045f) {
+                    planted[side] = true; ++touch;
+                    {
+                        // (O passo e o pouso do outro pe; o mesmo pe de novo e um toque, contado a parte.)
+                        // (O ciclo de cada pe: do pouso ao pouso seguinte dele; a cadencia e 2 / isto.)
+                        static float lastTouch[2] = { -1.0f, -1.0f };
+                        const Vec3 com = bodyState.links.front().linearVelocity;
+                        if (lastTouch[side] >= 0.0f && mode() == BodyModeKind3D::Physical)
+                            std::printf("  intervalo t %.3f %.3f vel %.2f passo\n", t, (t - lastTouch[side]) * 0.5f,
+                                std::hypot(com.x, com.y));
+                        lastTouch[side] = t;
+                    }
+                    if (std::string(std::getenv("XCADENCIA")) == "2") {
+                        const CharacterLocomotionTelemetry3D& lt = legacy.locomotion.telemetry();
+                        std::printf("  pouso t %.3f %c fase %.2f tropeco %.2f risco %.2f passo-tropeco %d reativo %.2f estado %d\n", t,
+                            side == 0 ? 'E' : 'D', lt.cyclePhase, lt.tripRecovery, lt.stumbleRisk, lt.stumbleStepping ? 1 : 0,
+                            lt.reactiveShare, static_cast<int>(lt.state));
+                    }
+                }
+            }
+            speedSum += std::hypot(bodyState.links.front().linearVelocity.x, bodyState.links.front().linearVelocity.y);
+            if (++ticks == 120) {
+                const float v = speedSum / ticks;
+                const float natural = v <= 1.4f ? 1.9f : v <= 3.0f ? 1.9f + (v - 1.4f) / 1.6f * 0.83f
+                    : v <= 7.5f ? 2.73f + (v - 3.0f) / 4.5f * 1.53f : 4.26f;
+                const float ratio = touch / natural;
+                if (mode() == BodyModeKind3D::Physical && v > 0.5f) worst = std::max(worst, ratio);
+                std::printf("  cad t %.1f %s vel %.2f passos/s %d humano %.2f razao %.2f (pior %.2f)\n", t, modeOf(), v, touch,
+                    natural, ratio, worst);
+                touch = 0; ticks = 0; speedSum = 0.0f;
+            }
+        }
+        // XSALTOPE=1: o alvo de cada pe das pegadas que salta mais que 3 cm num tick (02/11, os trancos), com o modo
+        // antes e depois; no fim, quantos e o maior.
+        if (std::getenv("XSALTOPE") && settings.footstepLocomotion && step >= 0) {
+            // (O salto e a mudanca brusca de velocidade - a posicao contra a do tick anterior continuando o movimento:
+            // correndo, o pe no balanco anda 0,12 m por tick de verdade.)
+            static std::array<Vec3, 2> last {}, before {}; static std::array<int, 2> lastMode { -1, -1 }; static int valid = 0;
+            for (std::size_t side = 0; side < 2; ++side) {
+                const Vec3 now = athlete.footTargets[side].position;
+                const int modeNow = static_cast<int>(athlete.footTargets[side].mode);
+                if (valid >= 2 && (mode() == BodyModeKind3D::Animated || mode() == BodyModeKind3D::Returning)) {
+                    const float jump = (now - (last[side] * 2.0f - before[side])).length();
+                    if (jump > 0.01f)
+                        std::printf("  saltope t %.3f %c %.3f m modo %c>%c\n", t, side == 0 ? 'E' : 'D', jump,
+                            "FLSPD"[std::clamp(lastMode[side], 0, 4)], "FLSPD"[std::clamp(modeNow, 0, 4)]);
+                }
+                before[side] = last[side]; last[side] = now; lastMode[side] = modeNow;
+            }
+            ++valid;
         }
         // XPRONTO=1: as condicoes da volta do fisico ao padrao, a cada 0,1 s.
         if (std::getenv("XPRONTO") && mode() == BodyModeKind3D::Physical && step % 12 == 0) {
@@ -3891,6 +4007,8 @@ int main(int argc, char** argv) {
     if (const char* feel = std::getenv("XCORPOFISICO")) settings.physicalFeel = std::atoi(feel);
     // XVOLTA=<x>: a rapidez da volta do fisico ao padrao (1 = a calibrada; 28/10).
     if (const char* rate = std::getenv("XVOLTA")) settings.defaultReturnRate = static_cast<float>(std::atof(rate));
+    // XQUEDAPROG=0: a rede do levantar ja na queda iminente, sem a queda programada antes (02/11), para comparar.
+    if (const char* fall = std::getenv("XQUEDAPROG")) settings.protectiveFallBeforeGetUp = std::atoi(fall) != 0;
     // XPONTE=<s>: a duracao da ponte fisico -> padrao (parado e andando).
     if (const char* bridge = std::getenv("XPONTE"))
         settings.bridgeSeconds = settings.bridgeMovingSeconds = static_cast<float>(std::atof(bridge));

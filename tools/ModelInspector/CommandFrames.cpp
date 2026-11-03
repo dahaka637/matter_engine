@@ -58,6 +58,13 @@ struct DumpFrame {
     // Um segundo corpo (D: o boneco no caminho da sonda, 28/10), desenhado como
     // palitos dos centros dos links aos dos pais.
     std::vector<DumpLink> otherLinks;
+    // As caixas do cenario (O, 02/11: paredes, pilares, rampa, calombos, pesos): centro, orientacao e meias medidas.
+    struct Box {
+        Vec3 center;
+        Quaternion orientation;
+        Vec3 half;
+    };
+    std::vector<Box> boxes;
     bool ballValid = false;
     Vec3 ball;
     std::vector<Vec3> footGoals;
@@ -129,6 +136,11 @@ std::vector<DumpScenario> readDump(const std::string& path) {
             in >> link.id >> link.center.x >> link.center.y >> link.center.z >> link.orientation.x >> link.orientation.y
                 >> link.orientation.z >> link.orientation.w;
             (tag == "D" ? frame->otherLinks : frame->links).push_back(std::move(link));
+        } else if (tag == "O") {
+            DumpFrame::Box box;
+            in >> box.center.x >> box.center.y >> box.center.z >> box.orientation.x >> box.orientation.y >> box.orientation.z
+                >> box.orientation.w >> box.half.x >> box.half.y >> box.half.z;
+            if (in) frame->boxes.push_back(box);
         } else if (tag == "K") {
             in >> frame->ball.x >> frame->ball.y >> frame->ball.z;
             frame->ballValid = static_cast<bool>(in);
@@ -355,22 +367,45 @@ int runFrames(const ModelContext& loadedContext, const CommandLine& line) {
             highlights.push_back(circle(ball, radius, { 0, 1, 0 }, { 0, 0, 1 }, color));
         }
         if (!frame.otherLinks.empty()) {
-            // (O segundo corpo: cada link ligado ao pai, pelos centros.)
+            // (Os outros corpos: cada link ligado ao pai, pelos centros; um corpo novo quando o primeiro link volta.)
             Highlight other;
             other.color = Palette::Focus;
-            for (std::size_t i = 0; i < profile.links.size(); ++i) {
-                const int parent = profile.links[i].parentIndex;
-                if (parent < 0) continue;
-                const DumpLink* child = nullptr;
-                const DumpLink* top = nullptr;
-                for (const DumpLink& link : frame.otherLinks) {
-                    if (link.id == profile.links[i].id) child = &link;
-                    if (link.id == profile.links[static_cast<std::size_t>(parent)].id) top = &link;
+            const std::string& first = frame.otherLinks.front().id;
+            for (std::size_t begin = 0; begin < frame.otherLinks.size();) {
+                std::size_t end = begin + 1;
+                while (end < frame.otherLinks.size() && frame.otherLinks[end].id != first) ++end;
+                for (std::size_t i = 0; i < profile.links.size(); ++i) {
+                    const int parent = profile.links[i].parentIndex;
+                    if (parent < 0) continue;
+                    const DumpLink* child = nullptr;
+                    const DumpLink* top = nullptr;
+                    for (std::size_t k = begin; k < end; ++k) {
+                        const DumpLink& link = frame.otherLinks[k];
+                        if (link.id == profile.links[i].id) child = &link;
+                        if (link.id == profile.links[static_cast<std::size_t>(parent)].id) top = &link;
+                    }
+                    if (child != nullptr && top != nullptr)
+                        other.segments.push_back({ toSkeleton(top->center), toSkeleton(child->center) });
                 }
-                if (child != nullptr && top != nullptr)
-                    other.segments.push_back({ toSkeleton(top->center), toSkeleton(child->center) });
+                begin = end;
             }
             highlights.push_back(std::move(other));
+        }
+        if (!frame.boxes.empty()) {
+            // (As caixas em arame; as muito grandes - a rampa - cortadas em 2,5 m em volta do centro no plano delas.)
+            Highlight scenery;
+            scenery.color = Palette::Info;
+            for (const DumpFrame::Box& box : frame.boxes) {
+                const Vec3 half { std::min(box.half.x, 2.5f), std::min(box.half.y, 2.5f), box.half.z };
+                const auto corner = [&](int k) {
+                    const Vec3 local { (k & 1) ? half.x : -half.x, (k & 2) ? half.y : -half.y, (k & 4) ? half.z : -half.z };
+                    return toSkeleton(box.center + box.orientation.rotate(local));
+                };
+                for (int k = 0; k < 8; ++k)
+                    for (const int bit : { 1, 2, 4 })
+                        if ((k & bit) == 0) scenery.segments.push_back({ corner(k), corner(k | bit) });
+            }
+            highlights.push_back(std::move(scenery));
         }
         for (const Vec3 goal : frame.footGoals) {
             Highlight marker;

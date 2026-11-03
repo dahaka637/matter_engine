@@ -29,7 +29,7 @@ public:
     // (Um contrato por perfil, feito na primeira vez: os corpos do treino da locomocao tem perfis proprios. Varias
     // threads podem decidir ao mesmo tempo, cada mundo o seu corpo.)
     void decide(const RagdollProfile3D& profile, const RagdollState3D& body, std::vector<RagdollDriveTarget3D>& drives,
-        Vec3 velocity, float groundHeight) const override;
+        Vec3 velocity, float groundHeight, const PhysicsScene3D* scene, RagdollHandle3D self) const override;
 
 private:
     [[nodiscard]] const TrackingGetUpContract3D& contractOf(const RagdollProfile3D& profile) const;
@@ -37,6 +37,7 @@ private:
     std::unique_ptr<PolicyRuntime3D> m_policy;
     bool m_ground = false;
     std::size_t m_phase = 0;
+    std::size_t m_environment = 0;
     mutable std::mutex m_mutex;
     mutable std::vector<std::pair<const RagdollProfile3D*, std::unique_ptr<TrackingGetUpContract3D>>> m_contracts;
 };

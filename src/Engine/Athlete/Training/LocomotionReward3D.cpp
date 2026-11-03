@@ -60,6 +60,8 @@ std::array<float, LocomotionRewardTermCount3D> locomotionRewardTerms3D(const Loc
     set(LocomotionRewardTerm3D::Residual, w.residual * m.residual * dt);
     set(LocomotionRewardTerm3D::Still, w.still * m.still * dt);
     set(LocomotionRewardTerm3D::Crossover, w.crossover * m.crossover * dt);
+    set(LocomotionRewardTerm3D::Cadence, w.cadence * m.cadence * dt);
+    set(LocomotionRewardTerm3D::Flight, w.flight * m.flight * dt);
     set(LocomotionRewardTerm3D::Fall, m.fell ? w.fall : 0.0f);
     return terms;
 }

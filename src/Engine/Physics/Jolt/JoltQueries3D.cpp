@@ -1,5 +1,6 @@
 #include "Engine/Physics/Jolt/JoltInternals3D.hpp"
 #include "Engine/Physics/Jolt/JoltShapes3D.hpp"
+#include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/RayCast.h>
@@ -105,6 +106,27 @@ bool PhysicsScene3D::raycastStatic(const Ray3D& ray, float d, PhysicsRayHit3D& h
 bool PhysicsScene3D::sweepSphere(const Ray3D& ray, float r, float d, PhysicsRayHit3D& hit) const { return ordinary(*m_impl, ray, d, r, 3, hit); }
 bool PhysicsScene3D::sweepSphereDynamic(const Ray3D& ray, float r, float d, PhysicsRayHit3D& hit) const { return ordinary(*m_impl, ray, d, r, 2, hit); }
 bool PhysicsScene3D::raycastRagdoll(const Ray3D& ray, float d, PhysicsRagdollRayHit3D& hit) const { return ragdollQuery(*m_impl, ray, d, 0, hit); }
+bool PhysicsScene3D::raycastIgnoringRagdoll(const Ray3D& ray, float d, RagdollHandle3D ignored, PhysicsRayHit3D& out) const {
+    if (d <= 0 || ray.direction.lengthSquared() < 1e-12f) return false;
+    JPH::IgnoreMultipleBodiesFilter filter;
+    if (const auto* record = m_impl->ragdoll(ignored)) {
+        filter.Reserve(static_cast<JPH::uint>(record->links.size()));
+        for (const JPH::BodyID& id : record->links) filter.IgnoreBody(id);
+    }
+    const unsigned mask = (1u << JoltObjectLayers::NonMoving) | (1u << JoltObjectLayers::Moving) | (1u << JoltObjectLayers::Ragdoll);
+    const auto direction = toJolt(ray.direction.normalized() * d);
+    JPH::RayCastResult hit;
+    if (!m_impl->system->GetNarrowPhaseQuery().CastRay({ toJolt(ray.origin), direction }, hit, BroadLayers(mask), Layers(mask), filter))
+        return false;
+    const auto point = toJolt(ray.origin) + hit.mFraction * direction;
+    JPH::BodyLockRead lock(m_impl->system->GetBodyLockInterface(), hit.mBodyID);
+    if (!lock.Succeeded()) return false;
+    out = {};
+    out.position = fromJolt(point);
+    out.normal = fromJolt(lock.GetBody().GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, point));
+    out.distance = hit.mFraction * d;
+    return true;
+}
 bool PhysicsScene3D::sweepSphereRagdoll(const Ray3D& ray, float r, float d, PhysicsRagdollRayHit3D& hit) const { return ragdollQuery(*m_impl, ray, d, r, hit); }
 std::vector<RagdollWorldContact3D> PhysicsScene3D::ragdollPoseWorldContacts(RagdollHandle3D h,
     std::span<const Vec3> positions, std::span<const Quaternion> orientations, float minimumDepth) const {

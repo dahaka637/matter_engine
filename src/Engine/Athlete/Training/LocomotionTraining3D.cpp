@@ -27,6 +27,8 @@ constexpr int TicksPerDecision = LocomotionContract3D::TicksPerDecision;
 // Um pouso conta depois de o pe ficar no ar ao menos isto (s); o pe apoiado
 // escorrega depois de 0,05 s no chao (sem o impacto do pouso).
 constexpr float TouchdownAirSeconds = 0.10f;
+// A media dos passos por segundo (o custo da cadencia).
+constexpr float StepRateSeconds = 0.75f;
 // A interligacao das redes nas quedas (01/11): o tempo maximo da rede do levantar antes do recomeco de sempre (s).
 constexpr float GetUpRecoverySeconds = 8.0f;
 // As quedas guardadas para o treino do levantar entre duas leituras (takeFallStates).
@@ -274,6 +276,10 @@ struct LocomotionTraining3D::Impl {
         double contactScore = 0.0;
         int contactGoals = 0;
         int touchdowns = 0;
+        // Os passos por segundo (media exponencial dos pousos, ~0,75 s).
+        float stepRate = 0.0f;
+        // A fracao do tempo com os dois pes no ar (media exponencial, ~0,75 s).
+        float flightShare = 0.0f;
         double slip = 0.0, power = 0.0, assist = 0.0, posture = 0.0, residual = 0.0, jerk = 0.0;
         // A quietude: o tremor pesado pela quietude e o peso, no episodio; e o
         // giro do peito do tick anterior (para a aceleracao dele).
@@ -473,7 +479,8 @@ struct LocomotionTraining3D::Impl {
                 const std::size_t cell = locomotionCommandCell3D(std::atan2(input.stickLeft, input.stickForward),
                     world.pilot.cameraMode != PilotCameraMode3D::Fixed);
                 const float cap = task.speedCurriculum.caps[world.drill][cell];
-                if (cap > 0.0f && !world.uncapped) wanted = std::min(wanted, cap);
+                const float lift = task.speedCurriculum.assistLift * std::clamp(world.assistLevel / 100.0f, 0.0f, 1.0f);
+                if (cap > 0.0f && !world.uncapped) wanted = std::min(wanted, cap + std::max(0.0f, wanted - cap) * lift);
             }
             float table = tableSpeed();
             // Acima do trote da tabela, o sprint (o jogador segurando a tecla).
@@ -645,6 +652,8 @@ struct LocomotionTraining3D::Impl {
         world.styleSamples = 0;
         world.contactScore = 0.0;
         world.contactGoals = world.touchdowns = 0;
+        world.stepRate = 0.0f;
+        world.flightShare = 0.0f;
         world.slip = world.power = world.assist = world.posture = world.residual = world.jerk = 0.0;
         world.quietShake = world.quietWeight = 0.0;
         world.lastChestOmega = {};
@@ -950,6 +959,7 @@ struct LocomotionTraining3D::Impl {
                 if (touching(body, side)) {
                     if (world.contactTicks[side] == 0 && world.airSeconds[side] >= TouchdownAirSeconds) {
                         ++world.touchdowns;
+                        world.stepRate += 1.0f / StepRateSeconds;
                         const float now = world.seconds + static_cast<float>(tick + 1) * TickSeconds;
                         if (world.goalValid[side]) {
                             const float dx = foot.x - world.goal[side].x, dy = foot.y - world.goal[side].y;
@@ -975,6 +985,11 @@ struct LocomotionTraining3D::Impl {
                     world.contactTicks[side] = 0;
                     world.airSeconds[side] += TickSeconds;
                 }
+            }
+            world.stepRate -= world.stepRate * TickSeconds / StepRateSeconds;
+            {
+                const bool airborne = feet[0] >= 0 && feet[1] >= 0 && !touching(body, 0) && !touching(body, 1);
+                world.flightShare += ((airborne ? 1.0f : 0.0f) - world.flightShare) * TickSeconds / StepRateSeconds;
             }
             double watts = 0.0;
             for (const RagdollJointState3D& joint : body.joints)
@@ -1085,7 +1100,7 @@ struct LocomotionTraining3D::Impl {
                     // A fronteira (o curriculo): o pedido no teto da celula.
                     if (task.speedCurriculum.enabled && !world.uncapped && world.drill < task.speedCurriculum.caps.size()) {
                         const float cap = task.speedCurriculum.caps[world.drill][cell];
-                        if (cap > 0.0f && askedSpeed >= cap - task.speedCurriculum.frontier) {
+                        if (cap > 0.0f && askedSpeed >= cap - task.speedCurriculum.frontier && askedSpeed <= cap + 1.0e-3f) {
                             // (O rastreio da fronteira pela velocidade suavizada em ~uma
                             // passada: a oscilacao natural da passada nao e erro.)
                             const float sigma = task.reward.velocitySigma;
@@ -1142,6 +1157,27 @@ struct LocomotionTraining3D::Impl {
             const double mean = sum / static_cast<double>(styleError.size());
             measure.styleValid = true;
             measure.styleError = static_cast<float>(std::sqrt(task.reward.styleWorstPart ? 0.5 * (mean + worst) : mean));
+        }
+        if (task.reward.cadence > 0.0f) {
+            // A cadencia dos clipes na velocidade (dois passos por ciclo): andar 1,9 passos/s a 1,4 m/s, trote (jog)
+            // 2,73 a 3,0, sprint 4,26 a 7,5 e dai igual (o sprint maximo alonga o passo). So com o pedido de correr
+            // (2 -> 3 m/s): parado e andando, os passos rapidos de recuperar o equilibrio sao livres.
+            constexpr float Folga = 0.25f;
+            const float speed = std::hypot(world.comVelocity.x, world.comVelocity.y);
+            const float natural = speed < 3.0f ? 1.9f + (2.73f - 1.9f) * std::clamp((speed - 1.4f) / 1.6f, 0.0f, 1.0f)
+                                               : 2.73f + (4.26f - 2.73f) * std::clamp((speed - 3.0f) / 4.5f, 0.0f, 1.0f);
+            const Vec3 asked = world.command.intent.requestedVelocityWorld;
+            const float run = std::clamp(std::hypot(asked.x, asked.y) - 2.0f, 0.0f, 1.0f);
+            const float excess = world.stepRate > 0.0f ? std::max(0.0f, std::log2(world.stepRate / natural) - Folga) : 0.0f;
+            measure.cadence = run * excess * excess;
+        }
+        if (task.reward.flight > 0.0f) {
+            const float speed = std::hypot(world.comVelocity.x, world.comVelocity.y);
+            const float wanted = speed < 4.0f ? 0.3f * std::clamp((speed - 2.5f) / 1.5f, 0.0f, 1.0f)
+                                              : 0.3f + 0.1f * std::clamp((speed - 4.0f) / 3.0f, 0.0f, 1.0f);
+            const Vec3 asked = world.command.intent.requestedVelocityWorld;
+            const float run = std::clamp(std::hypot(asked.x, asked.y) - 2.0f, 0.0f, 1.0f);
+            measure.flight = run * std::max(0.0f, wanted - world.flightShare) / 0.4f;
         }
         {
             // As pernas cruzadas: no referencial da pelve, o pe esquerdo a pelo menos 8 cm a esquerda do direito.
@@ -1332,7 +1368,8 @@ struct LocomotionTraining3D::Impl {
             if (scene.body().links.empty() || !finite(scene.body().links.front().position)) return false;
             const bool moving = wanted && down;
             if (tick % GetUpPolicy3D::TicksPerDecision == 0)
-                getUpPolicy->decide(profile, scene.body(), drives, moving ? world.getUpVelocity : Vec3 {});
+                getUpPolicy->decide(profile, scene.body(), drives, moving ? world.getUpVelocity : Vec3 {}, 0.0f,
+                    &scene.scene(), scene.handle());
             scene.stepDrives(drives);
             const RagdollState3D& body = scene.body();
             const PhysicsBodyState3D& pelvis = body.links.front();

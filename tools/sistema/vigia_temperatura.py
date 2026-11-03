@@ -36,6 +36,14 @@ INTERVAL = 3.0
 # treino: CPU 68-73 (picos ate ~78), GPU 55-66.
 CPU_STOP, CPU_OFF = 83.0, 85.0
 GPU_STOP, GPU_OFF = 80.0, 83.0
+# (02/11 22h20, ele: "Hoje em especifico vamos aumentar os limites das temperatura, para 85 o fechar o treino e salvar
+# e 87 desligamento emergencial" - a cidade muito quente): os da CPU ate HOT_UNTIL, depois voltam sozinhos aos de cima.
+CPU_HOT = (85.0, 87.0)
+HOT_UNTIL = time.mktime((2026, 11, 3, 12, 0, 0, 0, 0, -1))
+
+
+def cpu_limits(now: float) -> tuple[float, float]:
+    return CPU_HOT if now < HOT_UNTIL else (83.0, 85.0)
 # Sem ler a temperatura por 30 s com trabalho pesado aberto: salva e para (nao desliga).
 BLIND_SECONDS = 30.0
 # Quanto os treinos tem para salvar antes do corte e do desligamento.
@@ -210,6 +218,7 @@ def emergency(reason: str, test: bool, shutdown: list[str]) -> None:
 
 
 def main() -> int:
+    global CPU_STOP, CPU_OFF
     ap = argparse.ArgumentParser()
     ap.add_argument("--uma", action="store_true", help="uma leitura e sai")
     ap.add_argument("--teste", choices=["parar", "desligar"],
@@ -228,6 +237,9 @@ def main() -> int:
     first = True
     while True:
         started = time.time()
+        if cpu_limits(started) != (CPU_STOP, CPU_OFF):
+            CPU_STOP, CPU_OFF = cpu_limits(started)
+            log(f"limites da CPU agora: parar {CPU_STOP:.0f}, desligar {CPU_OFF:.0f} graus")
         cpu, gpu = cpu_temperature(), gpu_temperature()
         try:
             fake = float(SIMULATE.read_text())

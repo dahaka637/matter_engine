@@ -145,6 +145,8 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         read(r, "residual", w.residual);
         read(r, "still", w.still);
         read(r, "crossover", w.crossover);
+        read(r, "cadence", w.cadence);
+        read(r, "flight", w.flight);
         read(r, "fall", w.fall);
         read(r, "getUp", w.getUp);
         read(r, "velocityTail", w.velocityTail);
@@ -292,6 +294,9 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         read(c, "uncappedFraction", task.speedCurriculum.uncappedFraction);
         if (!(task.speedCurriculum.uncappedFraction >= 0.0f && task.speedCurriculum.uncappedFraction <= 1.0f))
             fail("speedCurriculum.uncappedFraction fora de 0..1");
+        read(c, "assistLift", task.speedCurriculum.assistLift);
+        if (!(task.speedCurriculum.assistLift >= 0.0f && task.speedCurriculum.assistLift <= 1.0f))
+            fail("speedCurriculum.assistLift fora de 0..1");
         if (c.contains("caps")) {
             for (std::size_t d = 0; d < task.drills.size(); ++d) {
                 const auto found = c["caps"].find(task.drills[d].id);
