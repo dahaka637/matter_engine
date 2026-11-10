@@ -48,14 +48,8 @@ public:
 
     // floor: a altura do chao embaixo da pelve (m; a rampa do treino): as alturas da cabeca e da pelve contam dele.
     [[nodiscard]] TrackingGetUpPosture3D measure(std::span<const PhysicsBodyState3D> links, float floor = 0.0f) const;
-    // A nota de estado da tarefa: so de pe, 0,3 mais o centro de massa parado no chao 0,1 (exp(-2 v^2)) mais a pose do
-    // parado 0,35 e a coluna reta 0,25 (31/10 07h50, ele: de pe "nao tem referencia da pose do parado idle" - a cabeca
-    // ia para tras e o peito arqueava; 21h25: "reforcar... que quando de pe fique o mais proximo possivel do nosso idle
-    // alerta", 0,6 so na pose; 22h45: "ficar com a coluna reta, a postura mais correta do IDLE alerta... o clipe
-    // original e torto" - a pose das juntas nao ve a pelve, e de pe o tronco inteiro inclinava ~7 graus de lado, o alto
-    // do peito, o pescoco e a cabeca ~10). Sem a pose do parado dada, as partes dela valem 1. A coluna so conta quieto
-    // (quiet; 23h12: com ela tambem logo depois dos empurroes, o equilibrio parado caiu de 0,81 para 0,53 no teste - a
-    // postura nunca pode bloquear o uso funcional do tronco).
+    // Only standing. Functional balance earns up to 1 without pose constraints during perturbation.
+    // Settled IDLE adds pose/spine/quietness (maximum 2), so fidgeting cannot evade the posture objective.
     [[nodiscard]] float standingReward(const TrackingGetUpPosture3D& posture,
         std::span<const PhysicsBodyState3D> links, bool quiet = true) const;
     // As poses do parado (um quadro de cada clipe parado; 31/10 18h, ele: o padrao de ficar de pe e o parado em alerta,

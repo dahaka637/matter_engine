@@ -1164,7 +1164,7 @@ void appendBox(MeshData3D &mesh, Vec3 center, Vec3 halfExtents) {
 
 PhysicsBodyHandle3D createStaticGround(PhysicsEngine3D &engine,
                                        PhysicsScene3D &scene) {
-  const auto mesh = engine.cookStaticTriangleMesh(makePlane(80.0f));
+  const auto mesh = engine.cookStaticTriangleMesh(makePlane(80.0f), "concrete");
   PhysicsShape3D shape;
   shape.type = PhysicsShapeType3D::TriangleMesh;
   shape.mesh = mesh;
@@ -1834,7 +1834,7 @@ void testBackendResourceLifetime() {
   MaterialLibrary materials;
   auto engine = std::make_unique<PhysicsEngine3D>();
   auto scene = engine->createScene({}, materials);
-  const auto groundMesh = engine->cookStaticTriangleMesh(makePlane(4.0f));
+  const auto groundMesh = engine->cookStaticTriangleMesh(makePlane(4.0f), "concrete");
   PhysicsShape3D shape;
   shape.type = PhysicsShapeType3D::TriangleMesh;
   shape.mesh = groundMesh;

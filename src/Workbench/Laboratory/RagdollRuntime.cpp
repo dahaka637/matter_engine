@@ -593,6 +593,23 @@ void WorkbenchApp::takeControlOfLatestCharacter() {
         .orientation.rotate({ 1.0f, 0.0f, 0.0f });
     m_characterDesiredFacingYaw = std::atan2(forward.y, forward.x);
     m_laboratoryCameraYaw = m_characterDesiredFacingYaw;
+    // (02/11, ele: o boneco nascia no fisico.) De pe e com o padrao ligado, ele
+    // comeca no padrao, olhando para onde o corpo olha.
+    {
+        const Vec3 up = (candidate->physicsState.links.front().orientation
+            * m_humanRagdollProfile->links.front().modelOrientation.conjugate())
+            .rotate({ 0.0f, 0.0f, 1.0f });
+        auto& legacy = candidate->athlete.legacy;
+        if (m_defaultLocomotion && up.z > 0.85f
+            && legacy.bodyMode == LegacyBodyMode3D::Physical) {
+            legacy.guideFacingYawRadians = m_characterDesiredFacingYaw;
+            legacy.defaultLocomotion.reset(m_characterDesiredFacingYaw);
+            legacy.guided = true;
+            legacy.bodyMode = LegacyBodyMode3D::Animated;
+            legacy.bodyModeSeconds = 0.0f;
+            m_physicsScene->setRagdollGuided(candidate->physicsRagdoll, true);
+        }
+    }
     m_laboratoryCameraPitch = -0.20f;
     m_characterProxyVelocityWorld = {};
     m_characterSprinting = false;
@@ -1038,6 +1055,7 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.locomotionPolicy = (m_locomotionPolicyOn || (m_defaultLocomotion && m_defaultPhysicalPolicy))
         && m_athleteRuntime.locomotionPolicy() != nullptr;
     settings.getUpPolicy = settings.locomotionPolicy && m_athleteRuntime.getUpPolicy() != nullptr && !m_animatedGetUp;
+    settings.protectiveFallBeforeGetUp = m_protectiveFallBeforeGetUp;
     // Com a rede, a regua e as viradas do treino dela (no Fisico com RL; no Padrao, a regua dele).
     if (m_locomotionPolicyOn && settings.locomotionPolicy && m_locomotionPolicyConditions) {
         settings.historicalAssistRuler = m_locomotionPolicyConditions->historicalAssistRuler;

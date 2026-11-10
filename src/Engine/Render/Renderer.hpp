@@ -100,7 +100,7 @@ public:
     // A real sampled asset texture (glTF materials, UI art, etc.), as
     // opposed to createBakedTexture's empty, write-only render target.
     [[nodiscard]] RHI::TextureHandle createTexture2D(RHI::Extent2D extent,
-        std::span<const std::byte> rgbaPixels);
+        std::span<const std::byte> rgbaPixels, bool srgb = false);
     void destroyTexture(RHI::TextureHandle handle);
     // O material do personagem (RHI/CharacterMaterial.hpp).
     [[nodiscard]] RHI::CharacterMaterialHandle createCharacterMaterial(const RHI::CharacterMaterialDesc& desc);

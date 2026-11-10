@@ -31,6 +31,7 @@ std::vector<AnimationClip3D> loadAthleteClipLibrary3D(const std::string& clipDir
         try {
             AnimationClip3D clip = loadAnimationClip3D(file.string());
             if (clip.targetRigId != profile.id) continue;
+            coupleAnimationClipJoints3D(clip, profile);
             const auto issues = validateAnimationClipForRagdoll3D(clip, profile);
             if (!issues.empty()) {
                 if (errors != nullptr)

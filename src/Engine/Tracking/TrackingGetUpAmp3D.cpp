@@ -92,8 +92,10 @@ float TrackingGetUpPostureProbe3D::standingReward(const TrackingGetUpPosture3D& 
     std::span<const PhysicsBodyState3D> links, bool quiet) const {
     if (!posture.standing) return 0.0f;
     const Vec3 v = rlBodyCenterOfMassVelocity3D(*m_profile, links);
-    return 0.3f + 0.1f * std::exp(-2.0f * (v.x * v.x + v.y * v.y)) + 0.35f * idlePoseMatch(links)
-        + (quiet ? 0.25f * idleSpineMatch(links) : 0.0f);
+    const float still = std::exp(-2.0f * (v.x * v.x + v.y * v.y));
+    if (quiet)
+        return 1.0f + 0.15f * still + 0.50f * idlePoseMatch(links) + 0.35f * idleSpineMatch(links);
+    return 0.6f + 0.4f * std::clamp(posture.upright, 0.0f, 1.0f);
 }
 
 void TrackingGetUpPostureProbe3D::spineAxes(std::span<const PhysicsBodyState3D> links, std::vector<Vec3>& out) const {

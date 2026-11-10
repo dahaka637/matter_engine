@@ -10,6 +10,9 @@
 
 ## Architectural boundaries
 
+Map authoring uses TrenchBroom. Read `docs/MAPAS_TRENCHBROOM.md` and
+`tools/maps/AGENTS.md` before working on maps; sources live in `assets/maps/src`.
+
 - `src/Workbench` is the active application layer. It must not include SDL,
   Vulkan, Volk, VMA, or native platform headers.
 - Vulkan types and calls belong only in `src/Engine/RHI/Vulkan`.
@@ -40,6 +43,26 @@
   body is re-framed onto the animation guide). It must never be a kinematic
   body during the solve: two infinite-mass pelvises tear the limbs caught
   between them (measured 240 m/s and 11.8 cm joint separation).
+
+## Local hardware load
+
+After abrupt shutdowns reported on 2026-11-02, keep local validation sequential:
+one compiler job, one test process, and short Vulkan checks capped at 30 FPS
+(`MATTERENGINE_MAX_FPS=30`). Read CPU/GPU temperatures between checks; stop the
+owned workload if temperatures keep rising. Do not run builds, full suites and
+3D previews concurrently. Do not stop another agent's RL processes.
+
+## RL inspection tools
+
+To check an RL training (the motion the network really performs, the training
+data, automatic defect findings, the network's left/right asymmetry) use the
+package `tools/rl/inspecao/` and `tools/rl/espelho.py`; read
+`tools/rl/inspecao/LEIAME.md` first. The full guide (every command, the
+thermal rule, how to read the outputs) is in the Obsidian vault:
+`/home/dahaka/Área de trabalho/IA_Brain/04_locomocao/ferramentas_de_inspecao_rl.md`.
+Anything that runs the simulator (`captura`, `simetria`, `fantasma --malha`)
+only runs with the training service stopped; `inspecao.inspecao` stops and
+restarts it by itself.
 
 ## Verification
 

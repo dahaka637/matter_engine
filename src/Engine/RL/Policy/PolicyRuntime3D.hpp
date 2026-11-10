@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <span>
@@ -70,6 +71,23 @@ private:
     std::vector<float> m_data;
     std::vector<float> m_transposed;
     std::vector<Layer> m_layers;
+    std::vector<Layer> m_locomotionLayers;
+    std::size_t m_skillMode = static_cast<std::size_t>(-1);
+    std::size_t m_locomotionMean = 0;
+    std::size_t m_locomotionInverseStd = 0;
+    // (04/11 09h45) O limite de cada saida da cabeca da locomocao (a correcao do clipe em radianos: metade da faixa x o
+    // alcance), quando o arquivo traz - como no treino.
+    std::size_t m_locomotionLimits = static_cast<std::size_t>(-1);
+    // (04/11 23h10) A autoridade sob ameaca, quando o arquivo traz: de pe (a entrada do pedido ate m_standingSpeed), o limite vai
+    // do de cima ao aberto (m_locomotionThreatLimits) com a ameaca (a entrada m_threatIndex, smoothstep de 0,4 a 1,0).
+    std::size_t m_locomotionThreatLimits = static_cast<std::size_t>(-1);
+    std::size_t m_threatIndex = static_cast<std::size_t>(-1), m_speedIndex = static_cast<std::size_t>(-1);
+    float m_standingSpeed = 0.05f;
+    // (04/11 23h40) Andando, a demanda (a velocidade pedida menos a do centro de massa, m/s; as 7 entradas na ordem do
+    // treino, levantar_amp.DEMAND_NAMES) abre o limite ate m_locomotionDemandLimits, de m_demandFrom a + m_demandSpan.
+    std::size_t m_locomotionDemandLimits = static_cast<std::size_t>(-1);
+    std::array<std::size_t, 7> m_demandIndices {};
+    float m_demandFrom = 1.0f, m_demandSpan = 1.5f;
     std::size_t m_mean = 0;
     std::size_t m_inverseStd = 0;
     float m_clip = 5.0f;

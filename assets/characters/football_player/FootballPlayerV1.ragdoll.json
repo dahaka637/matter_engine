@@ -63,9 +63,9 @@
      {
       "axis": "twist",
       "damping": 49.5,
-      "maximumDegrees": 25.0,
+      "maximumDegrees": 7.0,
       "maximumTorque": 180.0,
-      "minimumDegrees": -25.0,
+      "minimumDegrees": -7.0,
       "stiffness": 440.0,
       "passive": {
        "upper": {
@@ -178,9 +178,9 @@
      {
       "axis": "twist",
       "damping": 49.5,
-      "maximumDegrees": 22.0,
+      "maximumDegrees": 14.0,
       "maximumTorque": 180.0,
-      "minimumDegrees": -22.0,
+      "minimumDegrees": -14.0,
       "stiffness": 440.0,
       "passive": {
        "upper": {
@@ -293,9 +293,9 @@
      {
       "axis": "twist",
       "damping": 49.5,
-      "maximumDegrees": 20.0,
+      "maximumDegrees": 11.0,
       "maximumTorque": 180.0,
-      "minimumDegrees": -20.0,
+      "minimumDegrees": -11.0,
       "stiffness": 440.0,
       "passive": {
        "upper": {
@@ -3906,5 +3906,13 @@
  "uniformRadiusMeters": 0.055,
  "limitTension": {
   "enabled": true
- }
+ },
+ "jointCouplings": [
+  {
+   "axis": "twist",
+   "links": ["Abdomen", "Chest", "UpperChest"],
+   "weights": [7.0, 14.0, 11.0],
+   "fonte": "rotacao in vivo por lado: L1-S1 ~7 (Troke 2001), T7-L1 ~14 e T1-T7 ~11 (Fujimori 2012, por segmento); acoplada como Christophy 2012 / Alemi 2021 - vault 05_fisica/pesquisa_tensao_passiva_juntas"
+  }
+ ]
 }

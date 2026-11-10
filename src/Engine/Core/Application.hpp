@@ -13,6 +13,7 @@ struct ApplicationConfig {
     int width = 1280;
     int height = 720;
     bool vsync = true;
+    float maximumFrameRate = 0.0f;
     DisplayMode displayMode = DisplayMode::Windowed;
     float fixedUpdateHz = 120.0f;
     int maxFixedStepsPerFrame = 8;

@@ -16,7 +16,8 @@ Roda como servico do usuario (vigia-temperatura.service, sempre ligado).
   python3 tools/sistema/vigia_temperatura.py --teste parar   # o limite de parar simulado
   python3 tools/sistema/vigia_temperatura.py --teste desligar  # o de desligar simulado (nao desliga)
   (os testes so cortam os processos marcados vigia-teste-alvo)
-  echo 86 > $XDG_RUNTIME_DIR/vigia-simular                  # o teste de verdade no servico: DESLIGA
+  echo 85.5 > $XDG_RUNTIME_DIR/vigia-simular                # o teste de verdade no servico: entre o parar e o desligar so PARA
+                                                            # (e religa ao esfriar); no desligar ou acima, DESLIGA o PC
 """
 from __future__ import annotations
 
@@ -34,16 +35,25 @@ INTERVAL = 3.0
 # Os limites (graus C, os do usuario em 27/10; uma leitura basta): parar (salva e para
 # o trabalho, o PC fica ligado) e desligar (salva, para e desliga o PC). Normal no
 # treino: CPU 68-73 (picos ate ~78), GPU 55-66.
-CPU_STOP, CPU_OFF = 83.0, 85.0
+# (05/11 ~11h, ele: "vamos redefinir o nosso monitor termico, para parar os treinos em 85 graus ao inves de 83. E
+# desligamento emergencial em 88 graus ao inves de 85".)
+CPU_STOP, CPU_OFF = 85.0, 88.0
+CPU_BASE_STOP, CPU_BASE_OFF = CPU_STOP, CPU_OFF
 GPU_STOP, GPU_OFF = 80.0, 83.0
 # (02/11 22h20, ele: "Hoje em especifico vamos aumentar os limites das temperatura, para 85 o fechar o treino e salvar
-# e 87 desligamento emergencial" - a cidade muito quente): os da CPU ate HOT_UNTIL, depois voltam sozinhos aos de cima.
+# e 87 desligamento emergencial" - a cidade muito quente; 03/11 13h10, de novo ate 04/11 12h): os da CPU ate HOT_UNTIL,
+# depois voltam sozinhos aos de cima.
 CPU_HOT = (85.0, 87.0)
-HOT_UNTIL = time.mktime((2026, 11, 3, 12, 0, 0, 0, 0, -1))
+# (04/11 06h30, ele: "uma revisao geral para deixarmos rodando com seguranca de evolucao": os treinos (servicos do systemd
+# --user "matter-rl*") que o vigia parou no limite de parar voltam sozinhos quando a CPU fica abaixo de RESUME_CPU por
+# RESUME_SECONDS - no maximo RESUME_PER_HOUR vezes por hora; um "Parar" manual nunca volta sozinho.)
+RESUME_CPU, RESUME_SECONDS, RESUME_PER_HOUR = 70.0, 60.0, 4
+RESUME = Path.home() / ".local/share/matter-engine/rl/retomar_apos_esfriar.json"
+HOT_UNTIL = time.mktime((2026, 11, 4, 12, 0, 0, 0, 0, -1))
 
 
 def cpu_limits(now: float) -> tuple[float, float]:
-    return CPU_HOT if now < HOT_UNTIL else (83.0, 85.0)
+    return CPU_HOT if now < HOT_UNTIL else (CPU_BASE_STOP, CPU_BASE_OFF)
 # Sem ler a temperatura por 30 s com trabalho pesado aberto: salva e para (nao desliga).
 BLIND_SECONDS = 30.0
 # Quanto os treinos tem para salvar antes do corte e do desligamento.
@@ -61,7 +71,7 @@ LOG = Path.home() / ".local" / "share" / "matter-engine" / "vigia_temperatura.lo
 # (um terminal com "matter_rl treinar" escrito no meio do comando nao e um treino).
 HEAVY_EXE = re.compile(r"^(Matter\w+|ninja|cc1plus|cc1|ld|lto1|lto-wrapper)$")
 HEAVY_SCRIPT = re.compile(r"^(avaliar|previa_\w+|hash_locomocao|vazao|rastreador_\w+|prova|checagem\w*|ciclo\w*"
-                          r"|troca\w*|folhas\w*|levantar_\w+)\.(py|sh)$")
+                          r"|troca\w*|folhas\w*|levantar_\w+|bench_b21|bench_rl_final)\.(py|sh)$")
 TEST_MARK = "vigia-teste-alvo"
 
 
@@ -193,6 +203,19 @@ def stop_work(test: bool) -> bool:
     return not alive(workers) and not (set(workers) & set(left))
 
 
+def started_after(unit: str, when: float | None) -> bool:
+    """A unidade foi ligada depois do instante `when` (epoch, s)? (O journal do usuario: o systemd zera os carimbos da
+    unidade parada.) Sem o instante (registro antigo): nao. Sem conseguir ler: sim (na duvida, nao religa)."""
+    if when is None:
+        return False
+    try:
+        r = subprocess.run(["journalctl", "--user", "-u", unit, "--since", f"@{int(when) + 1}", "-o", "cat", "--no-pager"],
+                           capture_output=True, text=True, timeout=15)
+        return r.returncode != 0 or any(l.startswith("Started") for l in r.stdout.splitlines())
+    except (OSError, subprocess.SubprocessError):
+        return True
+
+
 def heavy_running() -> bool:
     return any(kind(a) for _, a in processes())
 
@@ -217,6 +240,28 @@ def emergency(reason: str, test: bool, shutdown: list[str]) -> None:
     subprocess.run(shutdown)
 
 
+def active_trainings() -> list[str]:
+    """Os servicos de treino ligados agora (systemd --user, "matter-rl*")."""
+    try:
+        out = subprocess.run(["systemctl", "--user", "list-units", "--type=service", "--state=active", "--plain",
+                              "--no-legend", "matter-rl*"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [line.split()[0] for line in out.splitlines() if line.strip()]
+
+
+def remember_trainings(units: list[str]) -> None:
+    """Anota os treinos que o vigia parou (para voltarem quando esfriar)."""
+    if not units:
+        return
+    try:
+        old = json.loads(RESUME.read_text()).get("units", []) if RESUME.exists() else []
+        RESUME.parent.mkdir(parents=True, exist_ok=True)
+        RESUME.write_text(json.dumps({"units": sorted(set(old) | set(units)), "parado": time.time()}))
+    except (OSError, ValueError):
+        pass
+
+
 def main() -> int:
     global CPU_STOP, CPU_OFF
     ap = argparse.ArgumentParser()
@@ -234,6 +279,8 @@ def main() -> int:
     last_line = 0.0
     # Os que receberam o SIGTERM no limite de parar: o prazo para sair (depois, SIGKILL).
     pending: dict[int, float] = {}
+    cold_since = None
+    resumes: list[float] = []
     first = True
     while True:
         started = time.time()
@@ -262,6 +309,8 @@ def main() -> int:
             return 0
         if stop:
             state = "quente: parando o trabalho"
+            if not a.teste:
+                remember_trainings(active_trainings())
             workers, supervisors, heavy = signal_work(bool(a.teste))
             if workers or heavy:
                 log(f"LIMITE DE PARAR: {', '.join(stop)}")
@@ -289,6 +338,26 @@ def main() -> int:
                 blind_since = started
         else:
             blind_since = None
+        # (O religamento dos treinos parados pelo vigia: frio por RESUME_SECONDS, sem nada pendente.)
+        if not a.teste and RESUME.exists() and not pending and cpu is not None and gpu is not None:
+            cold_since = cold_since or started if cpu < RESUME_CPU and gpu < GPU_STOP - 10.0 else None
+            resumes = [t for t in resumes if started - t < 3600.0]
+            if cold_since is not None and started - cold_since >= RESUME_SECONDS and len(resumes) < RESUME_PER_HOUR:
+                try:
+                    saved = json.loads(RESUME.read_text())
+                    units = saved.get("units", [])
+                except (OSError, ValueError):
+                    saved, units = {}, []
+                RESUME.unlink(missing_ok=True)
+                # (05/11 19h22: o vigia religou um treino que o usuario tinha pausado depois da parada termica. Nao religa
+                # o que alguem ligou depois da parada do vigia - quem ligou e parou de novo pausou de proposito.)
+                units = [u for u in units if not started_after(u, saved.get("parado"))]
+                for unit in units:
+                    subprocess.run(["systemctl", "--user", "start", unit], timeout=30)
+                resumes.append(started)
+                cold_since = None
+                log(f"esfriou (CPU {cpu:.1f}): treinos religados: {', '.join(units) or 'nenhum'}")
+                notify(f"CPU a {cpu:.0f} graus: treinos religados")
         beat(cpu, gpu, state)
         if started - last_line >= 60.0:
             log(f"CPU {cpu} GPU {gpu} ({state})")

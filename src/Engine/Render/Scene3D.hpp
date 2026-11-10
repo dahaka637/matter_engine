@@ -66,6 +66,12 @@ struct MeshRender3D {
     Vec3 tintColor { 1.0f, 1.0f, 1.0f };
     RHI::TextureHandle albedoTexture;
     RHI::TextureHandle metallicRoughnessTexture;
+    RHI::TextureHandle normalTexture;
+    RHI::TextureHandle emissiveTexture;
+    Vec3 emissiveFactor;
+    float normalScale = 1.0f;
+    // UV depth of the height stored in normalTexture alpha; zero disables parallax.
+    float parallaxDepth = 0.0f;
     // O personagem com o uniforme do sistema de aparencia (RHI/CharacterMaterial.hpp):
     // nos passes de cor, o pipeline do personagem; albedoTexture e o corpo por
     // baixo. As camadas do uniforme e da identificacao deste jogador.
@@ -137,6 +143,9 @@ struct LightRender3D {
     float intensity = 1.0f;
     float range = 0.0f;
     float coneOuterDegrees = 35.0f;
+    float coneInnerDegrees = -1.0f;
+    // KHR_lights_punctual: candela/inverse-square; existing lights retain their calibration.
+    bool physicalFalloff = false;
     bool castsShadow = false;
 };
 

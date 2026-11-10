@@ -57,6 +57,17 @@ SOURCE_RIGS = {
         "LeftFoot": "LeftFoot", "RightThigh": "RightLeg",
         "RightShin": "RightShin", "RightFoot": "RightFoot",
     },
+    # (06/11) O manequim do UE5 (UEFN, o Game Animation Sample): cinco ossos de coluna e dois de pescoco, "head" minusculo.
+    "unreal5": {
+        "Pelvis": "pelvis", "Abdomen": "spine_01", "Chest": "spine_03",
+        "UpperChest": "spine_05", "Neck": "neck_01", "Head": "head",
+        "LeftUpperArm": "upperarm_l", "LeftForearm": "lowerarm_l",
+        "LeftHand": "hand_l", "RightUpperArm": "upperarm_r",
+        "RightForearm": "lowerarm_r", "RightHand": "hand_r",
+        "LeftThigh": "thigh_l", "LeftShin": "calf_l",
+        "LeftFoot": "foot_l", "RightThigh": "thigh_r",
+        "RightShin": "calf_r", "RightFoot": "foot_r",
+    },
     "unreal": {
         "Pelvis": "pelvis", "Abdomen": "spine_01", "Chest": "spine_02",
         "UpperChest": "spine_03", "Neck": "neck_01", "Head": "Head",
@@ -140,6 +151,10 @@ def arguments():
                               "quando omitida, usa o deslocamento horizontal "
                               "da raiz dividido pela duração"))
     parser.add_argument("--inspect-only", action="store_true")
+    parser.add_argument("--hand-from-forearm", action="store_true",
+                        help=("a mão segue o antebraço reconstruído com a rotação "
+                              "local dela na fonte (rigs cujo repouso do braço "
+                              "difere do nosso: a rotação global travava o pulso)"))
     parser.add_argument("--reference-only", action="store_true",
                         help=("fonte de estudo/autoria (não clipe final): grava "
                               "mesmo reprovado nos gates de qualidade, com aviso"))
@@ -429,6 +444,17 @@ def main():
         source_to_target = Matrix((forward, left, up))
     conversion = source_to_target.to_4x4()
     conversion_rotation = source_to_target.to_quaternion()
+    # (07/11) Com o deslocamento preservado, o "para cima" da pelve a cabeca da
+    # pose de referencia, levemente inclinado, jogava parte do avanco no eixo
+    # vertical (a corrida da Unreal: 14 m a frente, a pelve 18 cm mais baixa
+    # que na fonte). O deslocamento da raiz vai nos eixos do mundo: a vertical
+    # dele e a frente/esquerda no chao. No lugar, a deriva ja e removida.
+    root_axes = source_to_target
+    if args.root_motion == "preserve":
+        world_up = (armature.matrix_world.inverted().to_3x3()
+                    @ Vector((0.0, 0.0, 1.0))).normalized()
+        forward_flat = (forward - world_up * forward.dot(world_up)).normalized()
+        root_axes = Matrix((forward_flat, world_up.cross(forward_flat), world_up))
 
     with profile_path.open("r", encoding="utf-8") as profile_file:
         profile = json.load(profile_file)
@@ -449,6 +475,11 @@ def main():
     target_leg_length = abs(profile_by_id["LeftFoot"]["position"][2])
     meters_per_source_unit = target_leg_length / source_leg_length
 
+    hips_above_ground = (armature.matrix_world @ hips).z
+    vertical_meters_per_source_unit = (
+        profile["standingRootHeightMeters"] / hips_above_ground
+        if args.root_motion == "preserve" and hips_above_ground > 1e-6
+        else meters_per_source_unit)
     action_start = int(math.ceil(action.frame_range[0]))
     action_end = int(math.floor(action.frame_range[1]))
     start_frame = (action_start if args.start_frame is None
@@ -488,6 +519,7 @@ def main():
         # Reconstroi cada braço/perna a partir das direções dos segmentos e
         # do plano de dobra. Isso descarta completamente o bone roll do FBX,
         # que não possui correspondência estável entre rigs diferentes.
+        source_deltas = dict(frame_rotations)
         for upper_id, lower_id, distal_id, source_chain in LIMB_CHAINS:
             upper_link = profile_by_id[upper_id]
             lower_link = profile_by_id[lower_id]
@@ -552,6 +584,13 @@ def main():
             frame_rotations[lower_id] = (desired_lower_orientation
                                          @ lower_model.inverted()).normalized()
 
+        if args.hand_from_forearm:
+            for hand_id, forearm_id in (("LeftHand", "LeftForearm"),
+                                        ("RightHand", "RightForearm")):
+                frame_rotations[hand_id] = (
+                    frame_rotations[forearm_id]
+                    @ source_deltas[forearm_id].inverted()
+                    @ source_deltas[hand_id]).normalized()
         sampled_global_rotations.append(frame_rotations)
         source_origin = pose_bones[source_pelvis].head.copy()
         sampled_source_landmarks.append({
@@ -562,8 +601,13 @@ def main():
         })
 
         source_root_offset = pose_bones[source_pelvis].matrix.translation - hips
-        target_root_offset = source_to_target @ source_root_offset
-        sampled_root_offsets.append(target_root_offset * meters_per_source_unit)
+        target_root_offset = root_axes @ source_root_offset
+        root_offset_meters = target_root_offset * meters_per_source_unit
+        if args.root_motion == "preserve":
+            # (07/11) A altura pela razao das pelves em pe (a nossa e a da fonte acima do chao), nao pela das pernas: a
+            # levantada da Unreal deitada ficava 7 cm dentro do chao (de pe as duas dao o mesmo).
+            root_offset_meters.z = target_root_offset.z * vertical_meters_per_source_unit
+        sampled_root_offsets.append(root_offset_meters)
 
     # O visualizador e o futuro controlador físico são donos do deslocamento
     # global. Remove a deriva linear completa entre as pontas do ciclo. Além

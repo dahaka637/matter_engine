@@ -93,7 +93,8 @@ void applyPlayerBody(LoadedPlayerModel& loaded, const PlayerBody3D& body);
 [[nodiscard]] std::filesystem::file_time_type newestWrite(const std::vector<std::filesystem::path>& files);
 
 // As animacoes do jogo (assets/animations/clips/<id>.matteranim.json).
-[[nodiscard]] std::vector<std::string> availableClipIds();
+// Os clipes da pasta de clipes (ou de uma subpasta dela, com o id "subpasta/nome").
+[[nodiscard]] std::vector<std::string> availableClipIds(const std::string& folder = {});
 [[nodiscard]] std::optional<AnimationClip3D> loadCharacterClip(const std::string& clipId, std::string* error = nullptr);
 
 } // namespace MatterEngine::Modeling

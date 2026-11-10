@@ -312,6 +312,33 @@ RagdollProfile3D loadRagdollProfile3D(std::string_view filePath) {
             RagdollLimitTension3D& tension = profile.limitTension;
             tension.enabled = t.value("enabled", tension.enabled);
         }
+        if (root.contains("jointCouplings")) {
+            for (const Json& entry : root.at("jointCouplings")) {
+                RagdollJointCoupling3D coupling;
+                coupling.axis = static_cast<RagdollAxis3D>(
+                    axisIndex(entry.at("axis").get<std::string>()));
+                const Json& ids = entry.at("links");
+                const Json& weights = entry.at("weights");
+                if (ids.size() != weights.size()) {
+                    throw std::runtime_error(
+                        "jointCouplings: links e weights com tamanhos diferentes");
+                }
+                float total = 0.0f;
+                for (std::size_t k = 0; k < ids.size(); ++k) {
+                    const std::string id = ids.at(k).get<std::string>();
+                    const auto link = std::find_if(profile.links.begin(), profile.links.end(),
+                        [&](const RagdollLinkDefinition3D& candidate) { return candidate.id == id; });
+                    if (link == profile.links.end()) {
+                        throw std::runtime_error("jointCouplings: link desconhecido " + id);
+                    }
+                    coupling.links.push_back(static_cast<std::uint32_t>(link - profile.links.begin()));
+                    coupling.shares.push_back(weights.at(k).get<float>());
+                    total += coupling.shares.back();
+                }
+                for (float& share : coupling.shares) share /= total;
+                profile.jointCouplings.push_back(std::move(coupling));
+            }
+        }
     } catch (const Json::exception& error) {
         throw std::runtime_error("Perfil de ragdoll incompleto em "
             + std::string(filePath) + ": " + error.what());
@@ -623,6 +650,24 @@ std::vector<RagdollProfileValidationIssue3D> validateRagdollProfile3D(
             addIssue(issues, path, "par precisa de dois links diferentes");
         }
     }
+    for (std::size_t index = 0; index < profile.jointCouplings.size(); ++index) {
+        const RagdollJointCoupling3D& coupling = profile.jointCouplings[index];
+        const std::string path = "jointCouplings[" + std::to_string(index) + "]";
+        float total = 0.0f;
+        bool valid = coupling.links.size() >= 2 && coupling.links.size() == coupling.shares.size();
+        for (std::size_t k = 0; valid && k < coupling.links.size(); ++k) {
+            const std::uint32_t link = coupling.links[k];
+            valid = link > 0 && link < profile.links.size() && std::isfinite(coupling.shares[k])
+                && coupling.shares[k] > 0.0f
+                && profile.links[link].inboundJoint.axes[static_cast<std::size_t>(coupling.axis)].enabled
+                && std::count(coupling.links.begin(), coupling.links.end(), link) == 1;
+            total += coupling.shares[k];
+        }
+        if (!valid || std::abs(total - 1.0f) > 0.001f) {
+            addIssue(issues, path,
+                "precisa de 2+ juntas distintas com o eixo habilitado e parcelas positivas somando 1");
+        }
+    }
     return issues;
 }
 
@@ -635,6 +680,32 @@ void validateRagdollProfileOrThrow3D(const RagdollProfile3D& profile) {
     }
     throw std::runtime_error(message);
 }
+
+void coupleRagdollJointCoordinates3D(const RagdollProfile3D& profile, std::span<Vec3> coordinates) {
+    const auto axis = [](Vec3& v, RagdollAxis3D a) -> float& {
+        return a == RagdollAxis3D::Twist ? v.x : a == RagdollAxis3D::Swing1 ? v.y : v.z;
+    };
+    for (const RagdollJointCoupling3D& coupling : profile.jointCouplings) {
+        if (std::any_of(coupling.links.begin(), coupling.links.end(),
+                [&](std::uint32_t link) { return link >= coordinates.size(); })) continue;
+        // (A soma presa a amplitude do grupo - a soma dos limites -, e cada junta a dela: o pedido fica dentro da coluna.)
+        float sum = 0.0f, low = 0.0f, high = 0.0f;
+        for (const std::uint32_t link : coupling.links) {
+            const RagdollAxisDefinition3D& limit = profile.links[link].inboundJoint.axes[static_cast<std::size_t>(coupling.axis)];
+            sum += axis(coordinates[link], coupling.axis);
+            low += limit.minimumRadians;
+            high += limit.maximumRadians;
+        }
+        sum = std::clamp(sum, low, high);
+        for (std::size_t k = 0; k < coupling.links.size(); ++k) {
+            const RagdollAxisDefinition3D& limit =
+                profile.links[coupling.links[k]].inboundJoint.axes[static_cast<std::size_t>(coupling.axis)];
+            axis(coordinates[coupling.links[k]], coupling.axis) =
+                std::clamp(coupling.shares[k] * sum, limit.minimumRadians, limit.maximumRadians);
+        }
+    }
+}
+
 
 void prepareRagdollConvexHull3D(RagdollCapsuleDefinition3D& collider) {
     collider.shape = RagdollColliderShape3D::ConvexHull;

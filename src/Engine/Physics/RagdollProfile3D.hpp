@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -174,6 +175,18 @@ struct RagdollLimitTension3D {
     bool enabled = false;
 };
 
+// O acoplamento de juntas em serie (10/11, a coluna): num eixo, as juntas do
+// grupo andam como UMA coordenada - a soma delas, repartida em parcelas fixas,
+// sempre no mesmo sentido. E como os modelos de coluna do OpenSim (Christophy
+// 2012; Alemi 2021, cujo melhor modelo tem a rotacao axial como uma coordenada
+// de T1 a S1) e o MyoBack. Sem ele a rede torcia juntas vizinhas em sentidos
+// opostos contra os batentes - o "Z" da coluna, que nenhuma coluna faz.
+struct RagdollJointCoupling3D {
+    RagdollAxis3D axis = RagdollAxis3D::Twist;
+    std::vector<std::uint32_t> links;
+    std::vector<float> shares; // somam 1
+};
+
 struct RagdollProfile3D {
     std::string id;
     float totalMassKg = 75.0f;
@@ -187,6 +200,7 @@ struct RagdollProfile3D {
     std::vector<RagdollLinkDefinition3D> links;
     std::vector<RagdollIgnoredCollisionPair3D> selfCollisionIgnoredPairs;
     RagdollLimitTension3D limitTension;
+    std::vector<RagdollJointCoupling3D> jointCouplings;
 };
 
 struct RagdollProfileValidationIssue3D {
@@ -199,6 +213,10 @@ struct RagdollProfileValidationIssue3D {
 [[nodiscard]] std::vector<RagdollProfileValidationIssue3D>
     validateRagdollProfile3D(const RagdollProfile3D& profile);
 void validateRagdollProfileOrThrow3D(const RagdollProfile3D& profile);
+// As coordenadas por link (x twist, y swing1, z swing2) com os grupos acoplados
+// levados a soma de cada grupo vezes as parcelas dele.
+void coupleRagdollJointCoordinates3D(const RagdollProfile3D& profile,
+    std::span<Vec3> coordinates);
 [[nodiscard]] std::size_t ragdollDegreesOfFreedom3D(
     const RagdollProfile3D& profile);
 // Uma casca convexa montada fora do arquivo (os pontos e as faces no

@@ -153,6 +153,14 @@ struct BodyWorldView3D {
     bool targetStop = false;
     // Os pontos da estrela (o centro e as 8 pontas) no chao, quando o exercicio e a estrela.
     std::vector<Vec3> starPoints;
+    // (08/11, a estrela de 8 pontas no treino) As linhas dela no chao (do centro as pontas), a perna de agora, o ponto seguinte,
+    // o centro (o primeiro dos starPoints) e o texto da perna.
+    std::vector<std::pair<Vec3, Vec3>> starLines;
+    bool hasStarLeg = false;
+    std::pair<Vec3, Vec3> starLeg;
+    bool hasNextTarget = false;
+    Vec3 nextTarget;
+    std::string starCaption;
     // A velocidade do centro de massa e o rumo do peito (rad).
     Vec3 velocity;
     float chestHeading = 0.0f;

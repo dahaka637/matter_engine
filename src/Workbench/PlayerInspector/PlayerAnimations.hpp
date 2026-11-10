@@ -25,6 +25,7 @@ public:
         std::string clipId;
         std::string label;
         std::string group;
+        std::uint32_t color = 0; // IM_COL32 do texto no menu; 0 = o padrao
     };
 
     PlayerAnimations();

@@ -1,4 +1,5 @@
 #include "Engine/Geometry/GltfLoader.hpp"
+#include <cmath>
 #include "Engine/Math/Mat4.hpp"
 
 #include "cgltf.h"
@@ -347,6 +348,16 @@ LoadedGltfModel loadGltfModel(const std::string& path) {
         LoadedGltfMaterial& out = model.materials[i];
         out.name = material.name != nullptr ? material.name : "";
         out.extras = parseGltfExtras(material.extras);
+        if (material.normal_texture.texture != nullptr) {
+            out.normalImageIndex = imageIndexOf(*data, material.normal_texture.texture->image);
+            out.normalScale = material.normal_texture.scale;
+        }
+        if (material.emissive_texture.texture != nullptr)
+            out.emissiveImageIndex = imageIndexOf(*data, material.emissive_texture.texture->image);
+        const float strength = material.has_emissive_strength
+            ? material.emissive_strength.emissive_strength : 1.0f;
+        out.emissiveFactor = Vec3 { material.emissive_factor[0], material.emissive_factor[1],
+            material.emissive_factor[2] } * strength;
         if (material.has_pbr_metallic_roughness) {
             const cgltf_pbr_metallic_roughness& pbr = material.pbr_metallic_roughness;
             out.baseColor = {
@@ -366,6 +377,29 @@ LoadedGltfModel loadGltfModel(const std::string& path) {
 
     for (std::size_t nodeIndex = 0; nodeIndex < data->nodes_count; ++nodeIndex) {
         const cgltf_node& node = data->nodes[nodeIndex];
+        if (node.light != nullptr) {
+            const cgltf_light& source = *node.light;
+            float matrix[16] {};
+            cgltf_node_transform_world(&node, matrix);
+            LightRender3D light;
+            light.type = source.type == cgltf_light_type_directional ? LightType3D::Directional
+                : source.type == cgltf_light_type_spot ? LightType3D::Spot : LightType3D::Point;
+            light.position = yUpToZUp(Vec3 { matrix[12], matrix[13], matrix[14] });
+            // glTF emits toward -Z; Matter directional lights point toward the source.
+            const float sign = light.type == LightType3D::Directional ? 1.0f : -1.0f;
+            light.direction = yUpToZUp(Vec3 { matrix[8], matrix[9], matrix[10] } * sign).normalized();
+            light.color = { source.color[0], source.color[1], source.color[2] };
+            light.intensity = source.intensity;
+            light.range = source.range;
+            light.coneOuterDegrees = source.spot_outer_cone_angle * (360.0f / 3.14159265359f);
+            light.coneInnerDegrees = source.spot_inner_cone_angle * (360.0f / 3.14159265359f);
+            light.physicalFalloff = true;
+            if (!std::isfinite(light.intensity) || light.intensity < 0 || !std::isfinite(light.range)
+                || light.range < 0 || !std::isfinite(light.color.x) || !std::isfinite(light.color.y)
+                || !std::isfinite(light.color.z) || light.color.x < 0 || light.color.y < 0 || light.color.z < 0)
+                throw std::runtime_error("Invalid glTF light in: " + path);
+            model.lights.push_back(light);
+        }
         if (node.mesh == nullptr) {
             // Not a mesh - if it carries a name or extras (typically a
             // Blender "empty" marking a gameplay location, like a player

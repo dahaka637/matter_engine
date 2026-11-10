@@ -79,7 +79,10 @@ bool trainerProcessAlive(int pid, const std::string& run) {
     std::ifstream file("/proc/" + std::to_string(pid) + "/cmdline", std::ios::binary);
     const std::string line { std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
     return line.find(std::string("--treino") + '\0' + run + '\0') != std::string::npos
-        || line.find("--treino=" + run) != std::string::npos;
+        || line.find("--treino=" + run + '\0') != std::string::npos
+        || (line.find(std::string("-m") + '\0' + "matter_rl" + '\0' + "treinar" + '\0') != std::string::npos
+            && (line.find(std::string("--run") + '\0' + run + '\0') != std::string::npos
+                || line.find("--run=" + run + '\0') != std::string::npos));
 }
 
 // O arquivo que manda o guarda de um treinador de processo proprio parar de religar ("arquivoParar" do run.json; o
@@ -278,7 +281,7 @@ std::string TrainerLink3D::request(const std::string& line, int timeoutMilliseco
     return reply;
 }
 
-void TrainerLink3D::readStatus(const std::string& json, bool alive) {
+void TrainerLink3D::readStatus(const std::string& json, bool alive, bool controlled) {
     const nlohmann::json s = nlohmann::json::parse(json, nullptr, false);
     if (s.is_discarded() || !s.is_object()) return;
     TrainerStatus3D status;
@@ -301,7 +304,7 @@ void TrainerLink3D::readStatus(const std::string& json, bool alive) {
     status.environments = static_cast<int>(number(s, "environments"));
     status.cpuTemperature = number(s, "cpuTemperature");
     status.policy = text(s, "policy");
-    status.pid = static_cast<int>(number(s, "pid"));
+    status.pid = controlled ? 0 : static_cast<int>(number(s, "pid"));
     if (const auto last = s.find("last"); last != s.end() && last->is_object()) {
         status.lastReward = number(*last, "reward");
         status.lastEpisodeSeconds = number(*last, "episode_seconds");
@@ -368,9 +371,10 @@ void TrainerLink3D::worker() {
         }
         const std::string reply = request(R"({"cmd":"status"})", 3000);
         const nlohmann::json parsed = nlohmann::json::parse(reply, nullptr, false);
-        // O treinador aberto no PC (so ha um), seja qual for o treino dele.
-        if (!parsed.is_discarded() && parsed.is_object() && parsed.value("ok", false) && parsed.contains("status")) {
-            readStatus(parsed["status"].dump(), true);
+        // O socket pode pertencer a outro treino que continua rodando no PC.
+        if (!parsed.is_discarded() && parsed.is_object() && parsed.value("ok", false) && parsed.contains("status")
+            && parsed["status"].is_object() && parsed["status"].value("run", std::string()) == m_run) {
+            readStatus(parsed["status"].dump(), true, true);
             std::lock_guard lock(m_mutex);
             m_opening = false;
             m_failure.clear();
@@ -383,7 +387,11 @@ void TrainerLink3D::worker() {
             const nlohmann::json saved = nlohmann::json::parse(json, nullptr, false);
             const int pid = !saved.is_discarded() && saved.is_object() ? saved.value("pid", 0) : 0;
             const bool running = trainerProcessAlive(pid, m_run);
-            readStatus(json, running);
+            std::ifstream configFile(m_paths.run(m_run) / "run.json");
+            const auto config = nlohmann::json::parse(configFile, nullptr, false);
+            const bool controlled = !config.is_discarded() && config.is_object()
+                && config.value("kind", std::string()) == "locomocao";
+            readStatus(json, running, controlled);
             if (running) {
                 std::lock_guard lock(m_mutex);
                 m_opening = false;

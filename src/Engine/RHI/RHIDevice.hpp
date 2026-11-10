@@ -21,7 +21,7 @@ public:
     // a staging buffer and leaves it shader-read-only, ready for a material
     // to sample. Used by GltfLoader and anything else bringing in authored
     // textures - not the game's per-frame render path.
-    virtual TextureHandle createTexture2D(Extent2D extent, std::span<const std::byte> rgbaPixels) = 0;
+    virtual TextureHandle createTexture2D(Extent2D extent, std::span<const std::byte> rgbaPixels, bool srgb = false) = 0;
     // O material do personagem (CharacterMaterial.hpp): os arrays com os niveis
     // prontos e o sampler proprio, o buffer por vertice e os parametros. A troca
     // de uma camada (um uniforme novo) e a dos vertices (outro corpo) respeitam

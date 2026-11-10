@@ -26,12 +26,14 @@ std::vector<GpuLightData3D> packSceneLights(std::span<const LightRender3D> light
         gpu.colorIntensity = { light.color.x, light.color.y, light.color.z, intensity };
         gpu.parameters[1] = static_cast<float>(static_cast<int>(light.type));
         gpu.parameters[2] = light.castsShadow ? 1.0f : 0.0f;
+        gpu.parameters[3] = light.physicalFalloff ? 1.0f : 0.0f;
 
         if (light.type == LightType3D::Spot) {
             const float range = std::max(light.range, 0.0f);
             const float outerHalfAngle = std::clamp(
                 light.coneOuterDegrees * 0.5f, 1.0f, 89.0f) * DegreesToRadians;
-            const float innerHalfAngle = outerHalfAngle * 0.72f;
+            const float innerHalfAngle = light.coneInnerDegrees < 0.0f ? outerHalfAngle * 0.72f
+                : std::clamp(light.coneInnerDegrees * 0.5f * DegreesToRadians, 0.0f, outerHalfAngle - 0.00001f);
             gpu.positionRange = { light.position.x, light.position.y,
                 light.position.z, range };
             gpu.directionOuterCosine = { direction.x, direction.y, direction.z,

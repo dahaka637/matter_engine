@@ -1,5 +1,6 @@
 #include "Engine/Physics/Jolt/JoltInternals3D.hpp"
 #include "Engine/Physics/Jolt/JoltShapes3D.hpp"
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseQuery.h>
@@ -69,6 +70,11 @@ const JPH::PhysicsMaterial* firstShapeMaterial(const JPH::Shape* shape) {
         } else if (shape->GetType() == JPH::EShapeType::Decorated) {
             shape = static_cast<const JPH::DecoratedShape*>(shape)->GetInnerShape();
         } else {
+            // Mesh material lookup needs a real triangle ID; an empty SubShapeID is invalid.
+            if (shape->GetSubType() == JPH::EShapeSubType::Mesh) {
+                const auto& materials = static_cast<const JPH::MeshShape*>(shape)->GetMaterialList();
+                return materials.empty() ? nullptr : materials.front().GetPtr();
+            }
             return shape->GetMaterial(JPH::SubShapeID());
         }
     }

@@ -76,6 +76,7 @@ public:
         m_chartWindow = std::clamp(window, 0, 5);
         m_historyWatch = 0.0f;
     }
+    void setShowRequirements(bool show) { m_showRequirements = show; }
     // O que os graficos desenham agora (a evolucao e as series do exercicio mostrado).
     [[nodiscard]] const TrainingCharts3D& chartData() { return charts(m_chartsExpanded ? 240 : 160); }
     void push(int direction, float newtons);
@@ -188,6 +189,7 @@ private:
     // aberto pelo terminal) ou, sem treinador, o escolhido nesta tela.
     [[nodiscard]] std::string activeRun() const;
     [[nodiscard]] std::filesystem::path taskPath() const;
+    [[nodiscard]] std::filesystem::path getUpRunDirectory() const;
     [[nodiscard]] std::filesystem::path policyPath() const;
 
     Options m_options;
@@ -242,24 +244,34 @@ private:
     // Cada linha do log (as do treino, a cada ~70 s, e as "aval"), em ordem: o treino com ruido (de pe no fim das
     // quedas, por lado, e o de pe dos que comecam de pe) e o teste sem ruido (repetido ate o seguinte).
     struct GetUpCurve {
-        std::vector<float> standing, test, kept, prone, supine, side, seconds;
-        // O levantar v2: o em movimento (chegou, de pe, velocidade rumo ao alvo) e o evitar a queda (evitou, recompos
-        // e o tempo), no treino e nas avaliacoes fixas.
+        std::string drill;
+        // O levantar em movimento (chegou, de pe, velocidade rumo ao alvo) e o evitar a queda (evitou, o tempo para se
+        // recompor, de pe no fim e a estabilidade), do treino.
         std::vector<float> reached, reachedTest, movingStood, towardSpeed, towardSpeedTest;
-        std::vector<float> avoided, avoidedTest, recomposed, recomposeSeconds, recomposeSecondsTest;
-        // O equilibrio parado e a pose de pe (perto do parado em alerta).
-        std::vector<float> balance, balanceTest, pose, poseStanding, poseTest;
+        std::vector<float> avoided, recomposeSeconds, avoidStanding, avoidStill;
+        // (06/11, o modulo unico) As cinco medidas do exercicio mostrado (os rumos, as manobras, o levantar e o equilibrio):
+        // ate o fim, o segundo grafico (a velocidade como % do pedido; no levantar o tempo, s; no equilibrio os passos), a
+        // semelhanca, a estabilidade e a forca (no equilibrio o nivel dos empurroes), com o exigido de cada uma (o
+        // "exigencias" do log); nos cenarios, levantou/evitou.
+        std::vector<float> sceneryStood, scenerySeconds, sceneryAvoided;
+        std::vector<float> sceneryImitation, sceneryStability, sceneryAssist;
+        std::vector<float> sceneryRatio, requiredStood, requiredRatio, requiredImitation, requiredStability, requiredSeconds;
+        // (06/11 07h) O teste fixo do exercicio, sem ruido e sem forca ("capacidade" a 0% das avaliacoes, repetida ate a
+        // seguinte): % de pe e % da velocidade pedida.
+        std::vector<float> capacityZero, capacitySpeed;
+        // (06/11) O levantar pela avaliacao fixa.
+        std::vector<float> evalStood, evalRose, evalSeconds, evalPose;
+        // (07/11, ele: "fica medindo o quanto ele esta se aproximando do juiz" e "os levantares nao mostram os dados completos")
+        // A nota do juiz no exercicio (% - (D + 1) / 2 nas avaliacoes) e o treino dos levantares (de pe, tempo, levantou).
+        std::vector<float> judge, trainStood, trainSeconds, trainRose;
         // A locomocao na rede do levantar (na ordem de TrackingViewer3D::LocomotionDrills): o primeiro grafico e o sem
-        // cair, no treino e no teste.
-        // (12: os rumos e, desde 01/11, as faixas da rl_final - era 8 e as faixas escreviam fora do array.)
+        // cair, no treino e no teste. (12: os rumos e, desde 01/11, as faixas da rl_final.)
         std::array<std::vector<float>, 12> locoMain, locoMainTest, locoUp, locoUpTest;
         // A hora de cada ponto (s, unix) e a janela de tempo com que foi lido (ChartWindows).
         std::vector<double> times;
         int window = -1;
         // A coluna como a do parado em alerta, de pe no fim (o treino de pe e o teste do parado).
         std::vector<float> spine, spineTest;
-        // As quedas da locomocao (01/11, a interligacao): levantou e o tempo, no treino e no teste, e o tempo ate a troca.
-        std::vector<float> locoFall, locoFallTest, locoFallSeconds, locoFallSecondsTest, handoffSeconds;
         std::filesystem::file_time_type write {};
     } m_getUpCurve;
     struct GetUpLive {
@@ -270,7 +282,18 @@ private:
         // O ultimo teste (sem ruido): levantou, tempo, em movimento e evitou (< 0: sem o exercicio); a hora dele.
         double stood = -1.0, seconds = -1.0, moving = -1.0, avoided = -1.0;
         std::string testTime;
+        double assist = 0.0;
+        // A mao de verdade no ultimo trecho do treino (N): a sustentacao media e o p90 (o segurar no tropeco); < 0 sem dado.
+        double handMean = -1.0, handPeak = -1.0;
+        // A forca auxiliar da corrida (< 0: sem a corrida).
+        double runAssist = -1.0;
+        double maneuverAssist = -1.0;
+        // A forca dinamica por exercicio (v2.ajuda_exercicios) e a fatia da locomocao no treino.
+        std::map<std::string, double> drillAssist;
+        double locomotionShare = 0.0;
     } m_getUpLive;
+    [[nodiscard]] static std::string assistText(const GetUpLive& g);
+    [[nodiscard]] std::string drillAssist(const std::string& id) const;
     float m_accumulator = 0.0f;
     // Onde a pelve aparece no ultimo quadro (0 a 1 na imagem; -1 fora dela).
     std::array<float, 2> m_pelvisOnScreen { -1.0f, -1.0f };
@@ -280,6 +303,8 @@ private:
     struct PushLabel {
         float x = 0.0f, y = 0.0f, newtons = 0.0f, fade = 0.0f;
     } m_pushLabel;
+    // (08/11) O rastro da pelve na estrela (o ponto no chao e a velocidade, m/s).
+    std::vector<std::pair<Vec3, float>> m_starTrail;
     bool m_paused = false;
     struct ReplayFrame {
         RagdollState3D state;
@@ -345,6 +370,8 @@ private:
     // Os graficos no lugar do visualizador, um embaixo do outro, e o periodo deles
     // (o mesmo recolhido e expandido; comeca em "desde o inicio").
     bool m_chartsExpanded = false;
+    // (04/11 12h40, ele: no expandido, "mostrar exigencias" - o minimo para descer a forca auxiliar em cada grafico.)
+    bool m_showRequirements = false;
     int m_chartWindow = 5;
     std::string m_notice;
     float m_noticeSeconds = 0.0f;

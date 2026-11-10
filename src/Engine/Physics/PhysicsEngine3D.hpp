@@ -201,7 +201,7 @@ public:
         const ConvexDecompositionSettings3D& settings = {},
         std::string_view cachePath = {});
     [[nodiscard]] std::shared_ptr<const PhysicsMesh3D>
-        cookStaticTriangleMesh(const MeshData3D& mesh,
+        cookStaticTriangleMesh(const MeshData3D& mesh, std::string_view materialId,
             const StaticTriangleMeshCookingSettings3D& settings = {});
 
 private:

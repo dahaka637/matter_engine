@@ -85,6 +85,7 @@ ApplicationConfig initialConfiguration() {
     // e determinística nos 120 Hz definidos abaixo, então isso não muda o
     // comportamento do jogo — só limita a taxa de apresentação ao monitor.
     config.vsync = true;
+    config.maximumFrameRate = environmentFloat("MATTERENGINE_MAX_FPS", 0.0f, 0.0f, 1000.0f);
     config.displayMode = video.mode;
     config.fixedUpdateHz = 120.0f;
     config.maxFixedStepsPerFrame = 8;
@@ -212,6 +213,18 @@ void WorkbenchApp::loadAnimationCatalog() {
 
 void WorkbenchApp::applyAutostartIfRequested() {
     const std::string mode = environmentValue("MATTERENGINE_AUTOSTART");
+    if (const char* map = std::getenv("MATTERENGINE_MAP")) {
+        if (std::string_view(map) != "dev_map" && std::string_view(map) != "galpao_01")
+            throw std::invalid_argument("MATTERENGINE_MAP deve ser dev_map ou galpao_01");
+        m_laboratoryIndoor = std::string_view(map) == "galpao_01";
+        if (m_laboratoryIndoor) {
+            applyLaboratoryGraphicsPreset(1);
+            m_laboratoryToneMapping.exposure = .08f;
+            m_laboratoryToneMapping.contrast = 1.10f;
+            m_laboratoryToneMapping.saturation = 1.05f;
+        }
+    }
+    if (mode == "laboratory-maps") m_screen = Screen::LaboratoryMaps;
     if (mode == "laboratory" || mode == "laboratory-debug" || mode == "laboratory-pose"
         || mode == "laboratory-biomechanics"
         || mode == "laboratory-character"
@@ -617,7 +630,8 @@ void WorkbenchApp::onEvent(const Event& event) {
             m_screen = m_settingsReturnScreen;
         } else if (m_screen == Screen::ObjectInspector
             || m_screen == Screen::ReinforcementLearning
-            || m_screen == Screen::PlayerInspector) {
+            || m_screen == Screen::PlayerInspector
+            || m_screen == Screen::LaboratoryMaps) {
             m_screen = Screen::MainMenu;
         }
     }
@@ -818,6 +832,9 @@ void WorkbenchApp::onGui(Renderer& activeRenderer) {
     case Screen::MainMenu:
         drawMainMenu();
         break;
+    case Screen::LaboratoryMaps:
+        drawLaboratoryMaps();
+        break;
     case Screen::Laboratory:
         drawLaboratoryUi();
         break;
@@ -853,6 +870,7 @@ void WorkbenchApp::onGui(Renderer& activeRenderer) {
 
 void WorkbenchApp::onStop() {
     renderer().setMouseCaptured(false);
+    for (auto& preview : m_mapPreviews) if (preview) renderer().destroyUiTexture(preview);
     m_worldAudio.shutdown();
     releaseLaboratoryAssets(renderer());
     m_physicsScene.reset();

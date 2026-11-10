@@ -17,6 +17,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <span>
 #include <string>
 #include <string_view>
@@ -975,6 +976,11 @@ void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
         return;
     }
 
+    if (m_laboratoryIndoor) {
+        loadAuthoredLaboratoryMap(activeRenderer);
+        return;
+    }
+
     // Dev-grid test platform: no map asset, no glTF, no ocean — a plain
     // checkered slab, generated procedurally (geometry and texture both),
     // replacing the old lab_map.glb the user asked to drop. A real block
@@ -1298,6 +1304,16 @@ void WorkbenchApp::resetLaboratoryCharacter() {
     m_laboratoryCameraYaw = m_laboratorySpawnYaw;
     m_laboratoryCameraPitch = -0.08f;
     m_laboratoryCharacterInitialized = true;
+    if (const char* view = std::getenv("MATTERENGINE_MAP_VIEW"); view && std::string_view(view) == "overview") {
+        m_laboratoryCameraPosition = m_laboratoryIndoor ? Vec3{-20,-9,4.8f} : Vec3{-24,-24,6};
+        m_laboratoryCameraYaw = m_laboratoryIndoor ? .40f : .72f;
+        m_laboratoryCameraPitch = -.17f;
+        m_physicsScene->placeCharacter(m_laboratoryCameraPosition-Vec3{0,0,m_laboratoryEyeHeight}, m_characterSettings);
+        CharacterMotorCommand3D command;
+        command.toggleFlight = true;
+        m_physicsScene->moveCharacter(command,m_characterSettings,1.0f/120.0f);
+        m_hidePhysGunPresentation = true;
+    }
     m_laboratoryJumpRequested = false;
     m_laboratoryFlightToggleRequested = false;
     // Teleporte/camera cut nao possui correspondencia valida no quadro
@@ -1380,6 +1396,8 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
     }
     m_laboratoryMapParts.clear();
     m_laboratoryMapTextures.clear();
+    m_laboratoryMapLights.clear();
+    m_worldAudio.setAcousticZones({});
     m_laboratoryOceanEnabled = false;
     if (m_physicsScene) m_physicsScene->clearOcean();
     if (m_laboratoryOceanVertexBuffer) {
@@ -1463,18 +1481,13 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
             ||m_takeCharacterControlWhenReady)
         &&m_laboratoryMapLoaded&&m_humanRagdollProfile
         &&m_spawnedRagdolls.empty()) {
-        // Ponto de spawn da plataforma de dev. A coordenada fixa anterior,
-        // {-30,-45}, era do mapa glTF antigo e fica 15 m fora da plataforma
-        // procedural de 60x60 m que o substituiu: sem chao embaixo,
-        // ragdollGroundHeight devolvia a propria altura e o personagem caia no
-        // vazio. Todos os modos de autostart que assumem o personagem
-        // (character, animation, walk, pose) estavam quebrados por isso.
-        Vec3 position{m_laboratorySpawnPosition.x, m_laboratorySpawnPosition.y,
-            m_laboratorySpawnPosition.z + 50.0f};
+        // Consultar perto do nascimento: um raio vindo do ceu encontra o telhado.
+        Vec3 position = m_laboratorySpawnPosition;
+        const auto orientation = Quaternion::fromAxisAngle({0,0,1}, m_laboratorySpawnYaw);
         position.z=ragdollGroundHeight(position)+m_characterSpawnHalfExtents.z-m_characterSpawnCenter.z+0.055f;
         const auto safe=findSafeSpawnPosition(position+m_characterSpawnCenter,
-            m_characterSpawnHalfExtents+Vec3{0.01f,0.01f,0.01f},{},5);
-        if(!safe||!spawnHumanRagdollAt(*safe-m_characterSpawnCenter,{},false)) {
+            m_characterSpawnHalfExtents+Vec3{0.01f,0.01f,0.01f},orientation,5);
+        if(!safe||!spawnHumanRagdollAt(*safe-m_characterSpawnCenter,orientation,false)) {
             m_animationRunTest=false;m_manualRagdollInspection=false;
             m_takeCharacterControlWhenReady=false;
             Log::error("Não foi possível criar o corpo na pista");
@@ -1776,6 +1789,12 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
             mesh.shadowIndexCount = part.lods.back().indexCount;
         }
         mesh.albedoTexture = part.albedoTexture;
+        mesh.metallicRoughnessTexture = part.metallicRoughnessTexture;
+        mesh.normalTexture = part.normalTexture;
+        mesh.normalScale = part.normalScale;
+        mesh.parallaxDepth = part.parallaxDepth;
+        mesh.emissiveTexture = part.emissiveTexture;
+        mesh.emissiveFactor = part.emissiveFactor;
         mesh.metallic = part.metallic;
         mesh.roughness = part.roughness;
         mesh.matteSurface = part.matteSurface;
@@ -2112,7 +2131,7 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
 
     const float warmSun = 1.0f
         - smoothUnit(0.02f, 0.42f, sunElevation);
-    std::array<LightRender3D, 3> lights;
+    std::vector<LightRender3D> lights(3);
     lights[0].type = LightType3D::Directional;
     lights[0].direction = sunDirection;
     lights[0].color = mixColor(
@@ -2136,6 +2155,11 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
         ? m_physGunFlashlight.intensity : 0.0f;
     lights[2].coneOuterDegrees = m_physGunFlashlight.coneDegrees;
 
+    if (m_laboratoryIndoor) {
+        lights[0].intensity = lights[1].intensity = 0.0f;
+        lights[0].castsShadow = false;
+        lights.insert(lights.end(),m_laboratoryMapLights.begin(),m_laboratoryMapLights.end());
+    }
     Scene3DFrame scene;
     scene.renderMode = m_laboratoryRenderMode;
     scene.pixelArt = m_laboratoryPixelArt;
@@ -2166,7 +2190,13 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
     scene.shadowFilterSampleCount =
         m_laboratoryGraphicsPreset == 0 ? 4u
         : m_laboratoryGraphicsPreset == 1 ? 8u : 12u;
-    scene.showSky = true;
+    scene.showSky = !m_laboratoryIndoor;
+    if (m_laboratoryIndoor) {
+        scene.environment.skyIrradiance = 4.5f;
+        scene.environment.minimumIndirectVisibility = .45f;
+        scene.environment.sunDiffuseBounce = 0.0f;
+        scene.showShadows = false;
+    }
     scene.toneMapping = m_laboratoryToneMapping;
     scene.ambientOcclusion = m_laboratoryAmbientOcclusion;
     scene.opticalEffects = m_laboratoryOpticalEffects;
@@ -2180,6 +2210,11 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
         scene.shadowFilterSampleCount = 4u;
     }
     scene.fog = m_laboratoryFog;
+    if (m_laboratoryIndoor) {
+        scene.fog.density = 0.0f;
+        scene.fog.maxOpacity = 0.0f;
+        scene.ambientOcclusion.enabled = true;
+    }
     if (m_laboratoryOceanEnabled) {
         scene.oceanEnabled = true;
         scene.ocean.center = m_laboratoryOcean.center;
@@ -3023,6 +3058,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                                     if (!m_locomotionPolicyLabel.empty()) ImGui::TextDisabled("%s", m_locomotionPolicyLabel.c_str());
                                     if (!m_getUpPolicyLabel.empty()) ImGui::TextDisabled("%s", m_getUpPolicyLabel.c_str());
                                 }
+                                ImGui::Checkbox("Queda da locomoção física antes do levantar", &m_protectiveFallBeforeGetUp);
+                                hint("Com a rede do levantar (Físico com RL): caindo, a locomoção física cuida da queda inteira, do jeito dela — os reflexos no ar e o corpo vivo no chão —, e a rede assume só quando ela começa a levantar. Desligado, a rede assume já na queda iminente, ainda de pé.");
                                 ImGui::Checkbox("Levantar pelo padrão", &m_animatedGetUp);
                                 hint("Caído de bruços ou de costas, com o chão plano e nada no caminho, levanta pelo clipe com a postura certa; um contato no meio volta ao físico. Sem base, o levantar físico. Ligado, o levantar é este também com as redes de RL.");
                                 // (28/10, pedido do usuario: calibrar na pratica.)

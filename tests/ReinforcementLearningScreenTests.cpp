@@ -14,6 +14,10 @@
 #include "Engine/RL/Environment/BodyTrainingBatch3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
 #include "Engine/RL/Motor/MotorTraining3D.hpp"
+#include "Engine/Tracking/TrackingGetUpAmpTraining3D.hpp"
+#include "Engine/Tracking/TrackingGetUpAmp3D.hpp"
+#include "Engine/Tracking/TrackingLeader3D.hpp"
+#include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Workbench/ReinforcementLearning/MotorViewer3D.hpp"
 #include "Workbench/ReinforcementLearning/TrackingViewer3D.hpp"
 #include "Engine/RL/Supervisor/TrainerLink3D.hpp"
@@ -98,6 +102,13 @@ void writePolicy(const std::filesystem::path& path, std::uint64_t iteration, con
                         { { "inputs", hidden }, { "outputs", actions }, { "weights", w2 }, { "bias", b2 } } }) },
     };
     header.update(meta);
+    if (meta.value("testRouted", false)) {
+        auto routed = header["layers"];
+        routed.back()["bias"] = data.size();
+        data.insert(data.end(), actions, .75f);
+        header["locomotionLayers"] = routed;
+        header["skillModeIndex"] = obs - 1;
+    }
     const std::string text = header.dump();
     std::filesystem::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary);
@@ -108,6 +119,42 @@ void writePolicy(const std::filesystem::path& path, std::uint64_t iteration, con
     const std::size_t pad = (4 - (12 + text.size()) % 4) % 4;
     for (std::size_t i = 0; i < pad; ++i) out.put('\0');
     out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size() * 4));
+}
+
+void checkSkillRoutingAndIdle(const std::filesystem::path& folder) {
+    const auto path = folder / "routed.mrlpolicy";
+    writePolicy(path, 1, { "body", "command", "habilidade.locomocao" }, 2, { { "testRouted", true } });
+    PolicyRuntime3D policy(path);
+    const std::array<float, 6> observations { .1f, .2f, 0.f, .1f, .2f, 1.f };
+    std::array<float, 4> actions {};
+    policy.evaluateBatch(observations, actions, 2);
+    require(std::abs(actions[0]) < 1e-6f && std::abs(actions[2] - .75f) < 1e-6f,
+        "politica unica seleciona cabecas distintas, tambem em lote");
+    std::array<float, 2> single {};
+    policy.evaluate(std::span(observations).subspan(3, 3), single);
+    require(single[0] == actions[2], "execucao individual e lote roteado coincidem");
+    TrackingGetUpAmpSettings3D settings;
+    settings.assetsDirectory = (sourceRoot() / "assets").string();
+    settings.environments = settings.threads = 1;
+    settings.evaluation = true;
+    settings.evaluationKind = 3;
+    TrackingGetUpAmpTraining3D batch(settings);
+    auto idle = batch.body(0).links;
+    TrackingGetUpPostureProbe3D probe(batch.profile());
+    probe.setIdlePose(idle);
+    const auto original = probe.measure(idle);
+    auto arched = idle;
+    const auto chest = std::find_if(batch.profile().links.begin(), batch.profile().links.end(),
+        [](const auto& link) { return link.id == "UpperChest"; });
+    const auto index = static_cast<std::size_t>(chest - batch.profile().links.begin());
+    require(index < arched.size(), "peito existe na referencia IDLE");
+    arched[index].orientation = Quaternion::fromAxisAngle({ 0.f, 1.f, 0.f }, .3f) * arched[index].orientation;
+    const auto changed = probe.measure(arched);
+    require(original.standing && changed.standing, "teste compara duas poses de pe");
+    require(probe.standingReward(original, idle, true) > probe.standingReward(changed, arched, true),
+        "quieto, IDLE reto rende mais que peito arqueado");
+    require(std::abs(probe.standingReward(original, idle, false) - probe.standingReward(changed, arched, false)) < 1e-6f,
+        "durante perturbacao nao ha cobranca de semelhança IDLE");
 }
 
 void writeJson(const std::filesystem::path& path, const nlohmann::json& value);
@@ -377,6 +424,8 @@ int realRun(const std::filesystem::path& out) {
     }
     if (const char* window = std::getenv("MATTER_RL_TEST_EXPAND")) {
         screen.setChartsExpanded(true, std::atoi(window));
+        // (04/11 12h40: as linhas do minimo para descer a forca.)
+        screen.setShowRequirements(std::getenv("MATTER_RL_TEST_EXIGENCIAS") != nullptr);
         screen.waitUntilLoaded();
         frame(screen, canvas, 3);
         std::cout << "expandido: " << screen.history().iterations.size() << " rodadas na janela\n";
@@ -395,21 +444,32 @@ int realRun(const std::filesystem::path& out) {
 void processTrainer(const std::filesystem::path& data) {
     const std::filesystem::path run = data / "runs" / "rast_teste";
     std::filesystem::create_directories(run);
-    const std::string script = "import json,os,signal,sys,time\n"
+    const auto socket = data / "controle.sock";
+    const std::string script = "import json,os,signal,socket,sys,threading,time\n"
         "p=sys.argv[1]\n"
         "def w(st): open(p+'/status.json','w').write(json.dumps({'run':'rast_teste','task':'rastreador_frente','state':st,'pid':os.getpid(),'iteration':7}))\n"
         "signal.signal(signal.SIGTERM, lambda *a: (w('parado'), sys.exit(0)))\n"
+        "s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[2]); s.listen()\n"
+        "def serve():\n"
+        " while True:\n"
+        "  c,_=s.accept()\n"
+        "  with c:\n"
+        "   row=json.loads(c.makefile().readline())\n"
+        "   if row['cmd']=='salvar': open(p+'/salvo_pelo_socket','w').write('ok')\n"
+        "   c.sendall((json.dumps({'ok':True,'status':{'run':'outro_treino','task':'locomocao','state':'treinando','pid':os.getpid(),'iteration':999}})+'\\n').encode())\n"
+        "threading.Thread(target=serve,daemon=True).start()\n"
         "w('treinando')\n"
         "while True: time.sleep(0.05)\n";
     // (Com guarda, como o levantar: abrir apaga o arquivo de parar dele e parar o cria, para o guarda nao religar.)
     const std::filesystem::path stop = run / "parar_guarda";
     std::ofstream(stop).put('\n');
     nlohmann::json config { { "kind", "rastreador" }, { "task", "rastreador_frente" },
-        { "comando", { "/usr/bin/python3", "-c", script, run.string(), "--treino", "rast_teste" } },
+        { "comando", { "/usr/bin/python3", "-c", script, run.string(), socket.string(), "--treino", "rast_teste" } },
         { "pasta", run.string() }, { "arquivoParar", stop.string() } };
     std::ofstream(run / "run.json") << config.dump();
     TrainerPaths3D paths = defaultTrainerPaths3D(sourceRoot());
     paths.data = data;
+    paths.socket = socket;
     TrainerLink3D link(paths, "rast_teste");
     std::string error;
     require(link.start("rastreador_frente", "equilibrado", &error), "a ponte abre o treinador do run.json: " + error);
@@ -425,11 +485,114 @@ void processTrainer(const std::filesystem::path& data) {
     require(waitFor(true), "o treinador aberto aparece vivo pelo pid do status.json");
     require(link.status().pid > 0 && link.status().iteration == 7 && link.status().state == "treinando",
         "o status do treinador de processo proprio chega a tela");
+    require(link.status().run == "rast_teste", "o socket de outro treino nao substitui o selecionado");
+    {
+        TrainerLink3D controlled(paths, "outro_treino");
+        for (int i = 0; i < 100 && !controlled.status().alive; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        require(controlled.status().alive && controlled.status().pid == 0,
+            "treino controlado pelo socket nao usa sinais de processo proprio");
+        controlled.send("salvar");
+        for (int i = 0; i < 100 && !std::filesystem::exists(run / "salvo_pelo_socket"); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        require(std::filesystem::exists(run / "salvo_pelo_socket"), "salvar segue pelo socket sem matar o treinador");
+    }
     link.send("parar");
     require(waitFor(false), "o parar fecha o treinador pelo sinal");
     require(link.status().state == "parado", "parado depois do sinal");
     require(std::filesystem::exists(stop), "parar cria o arquivo de parar do guarda");
     std::cout << "treinador de processo proprio: abre, aparece vivo, para pelo sinal\n";
+}
+
+void selectedGetUpRun(const std::filesystem::path& data, FakeCanvas& canvas) {
+    const auto run = data / "runs" / "ab_levantar_teste";
+    std::filesystem::create_directories(run);
+    std::ofstream(run / "run.json") << R"({"kind":"levantar","v2":{"locomocao":0.2,"rastreio":true,"habilidades_separadas":true}})";
+    std::ofstream(run / "tarefa.json") << R"({"schema":"matter-getup-amp-1"})";
+    std::ofstream(run / "status.json") << R"({"run":"ab_levantar_teste","task":"levantar","state":"parado","iteration":123})";
+    std::ofstream(run / "log.jsonl")
+        << R"({"atualizacao":123,"hora":1000,"tarefa":0.5,"queda_de_pe":0.8,"cenarios":{"levantar_fixo_corredor":{"levantou":0.25,"tempo":2},"levantar_fixo_corredor_leve":{"levantou":0.9,"tempo":1},"evitar_fixo_pilares":{"evitou":0.6,"recompos_s":0.8},"lev_trote_0":{"sem_cair":0.95,"ate_o_fim":0.95,"vel_rumo":0.85},"lev_trote_7":{"sem_cair":0.5,"ate_o_fim":0.5,"vel_rumo":1.1}}})" << '\n'
+        << R"({"atualizacao":123,"hora":1001,"aval":true,"levantou":0.75,"de_pe":0.75,"tempo":1.2})" << '\n';
+    TrackingGetUpAmpSettings3D settings;
+    settings.assetsDirectory = (sourceRoot() / "assets").string();
+    settings.environments = 1;
+    settings.threads = 1;
+    TrackingGetUpAmpTraining3D batch(settings);
+    writePolicy(run / "exports/policy_latest.mrlpolicy", 123, batch.observationNames(), batch.actionSize());
+    require(TrackingViewer3D::getUpLog(run) == run / "log.jsonl", "o log vem do braco selecionado");
+    require(TrackingViewer3D::getUpReady(run) && TrackingViewer3D::getUpVersion2(run), "o braco aceita os exercicios v2");
+    require(!TrackingViewer3D::getUpTraining(run), "log recente de treino encerrado nao aparece como treinando");
+    TrackingViewer3D viewer(sourceRoot() / "assets", 7, TrackingViewer3D::GetUpDrill, {}, 1.0f, 0.2f, {}, run);
+    std::string label;
+    viewer.setPolicy({}, label);
+    require(viewer.hasPolicy() && label == "ab_levantar_teste r123", "a politica vem do braco selecionado");
+    writePolicy(run / "exports/policy_latest.mrlpolicy", 124, batch.observationNames(), batch.actionSize());
+    std::filesystem::last_write_time(run / "exports/policy_latest.mrlpolicy",
+        std::filesystem::file_time_type::clock::now() + std::chrono::seconds(2));
+    viewer.setPolicy({}, label);
+    require(label == "ab_levantar_teste r124", "o visualizador recarrega o novo export do mesmo braco");
+    ReinforcementLearningScreen::Options options;
+    options.sourceRoot = sourceRoot();
+    options.run = "ab_levantar_teste";
+    ReinforcementLearningScreen screen(options, {});
+    screen.waitUntilLoaded();
+    frame(screen, canvas, 180);
+    require(screen.shownRun() == "ab_levantar_teste" && screen.policyLoaded(), "a tela conserva o braco selecionado");
+    require(screen.getUpLiveText().find("ab_levantar_teste") != std::string::npos
+            && screen.getUpLiveText().find("75%") != std::string::npos,
+        "o resumo usa a avaliacao mais recente do braco selecionado");
+    require(std::find(screen.drills().begin(), screen.drills().end(), TrackingViewer3D::BalanceDrill) != screen.drills().end(),
+        "o laboratorio oferece equilibrio parado");
+    for (int heading = 0; heading < 8; ++heading) {
+        const std::string drill = "lev_trote_" + std::to_string(heading);
+        const auto drills = screen.drills();
+        require(std::find(drills.begin(), drills.end(), drill) != drills.end()
+                && TrackingViewer3D::isGetUpDrill(drill) && TrackingViewer3D::isLocomotionDrill(drill)
+                && TrackingViewer3D::locomotionHeadingOf(drill) == heading,
+            "oito trotes independentes no laboratorio e no visualizador");
+    }
+    {
+        const auto drills = screen.drills();
+        require(std::find(drills.begin(), drills.end(), std::string(TrackingViewer3D::LocomotionDrills[1])) != drills.end(),
+            "o rastreio mostra o giro parado");
+    }
+    TrackingViewer3D independent(sourceRoot() / "assets", 7, "lev_trote_0", {}, 1.0f, 0.2f, {}, run);
+    independent.setPolicy({}, label);
+    for (int step = 0; step < 10; ++step) independent.step();
+    require(independent.hasPolicy() && !independent.drivingLocomotion(), "ator unificado funciona sem arquivos do professor");
+    require(std::abs(independent.view().command.moveVelocity.length() - 3.0f) < .01f,
+        "o trote do rastreio pede a velocidade do clipe jog (3 m/s), nao a antiga fixa 2,5 m/s");
+    {
+        // (04/11 12h40: os pedidos fixos do run.json - o trote 4 m/s, a corrida 6 na frente, 4,5 de lado e 5,5 de costas.)
+        const auto fixed = data / "runs" / "ab_levantar_velocidades";
+        std::filesystem::create_directories(fixed / "exports");
+        std::filesystem::copy_file(run / "exports/policy_latest.mrlpolicy", fixed / "exports/policy_latest.mrlpolicy",
+            std::filesystem::copy_options::overwrite_existing);
+        std::ofstream(fixed / "run.json") << R"({"kind":"levantar","v2":{"locomocao":0.2,"rastreio":true,"habilidades_separadas":true,)"
+                                             R"("velocidades_trote":[4,4,4,4,4,4,4,4],"velocidades_corrida":[6,6,4.5,5.5,5.5,5.5,4.5,6]}})";
+        for (const auto& [drill, wanted] : { std::pair { "lev_trote_2", 4.0f }, std::pair { "lev_corrida_0", 6.0f },
+                 std::pair { "lev_corrida_6", 4.5f }, std::pair { "lev_corrida_4", 5.5f } }) {
+            TrackingViewer3D viewer(sourceRoot() / "assets", 7, drill, {}, 1.0f, 0.2f, {}, fixed);
+            std::string name;
+            viewer.setPolicy({}, name);
+            for (int step = 0; step < 10; ++step) viewer.step();
+            require(std::abs(viewer.view().command.moveVelocity.length() - wanted) < .01f,
+                std::string("o visualizador pede o pedido fixo do treino em ") + drill + ": "
+                    + std::to_string(viewer.view().command.moveVelocity.length()));
+        }
+    }
+    screen.showDrill("lev_trote_0");
+    require(screen.getUpLiveText().find("cenário 95%") != std::string::npos, "trote frontal usa metricas proprias");
+    screen.showDrill("lev_trote_7");
+    require(screen.getUpLiveText().find("cenário 50%") != std::string::npos, "trote diagonal nao reaproveita grafico frontal");
+    screen.showDrill("levantar_fixo_corredor");
+    require(screen.getUpLiveText().find("cenário 25%") != std::string::npos, "grafico do corredor justo usa somente suas medidas");
+    screen.showDrill("levantar_fixo_corredor_leve");
+    require(screen.getUpLiveText().find("cenário 90%") != std::string::npos, "troca de exercicio invalida cache mesmo sem mudar arquivo");
+    screen.showDrill("evitar_fixo_pilares");
+    require(screen.getUpLiveText().find("cenário 60%") != std::string::npos, "grafico do evitar usa taxa do seu preset");
+    screen.showDrill("levantar_fixo_rampa");
+    require(screen.getUpLiveText().find("cenário sem dados") != std::string::npos, "sem metricas individuais nao exibe agregado de outro exercicio");
 }
 
 // O empurrao unico no visualizador (23/10, como no treino): o exercicio leve
@@ -467,7 +630,7 @@ void checkGetUpViewers() {
             pushed = balance.view().pushLink >= 0;
             target = target || balance.view().hasTarget;
         }
-        require(pushed && !target, "o equilibrio parado mostra o empurrao, sem alvo");
+        require(!pushed && !target, "o equilibrio parado pratica IDLE sem empurrao nem alvo");
     }
     {
         TrackingViewer3D still(assets, 7, TrackingViewer3D::GetUpDrill);
@@ -481,15 +644,16 @@ void checkGetUpViewers() {
         require(!falls.view().hasTarget, "as quedas da locomocao nao tem alvo");
     }
     {
-        // A locomocao na rede do levantar (31/10 22h35): o rumo pede 2,5 m/s de costas com o rumo do corpo pedido, o giro
-        // gira o rumo pedido a 0,6 rad/s sem pedir deslocamento, o parado nao pede nada nem empurra.
+        // A locomocao na rede do levantar: o rumo de costas pede a velocidade do clipe jog_backward (3 m/s; 03/11, os
+        // clipes do modo padrao no lugar da regua fixa de 2,5 m/s) de costas com o rumo do corpo pedido, o giro gira o
+        // rumo pedido sem pedir deslocamento, o parado nao pede nada nem empurra.
         TrackingViewer3D back(assets, 4, "lev_tras");
         back.step();
         const BodyWorldView3D asked = back.view();
         const Vec3 move = asked.command.moveVelocity;
-        require(std::abs(std::hypot(move.x, move.y) - 2.5f) < 0.01f
+        require(std::abs(std::hypot(move.x, move.y) - 3.0f) < 0.01f
                 && std::cos(std::atan2(move.y, move.x) - asked.command.faceHeading) < -0.99f,
-            "o rumo para tras pede 2,5 m/s de costas");
+            "o rumo para tras pede 3 m/s (jog_backward) de costas");
         TrackingViewer3D turn(assets, 5, "lev_giro");
         turn.step();
         const float start = turn.view().command.faceHeading;
@@ -507,6 +671,118 @@ void checkGetUpViewers() {
         const Vec3 none = still.view().command.moveVelocity;
         require(!pushed && !still.view().hasTarget && std::hypot(none.x, none.y) < 1e-6f, "o parado nao pede nem empurra");
     }
+    const auto checkPillarSpace = [&](const auto& view, bool avoid) {
+        std::vector<Vec3> centers;
+        const Vec3 root = view.state->links.front().position;
+        for (std::size_t offset = 0; offset < view.scenery.size(); offset += 12) {
+            Vec3 center;
+            for (std::size_t edge = offset; edge < offset + 12; ++edge)
+                center += view.scenery[edge].first + view.scenery[edge].second;
+            center = center / 24.0f;
+            require(std::hypot(center.x - root.x, center.y - root.y) > (avoid ? 0.95f : 0.20f),
+                "pilar afastado do jogador para permitir a queda");
+            for (const Vec3 other : centers)
+                require(std::hypot(center.x - other.x, center.y - other.y) > (avoid ? 1.0f : 0.20f),
+                    "pilares separados em vez de uma gaiola junto ao jogador");
+            centers.push_back(center);
+        }
+    };
+    for (std::size_t i = 0; i < 5; ++i) {
+        const char* getUp = TrackingViewer3D::ControlledGetUpDrills[i];
+        const char* avoid = TrackingViewer3D::ControlledAvoidDrills[i];
+        require(TrackingViewer3D::isGetUpDrill(getUp) && TrackingViewer3D::isGetUpDrill(avoid)
+                && TrackingViewer3D::sceneryPresetOf(getUp) == static_cast<int>(i)
+                && TrackingViewer3D::sceneryPresetOf(avoid) == static_cast<int>(i)
+                && !TrackingViewer3D::isAvoidSceneryDrill(getUp) && TrackingViewer3D::isAvoidSceneryDrill(avoid),
+            "os cinco layouts controlados preservam tipo e indice");
+        TrackingViewer3D controlled(sourceRoot() / "assets", 42, getUp);
+        const auto controlledView = controlled.view();
+        const std::size_t expectedBodies = i == 3 ? 1u : i == 4 ? 4u : 0u;
+        require(controlledView.otherBodies.size() == expectedBodies, "o laboratorio mostra os corpos do preset sem extras aleatorios");
+        require((i < 3) == !controlledView.scenery.empty(), "parede/corredor/rampa visiveis, contato sem obstaculo extra");
+        if (i == 0) checkPillarSpace(controlledView, false);
+        const std::size_t getUpBoxes[5] { 6, 2, 1, 0, 0 };
+        require(controlledView.scenery.size() == 12 * getUpBoxes[i], "quantidade fixa de pilares/corredor/rampa no levantar");
+        if (i >= 3) {
+            for (int step = 0; step < 185; ++step) controlled.step();
+            require(controlled.getUpTally().second == 0 && !controlled.drivingLocomotion(),
+                "o contato continua depois de seis segundos sem troca de rede");
+        }
+        TrackingViewer3D controlledAvoid(sourceRoot() / "assets", 42, avoid);
+        require(!controlledAvoid.drivingLocomotion(), "o evitar ambientado preserva o mundo com cenario do rl_final");
+        if (i == 4) checkPillarSpace(controlledAvoid.view(), true);
+        if (i == 0) {
+            const auto walls = controlledAvoid.view().scenery;
+            const Vec3 root = controlledAvoid.view().state->links.front().position;
+            for (std::size_t offset = 0; offset < walls.size(); offset += 12) {
+                Vec3 center;
+                for (std::size_t edge = offset; edge < offset + 12; ++edge)
+                    center += walls[edge].first + walls[edge].second;
+                center = center / 24.0f;
+                require(std::hypot(center.x - root.x, center.y - root.y) > 1.3f,
+                    "paredes do evitar afastadas para permitir a queda");
+            }
+        }
+        if (i == 1) {
+            const auto corridorGap = [](const auto& view) {
+                const Vec3 root = view.state->links.front().position;
+                const Vec3 axis = (view.scenery[0].second - view.scenery[0].first).normalized();
+                const float half = (view.scenery[0].second - view.scenery[0].first).length() * 0.5f;
+                Vec3 center;
+                for (std::size_t edge = 0; edge < 12; ++edge)
+                    center += view.scenery[edge].first + view.scenery[edge].second;
+                center = center / 24.0f;
+                float reach = 0.0f;
+                for (const auto& link : view.state->links) reach = std::max(reach, dot(link.position - root, axis));
+                return dot(center - root, axis) - half - reach;
+            };
+            const auto corridorWidth = [](const auto& view) {
+                const Vec3 axis = (view.scenery[0].second - view.scenery[0].first).normalized();
+                Vec3 centers[2];
+                for (int box = 0; box < 2; ++box)
+                    for (std::size_t edge = 12 * box; edge < 12 * (box + 1); ++edge)
+                        centers[box] += (view.scenery[edge].first + view.scenery[edge].second) / 24.0f;
+                const float thickness = (view.scenery[0].second - view.scenery[0].first).length();
+                return std::abs(dot(centers[1] - centers[0], axis)) - thickness;
+            };
+            require(std::abs(corridorWidth(controlledView) - 1.30f) < 1e-4f, "largura fisica do corredor justo e1.30m");
+            require(std::abs(corridorGap(controlledAvoid.view()) - 0.30f) < 1e-4f, "corredor do evitar tem folga restaurada");
+            const char* looseDrill = TrackingViewer3D::ControlledGetUpDrills[5];
+            require(TrackingViewer3D::isGetUpDrill(looseDrill) && TrackingViewer3D::sceneryPresetOf(looseDrill) == 5
+                && !TrackingViewer3D::isAvoidSceneryDrill(looseDrill), "variante leve e exclusiva do levantar");
+            TrackingViewer3D loose(sourceRoot() / "assets", 42, looseDrill);
+            const auto looseView = loose.view();
+            require(looseView.scenery.size() == 24 && looseView.otherBodies.empty(), "corredor leve tem somente duas paredes");
+            require(std::abs(corridorWidth(looseView) - 1.36f) < 1e-4f, "largura fisica do corredor folgado e1.36m");
+            for (const int seed : { 7, 99, 123 }) {
+                controlled.reset(seed);
+                loose.reset(seed);
+                require(std::abs(corridorWidth(controlled.view()) - 1.30f) < 1e-4f
+                        && std::abs(corridorWidth(loose.view()) - 1.36f) < 1e-4f,
+                    "largura permanece fixa ao trocar pose e rodada");
+            }
+            const Vec3 tightEdge = controlledView.scenery[0].second - controlledView.scenery[0].first;
+            const Vec3 looseEdge = looseView.scenery[0].second - looseView.scenery[0].first;
+            require((tightEdge - looseEdge).length() < 1e-4f, "variantes compartilham espessura e orientacao das paredes");
+        }
+        const std::size_t avoidBoxes[5] { 4, 2, 1, 0, 6 };
+        require(controlledAvoid.view().scenery.size() == 12 * avoidBoxes[i], "o evitar mostra quatro paredes ou seis pilares conforme preset");
+        if (i == 2) {
+            for (const auto* view : { &controlled, &controlledAvoid }) {
+                const auto segments = view->view().scenery;
+                const Vec3 normal = cross(segments[0].second - segments[0].first,
+                    segments[1].second - segments[1].first).normalized();
+                require(std::abs(normal.z - std::cos(22.0f * 3.14159265f / 180.0f)) < 1e-4f,
+                    "rampa do levantar e do evitar tem 22 graus");
+                Vec3 center;
+                for (const auto& edge : segments) center += edge.first + edge.second;
+                center = center / static_cast<float>(2 * segments.size());
+                require(std::abs((center + normal).z - 0.8f) < 1e-4f, "plataforma da rampa com altura de 0,8 m");
+            }
+        }
+        require(controlledAvoid.view().otherBodies.size() == (i == 3 ? 4u : 0u),
+            "o evitar mostra quatro corpos e o preset de pilares nao tem corpos");
+    }
     for (const char* drill : TrackingViewer3D::LocomotionDrills)
         require(TrackingViewer3D::isGetUpDrill(drill), std::string("o exercicio do levantar ") + drill);
     require(TrackingViewer3D::locomotionHeadingOf("lev_diagonal_frente", 0) == 1
@@ -523,9 +799,18 @@ void checkGetUpViewers() {
 // dump dos quadros do visualizador para o MatterModelInspector quadros e a linha do tempo de quem dirige.
 int dumpGetUpViewer(const std::filesystem::path& out, const std::string& drill) {
     const std::filesystem::path assets = sourceRoot() / "assets";
-    TrackingViewer3D viewer(assets, 21, drill);
+    // (MATTER_RL_TEST_RUN=<pasta do treino>: outro treino que nao a rl_final - 03/11, o rastreio.)
+    const char* run = std::getenv("MATTER_RL_TEST_RUN");
+    TrackingViewer3D viewer(assets, 21, drill, {}, 1.0f, 0.2f, {}, run ? std::filesystem::path(run) : std::filesystem::path());
     std::string label;
     viewer.setPolicy({}, label);
+    // (06/11, a locomocao livre: MATTER_RL_TEST_SOZINHA=1, a rede sozinha - sem a professora que o treino mistura nos motores.)
+    if (std::getenv("MATTER_RL_TEST_SOZINHA")) viewer.setTeacherShown(false);
+    // (07/11: MATTER_RL_TEST_CINEMATICO=1, os exercicios pelo Motion Matching do juiz, sem fisica.)
+    if (std::getenv("MATTER_RL_TEST_CINEMATICO")) {
+        viewer.setKinematicMotionMatching(true);
+        if (!viewer.kinematicError().empty()) std::cout << "cinematico: " << viewer.kinematicError() << '\n';
+    }
     const RagdollProfile3D& profile = viewer.profile();
     std::filesystem::create_directories(out);
     std::ofstream dump(out / (drill + ".dump"));
@@ -534,11 +819,16 @@ int dumpGetUpViewer(const std::filesystem::path& out, const std::string& drill) 
     const int decisions = std::atoi(std::getenv("MATTER_RL_TEST_DECISOES") ? std::getenv("MATTER_RL_TEST_DECISOES") : "300");
     for (int i = 0; i < decisions; ++i) {
         viewer.step();
-        const std::string now = viewer.drivingLocomotion() ? "locomocao" : "levantar";
+        if (std::getenv("MATTER_RL_TEST_CLIPES") && (viewer.kinematicMotionMatching() || viewer.clipSequence()))
+            std::cout << "  " << static_cast<float>(i + 1) / 30.0f << " s: " << viewer.kinematicClip() << " (trocas " << viewer.kinematicJumps() << ")\n";
+        const std::string now = viewer.drivingLocomotion() ? "locomocao (parceira)"
+            : viewer.locomotionHeadDriving() ? "cabeca da locomocao" : "levantar";
         if (now != who) {
             std::cout << "t " << static_cast<float>(i + 1) / 30.0f << " s: rede da " << now << '\n';
             who = now;
         }
+        if (i == 60 || i == 150) std::cout << "marcas do caminho em " << static_cast<float>(i + 1) / 30.0f << " s: "
+                                           << viewer.view().starPoints.size() << '\n';
         if (i % 2 != 0) continue;
         const RagdollState3D& body = *viewer.view().state;
         dump << "F " << static_cast<float>(i + 1) / 30.0f << " 0\n";
@@ -552,7 +842,78 @@ int dumpGetUpViewer(const std::filesystem::path& out, const std::string& drill) 
         }
     }
     const auto [good, total] = viewer.getUpTally();
-    std::cout << drill << ": " << good << " de " << total << " (" << label << ")\n";
+    std::cout << drill << ": " << good << " de " << total << " (" << label << "; professora " << viewer.teacherShare()
+              << (viewer.teacherShown() ? " ligada" : " desligada") << ")\n";
+    return 0;
+}
+
+// O giro parado do modo padrao (04/11 09h40, ele: "o giro parado deveria ser feito do IDLE alerta, e ja temos os
+// movimentos de giro do footplanner, que ele DEVERIA usar como referencia"): o lider do rastreador (o modo padrao de
+// verdade, DefaultLocomotion3D com o StandTurnFeet3D) parado no idle e girando a vista a MATTER_RL_TEST_GIRO_TAXA graus/s
+// (+ esquerda, - direita); grava a 120 Hz a raiz no espaco do clipe (o deslocamento e o delta da rotacao, a regra de
+// TrackingClipReference3D), as coordenadas de junta e os pes no mundo. tools/animation/clips/giro_idle.py corta o ciclo.
+int captureStandTurn(const std::filesystem::path& out) {
+    const std::filesystem::path assets = sourceRoot() / "assets";
+    const auto bundle = AthleteBundle3D::shared(assets.string());
+    const RagdollProfile3D& profile = bundle->profile();
+    // (Os do laboratorio, como o labLeader do TrackingTraining3D.)
+    AthleteRuntimeSettings3D runtime;
+    runtime.physicalFeel = 1;
+    runtime.defaultStartGesturePercent = 100.0f;
+    runtime.capsuleResponsePercent = 150.0f;
+    runtime.capsuleReversalPercent = 100.0f;
+    runtime.defaultTrotSpeed = 4.5f;
+    runtime.defaultSprintForwardSpeed = 8.0f;
+    runtime.defaultSprintSideSpeed = 6.0f;
+    runtime.defaultSprintBackwardSpeed = 6.0f;
+    runtime.defaultMaxSprintSpeed = 10.0f;
+    TrackingLeader3D leader(profile, *bundle->assets().defaultClips, runtime);
+    leader.reset({}, 0.0f);
+    const float rate = (std::getenv("MATTER_RL_TEST_GIRO_TAXA") ? std::strtof(std::getenv("MATTER_RL_TEST_GIRO_TAXA"), nullptr) : 90.0f)
+        * 3.14159265f / 180.0f;
+    std::size_t root = 0;
+    std::array<std::size_t, 2> feet { 0, 0 };
+    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+        if (profile.links[i].parentIndex < 0) root = i;
+        if (profile.links[i].id == "LeftFoot") feet[0] = i;
+        if (profile.links[i].id == "RightFoot") feet[1] = i;
+    }
+    const RagdollLinkDefinition3D& pelvis = profile.links[root];
+    std::ofstream file(out);
+    nlohmann::json head;
+    head["links"] = nlohmann::json::array();
+    for (const RagdollLinkDefinition3D& link : profile.links) head["links"].push_back(link.id);
+    head["raiz"] = root;
+    head["taxa"] = rate;
+    file << head.dump() << '\n';
+    const float dt = 1.0f / 120.0f;
+    float facing = 0.0f;
+    for (int k = 0; k < 120 * 12; ++k) {
+        const float t = static_cast<float>(k) * dt;
+        if (t >= 2.0f) facing += rate * dt;
+        leader.step({ {}, facing }, dt);
+        const TrackingLeaderState3D& s = leader.state();
+        if (!s.valid) continue;
+        // (A inversa de TrackingClipReference3D::pose no chao 0 e rumo 0.)
+        const Vec3 offset = s.rootPosition - Vec3 { 0.0f, 0.0f, profile.standingRootHeightMeters } - pelvis.modelPosition;
+        const Quaternion delta = (pelvis.modelOrientation.conjugate() * s.rootOrientation).normalized();
+        nlohmann::json row;
+        row["t"] = t;
+        row["vista"] = facing;
+        row["deslocamento"] = { offset.x, offset.y, offset.z };
+        row["delta"] = { delta.x, delta.y, delta.z, delta.w };
+        row["coordenadas"] = nlohmann::json::array();
+        for (const Vec3& c : s.coordinates) row["coordenadas"].push_back({ c.x, c.y, c.z });
+        row["pes"] = nlohmann::json::array();
+        for (std::size_t f : feet) {
+            const PhysicsBodyState3D& l = s.links[f];
+            row["pes"].push_back({ l.position.x, l.position.y, l.position.z, l.linearVelocity.x, l.linearVelocity.y, l.linearVelocity.z });
+        }
+        row["links"] = nlohmann::json::array();
+        for (const PhysicsBodyState3D& l : s.links) row["links"].push_back({ l.position.x, l.position.y, l.position.z });
+        file << row.dump() << '\n';
+    }
+    std::cout << "giro capturado: " << out << '\n';
     return 0;
 }
 
@@ -606,6 +967,7 @@ void checkSinglePushViewer() {
 int main() {
     try {
         if (const char* real = std::getenv("MATTER_RL_TEST_REAL")) return realRun(real);
+        if (const char* turn = std::getenv("MATTER_RL_TEST_GIRO")) return captureStandTurn(turn);
         if (const char* sheet = std::getenv("MATTER_RL_TEST_FOLHA"))
             return dumpGetUpViewer(sheet, std::getenv("MATTER_RL_TEST_DRILL") ? std::getenv("MATTER_RL_TEST_DRILL") : "levantar");
         const std::filesystem::path sandbox = std::filesystem::temp_directory_path() / "matter_rl_tela";
@@ -615,6 +977,7 @@ int main() {
         setenv("XDG_RUNTIME_DIR", (sandbox / "runtime").c_str(), 1);
         unsetenv("MATTER_RL_SOCKET");
         require(!LocomotionViewer3D::isLocomotionTask(sandbox / "ausente.json"), "tarefa ausente nao pode derrubar a tela");
+        checkSkillRoutingAndIdle(sandbox / "skills");
         checkSinglePushViewer();
         checkGetUpHandoffViewer();
         checkGetUpViewers();
@@ -705,6 +1068,7 @@ int main() {
         require(screen.viewerSteps() != before, "o mundo segue depois do empurrao");
         frame(screen, canvas, 5);
         snapshot(canvas, "rl_tela_empurrao");
+        selectedGetUpRun(sandbox / "dados", canvas);
         require(ui.errors().empty(), "o ImGui reclamou: " + (ui.errors().empty() ? std::string() : ui.errors().front()));
         std::filesystem::remove_all(sandbox);
         std::cout << "Reinforcement learning screen tests passed (" << checks << " checks)\n";

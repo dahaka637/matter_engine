@@ -1,0 +1,13 @@
+# O freio do treino com o Matter Engine aberto (tools/sistema/freio_jogo.py). Instalar:
+#   cp tools/sistema/freio-jogo.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now freio-jogo
+[Unit]
+Description=Freio do treino de RL com o Matter Engine aberto (limita a CPU do treino; volta ao fechar)
+
+[Service]
+ExecStart=/usr/bin/python3 /home/dahaka/Projetos/matter_engine/tools/sistema/freio_jogo.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

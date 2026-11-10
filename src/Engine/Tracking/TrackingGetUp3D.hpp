@@ -41,6 +41,10 @@ public:
 
     // Os alvos absolutos dos 39 eixos (velocidade alvo zero).
     void driveTargets(std::span<const float> action, std::vector<RagdollDriveTarget3D>& out) const;
+    // Com a velocidade-alvo de cada eixo (rad/s; vazio: zero) - seguir uma trajetoria, nao so a pose (03/11: com zero, o
+    // amortecimento freava o balanco rapido da perna no trote).
+    void driveTargets(std::span<const float> action, std::span<const float> velocities,
+        std::vector<RagdollDriveTarget3D>& out) const;
     void observe(std::span<const PhysicsBodyState3D> links, float phase, std::span<float> out) const;
     // So o corpo (sem a fase): a altura da raiz e os 13 numeros de cada link (o levantar livre, 31/10).
     [[nodiscard]] std::size_t bodyObservationSize() const { return 1 + 13 * m_profile->links.size(); }
@@ -70,6 +74,17 @@ public:
     void observeEnvironment(const PhysicsScene3D* scene, RagdollHandle3D self, std::span<const PhysicsBodyState3D> links,
         float groundHeight, std::span<float> out) const;
     [[nodiscard]] static std::vector<std::string> environmentObservationNames();
+    // O equilibrio (04/11 15h, o layout levantar-v7 - ele: "os passos de recuperacao e estabilizacao, predict de movimento...
+    // para o auto-equilibrio"; vault 04_locomocao/plano_passos_de_recuperacao_04_11.md), no rumo do corpo: o centro de massa
+    // contra o centro da base e a velocidade dele, o ponto de captura (para onde o corpo vai) contra o centro da base e contra
+    // cada pe, a margem dele ate a borda da base (m, -0,5..0,3), a ameaca (0 folgado, 1 na borda, ate 3 fora), omega/3,5,
+    // cada pe contra o centro de massa e o giro do corpo (o momento angular por massa, frente e lado).
+    static constexpr std::size_t BalanceObservationSize = 19;
+    void observeBalance(std::span<const PhysicsBodyState3D> links, std::span<const RagdollInteraction3D> contacts,
+        float groundHeight, std::span<float> out) const;
+    [[nodiscard]] static std::vector<std::string> balanceObservationNames();
+    // Os pes (esquerdo, direito) das GroundLinks.
+    [[nodiscard]] std::array<std::uint32_t, 2> footLinks() const { return { m_groundLinks[9], m_groundLinks[10] }; }
     // O minimo e o maximo (rad) de cada eixo da acao, os da junta no perfil (o levantar livre normaliza a acao neles).
     [[nodiscard]] std::vector<float> actionRanges() const;
     // As coordenadas de junta de uma pose na ordem da acao (o alvo que a reproduz).
@@ -86,8 +101,13 @@ public:
     // DeepMimic quase zera e nao da direcao; softness 4 deixa as quatro parcelas 4 vezes mais largas).
     [[nodiscard]] Terms reward(std::span<const PhysicsBodyState3D> body, const TrackingClipFrame3D& reference,
         float softness) const;
+    // O erro de cada junta contra a referencia (o angulo^2 da orientacao em relacao ao pai, rad^2; a raiz, a do mundo),
+    // na ordem dos links do perfil: as partes da nota do rastreio da locomocao.
+    void jointErrors(std::span<const PhysicsBodyState3D> body, const TrackingClipFrame3D& reference,
+        std::span<float> out) const;
 
     [[nodiscard]] std::uint32_t headLink() const { return m_head; }
+    [[nodiscard]] std::uint32_t chestLink() const { return m_chest; }
     [[nodiscard]] std::uint32_t rootLink() const { return m_root; }
 
 private:

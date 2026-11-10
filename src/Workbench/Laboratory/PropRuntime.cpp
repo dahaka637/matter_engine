@@ -710,7 +710,7 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
         ? m_physicsScene->characterState().position
         : m_laboratoryCameraPosition;
     const Vec3 windAtPlayerHeight =
-        m_windSystem.velocityAtHeight(playerPosition.z);
+        m_laboratoryIndoor ? Vec3{} : m_windSystem.velocityAtHeight(playerPosition.z);
     // So altera o vetor de vento da cena; a formula de arrasto quadratico
     // em si ja existia (ver PhysXScene3D::simulate) e nunca precisou mudar.
     // Sem abrigo aplicado aqui: cada prop dinamico ja recalcula seu proprio

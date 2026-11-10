@@ -310,8 +310,8 @@ void Renderer::destroyBuffer(RHI::BufferHandle handle) {
     m_vulkan->destroyBuffer(handle);
 }
 
-RHI::TextureHandle Renderer::createTexture2D(RHI::Extent2D extent, std::span<const std::byte> rgbaPixels) {
-    return m_vulkan->createTexture2D(extent, rgbaPixels);
+RHI::TextureHandle Renderer::createTexture2D(RHI::Extent2D extent, std::span<const std::byte> rgbaPixels, bool srgb) {
+    return m_vulkan->createTexture2D(extent, rgbaPixels, srgb);
 }
 
 RHI::CharacterMaterialHandle Renderer::createCharacterMaterial(const RHI::CharacterMaterialDesc& desc) {

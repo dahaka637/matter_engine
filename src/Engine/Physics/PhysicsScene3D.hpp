@@ -622,6 +622,11 @@ public:
     void setRagdollActiveDriveTargets(RagdollHandle3D ragdoll,
         std::span<const RagdollDriveTarget3D> targets,
         bool gravityCompensationEnabled);
+    // Os alvos ativos encenados para o proximo passo (o que vai aos motores) e
+    // se a compensacao de gravidade vale neles; false sem o ragdoll. (03/11: o
+    // rotulo da professora da rl_final em sombra.)
+    bool stagedRagdollDriveTargets(RagdollHandle3D ragdoll,
+        std::vector<RagdollDriveTarget3D>& out, bool& gravityCompensationEnabled) const;
     // Staged alongside drive targets; only the backend resolves this constraint.
     // At 1, joints/root follow the animation exactly in ordinary locomotion.
     // Contact/interaction releases it before publishing the simulated state.

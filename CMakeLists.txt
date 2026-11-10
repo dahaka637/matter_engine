@@ -437,6 +437,16 @@ target_compile_definitions(MatterStandBench PRIVATE MATTERENGINE_ASSETS_DIR="${C
 add_library(MatterAnimationClips STATIC
     src/Engine/Animation/AnimationClip3D.cpp
 )
+
+# O Motion Matching (07/11): o esquema, o banco de quadros, a busca e a previsao da trajetoria - so a matematica do motor
+# (o juiz de estilo do RL hoje; a locomocao padrao no futuro).
+add_library(MatterMotionMatching STATIC
+    src/Engine/Animation/MotionMatching/MotionMatchingSchema3D.cpp
+    src/Engine/Animation/MotionMatching/MotionMatchingDatabase3D.cpp
+    src/Engine/Animation/MotionMatching/MotionMatchingTrajectory3D.cpp
+)
+target_include_directories(MatterMotionMatching PUBLIC src)
+target_link_libraries(MatterMotionMatching PUBLIC MatterCore)
 target_include_directories(MatterAnimationClips PUBLIC src)
 target_link_libraries(MatterAnimationClips
     PUBLIC MatterPhysics
@@ -562,14 +572,17 @@ if(MATTERENGINE_BUILD_RL)
         src/Engine/Tracking/TrackingTraining3D.cpp
         src/Engine/Tracking/TrackingScene3D.cpp
         src/Engine/Tracking/TrackingClipReference3D.cpp
+        src/Engine/Tracking/TrackingBasePosture3D.cpp
         src/Engine/Tracking/TrackingGetUp3D.cpp
         src/Engine/Tracking/TrackingGetUpTraining3D.cpp
         src/Engine/Tracking/TrackingGetUpAmp3D.cpp
         src/Engine/Tracking/TrackingGetUpAmpTraining3D.cpp
         src/Engine/Tracking/TrackingGetUpPolicy3D.cpp
+        src/Engine/Tracking/TrackingBalance3D.cpp
+        src/Engine/Tracking/TrackingBalanceSteps3D.cpp
     )
     target_include_directories(MatterTracking PUBLIC src)
-    target_link_libraries(MatterTracking PUBLIC MatterAthlete MatterRLContract MatterAthleteTraining)
+    target_link_libraries(MatterTracking PUBLIC MatterAthlete MatterRLContract MatterAthleteTraining MatterMotionMatching)
     if(MSVC)
         target_compile_options(MatterTracking PRIVATE /W4 /permissive- /utf-8)
     else()
@@ -925,6 +938,7 @@ add_library(MatterEngine STATIC
     src/Engine/Environment/WindSystem.cpp
     src/Engine/Geometry/ProceduralSoccerBall3D.cpp
     src/Engine/Geometry/GltfLoader.cpp
+    src/Engine/Geometry/AuthoredMap3D.cpp
     src/Engine/Geometry/GltfPhysicsMetadata3D.cpp
     src/Engine/Geometry/GltfAcousticZone3D.cpp
     src/Engine/Geometry/PhysicalAsset3D.cpp
@@ -981,6 +995,7 @@ add_library(MatterWorkbench STATIC
     src/Workbench/Audio/WorldAudioController.cpp
     src/Workbench/Laboratory/PropRuntime.cpp
     src/Workbench/Laboratory/BallRuntime.cpp
+    src/Workbench/Laboratory/AuthoredMapRuntime.cpp
     src/Workbench/Laboratory/GoalRuntime.cpp
     src/Workbench/Laboratory/RagdollRuntime.cpp
     src/Workbench/Laboratory/LaboratoryBody.cpp
@@ -988,6 +1003,7 @@ add_library(MatterWorkbench STATIC
     src/Workbench/Laboratory/RenderMotionSmoke.cpp
     src/Workbench/Props/PropCatalog.cpp
     src/Workbench/Screens/SettingsScreen.cpp
+    src/Workbench/Screens/LaboratoryMapsScreen.cpp
     src/Workbench/Screens/MainMenuScreen.cpp
     src/Workbench/Screens/LaboratoryScreen.cpp
     src/Workbench/Screens/ObjectInspectorHost.cpp
@@ -1026,6 +1042,22 @@ endif()
 # SDL_main is confined to the executable composition root; application and
 # mechanics sources continue to consume only MatterEngine platform APIs.
 target_link_libraries(MatterEngineApp PRIVATE MatterWorkbench SDL3::SDL3-static)
+
+# Build the editable map assets without changing the user's TrenchBroom installation.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(MATTER_GALPAO_GLB "${CMAKE_SOURCE_DIR}/assets/maps/compiled/galpao_01.glb")
+add_custom_command(OUTPUT "${MATTER_GALPAO_GLB}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/maps/galpao_materiais.py"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/maps/compilar.py"
+        "${CMAKE_SOURCE_DIR}/assets/maps/src/galpao_01.map"
+    DEPENDS assets/maps/src/galpao_01.map tools/maps/galpao_materiais.py
+        tools/maps/compilar.py tools/maps/gramado.py assets/maps/materials/grass/albedo_source.png
+    COMMENT "Preparing Galpao 01 textures and GLB"
+    VERBATIM)
+add_custom_target(MatterMapAssets DEPENDS "${MATTER_GALPAO_GLB}")
+add_dependencies(MatterEngineApp MatterMapAssets)
+add_executable(MatterMapVerify tools/maps/VerificarMapa.cpp)
+target_link_libraries(MatterMapVerify PRIVATE MatterEngine)
 add_custom_command(TARGET MatterEngineApp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets/fonts"
@@ -1037,6 +1069,11 @@ add_custom_command(TARGET MatterEngineApp POST_BUILD
 option(MATTERENGINE_BUILD_TESTS "Build MatterEngine tests" ON)
 if(MATTERENGINE_BUILD_TESTS)
     enable_testing()
+    add_executable(MatterMapTests tests/AuthoredMapTests.cpp)
+    target_link_libraries(MatterMapTests PRIVATE MatterEngine MatterObjects)
+    target_compile_definitions(MatterMapTests PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_dependencies(MatterMapTests MatterMapAssets)
+    add_test(NAME MatterEngine.AuthoredMaps COMMAND MatterMapTests)
     add_executable(MatterEngineTests tests/EngineFoundationTests.cpp)
     add_executable(MatterAdaptiveTests tests/AdaptivePhysicalCharacterTests.cpp)
     target_link_libraries(MatterAdaptiveTests PRIVATE MatterEngine)
@@ -1045,6 +1082,10 @@ if(MATTERENGINE_BUILD_TESTS)
     target_link_libraries(MatterRagdollLimitTensionTests PRIVATE MatterEngine)
     target_compile_definitions(MatterRagdollLimitTensionTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.RagdollLimitTension COMMAND MatterRagdollLimitTensionTests)
+    add_executable(MatterRagdollJointCouplingTests tests/Physics/RagdollJointCouplingTests.cpp)
+    target_link_libraries(MatterRagdollJointCouplingTests PRIVATE MatterPhysics)
+    target_compile_definitions(MatterRagdollJointCouplingTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.RagdollJointCoupling COMMAND MatterRagdollJointCouplingTests)
     target_link_libraries(MatterEngineTests PRIVATE MatterEngine)
     target_compile_definitions(MatterEngineTests PRIVATE
         MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
@@ -1320,6 +1361,9 @@ if(MATTERENGINE_BUILD_TESTS)
     # Os gestos de bola (24/10): a perna de dois ossos no esqueleto do jogador,
     # o tocador sem salto e a escolha dos baldes.
     # O corpo variavel (26/10): a lei, o perfil e o personagem do corpo.
+    add_executable(MatterMotionMatchingTests tests/Animation/MotionMatchingTests.cpp)
+    target_link_libraries(MatterMotionMatchingTests PRIVATE MatterMotionMatching)
+    add_test(NAME MatterEngine.MotionMatching COMMAND MatterMotionMatchingTests)
     add_executable(MatterPhysiqueTests tests/Physique/PlayerPhysiqueTests.cpp)
     target_link_libraries(MatterPhysiqueTests PRIVATE MatterAthlete)
     target_compile_definitions(MatterPhysiqueTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")

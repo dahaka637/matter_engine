@@ -2,6 +2,7 @@
 
 #include "Engine/Geometry/MeshData3D.hpp"
 #include "Engine/Math/Quaternion.hpp"
+#include "Engine/Render/Scene3D.hpp"
 
 #include <cstddef>
 #include <string>
@@ -42,6 +43,10 @@ struct LoadedGltfMaterial {
     // Canal G = rugosidade e canal B = metalicidade, conforme glTF 2.0.
     // Mantido separado do albedo para o renderer aplicar ambos por pixel.
     int metallicRoughnessImageIndex = -1;
+    int normalImageIndex = -1;
+    float normalScale = 1.0f;
+    int emissiveImageIndex = -1;
+    Vec3 emissiveFactor;
     // Straight from glTF's pbrMetallicRoughness (defaults match the spec's
     // own defaults: fully metallic, fully rough, when a material omits
     // them). Not consumed by the procedural box/sphere shader path, only by
@@ -103,6 +108,7 @@ struct LoadedGltfModel {
     std::vector<LoadedGltfMaterial> materials;
     std::vector<LoadedGltfImage> images;
     std::vector<LoadedGltfEntity> entities;
+    std::vector<LightRender3D> lights;
 };
 
 // Loads every triangle primitive out of a .gltf/.glb file (auto-detected),
