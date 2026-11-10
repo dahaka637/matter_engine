@@ -1543,6 +1543,8 @@ def main() -> int:
     parser.add_argument("--passos", type=int, default=32)
     parser.add_argument("--threads", type=int, default=10)  # (05/11: 10 = ~93% da vazao das 12 com mais folga termica)
     parser.add_argument("--semente", type=int, default=1)
+    parser.add_argument("--prova", type=str, default="",
+                        help="a prova de equivalencia (prova.py): CPU deterministica e o hash de cada coleta e atualizacao neste arquivo")
     parser.add_argument("--atualizacoes", type=int, default=0, help="0: ate parar")
     parser.add_argument("--salvar-cada", type=int, default=50)
     parser.add_argument("--epocas", type=int, default=4)
@@ -2421,6 +2423,11 @@ def main() -> int:
                 other.write_text(json.dumps(config, ensure_ascii=False))
     (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    prova = None
+    if args.prova:
+        from prova import Prova
+        device = Prova.preparar()
+        prova = Prova(args.prova, sys.argv)
     torch.manual_seed(args.semente)
     v2 = dict(separate_skills=args.habilidades_separadas, locomotion_tracking=args.rastreio,
               locomotion_residual=args.residuo > 0,
@@ -4201,15 +4208,21 @@ def main() -> int:
                 obs = next_obs
             roll["last_value"] = collector.value(collector.norm(obs))
         collected = time.time()
+        if prova is not None:
+            prova.coleta(counters["atualizacao"], roll)
         # A atualizacao da rodada anterior acaba; a rede dela vai para a coleta (com a normalizacao desta coleta) e esta
         # rodada vai para a atualizacao, depois da escrita (o modelo so muda na thread da atualizacao).
         if pending is not None:
             last = pending.result()
+            if prova is not None:
+                prova.rede(counters["atualizacao"], model, disc, disc_loco)
         waited = time.time() - collected
         with torch.no_grad():
             model.norm.load_state_dict(collector.norm.state_dict())
             collector.load_state_dict(model.state_dict())
         episodes = batch.finished_episodes()
+        if prova is not None:
+            prova.episodios(counters["atualizacao"], episodes)
         if len(episodes) and "ajuda_exercicios" in counters:
             # (Os episodios de cada exercicio depois de 4 atualizacoes - ~10 s - da ultima mudanca dele.)
             for r in episodes.tolist():
@@ -4685,6 +4698,9 @@ def main() -> int:
     if pending is not None:
         pending.result()
     executor.shutdown()
+    if prova is not None:
+        prova.rede(counters["atualizacao"], model, disc, disc_loco)
+        prova.gravar()
     save()
     write_status("parado")
     print(f"salvo na atualizacao {counters['atualizacao']}" + (" (sinal de parar)" if stop["pedido"] else ""), flush=True)

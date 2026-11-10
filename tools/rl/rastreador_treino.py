@@ -36,7 +36,8 @@ REPO = HERE.parents[1]
 sys.path.insert(0, os.environ.get("MATTER_TRACKING_NATIVE", str(REPO / "build-rl" / "python")))
 import matter_tracking_native as native  # noqa: E402
 
-DATA = Path.home() / ".local" / "share" / "matter-engine" / "rl" / "runs"
+# (10/11) A raiz dos dados honra MATTER_RL_DATA, como matter_rl/paths.py: a prova de equivalencia roda numa pasta separada.
+DATA = Path(os.environ.get("MATTER_RL_DATA", Path.home() / ".local" / "share" / "matter-engine" / "rl")) / "runs"
 
 
 class RunningNorm(nn.Module):
