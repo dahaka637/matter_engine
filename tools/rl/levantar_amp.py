@@ -1006,7 +1006,6 @@ def run_tracking_settings(b, v2: dict) -> None:
         b.set_locomotion_shaping(not bool(v2.get("sem_potencial_loco", False)))
         b.set_speed_gate(float(v2.get("nota_velocidade", 0.0)))
         b.set_knee_inward(float(v2.get("joelho_dentro", 0.0)))
-        b.set_speed_ceiling(float(v2.get("velocidade_teto", 0.0)))
         b.set_idle_height(float(v2.get("idle_altura", 0.0)))
         b.set_stop_wait_body(bool(v2.get("parada_corpo", False)))
     if hasattr(b, "set_foot_width"):
@@ -1091,8 +1090,6 @@ def run_tracking_settings(b, v2: dict) -> None:
                     b.set_free_troca(bool(v2.get("troca_livre", False)))
                 if hasattr(b, "set_free_stand_gate"):
                     b.set_free_stand_gate(float(v2.get("parada_pose", 0.0)))
-                if hasattr(b, "set_command_chest_gate"):
-                    b.set_command_chest_gate(float(v2.get("peito_comando", 0.0)))
                 if hasattr(b, "set_free_idle"):
                     b.set_free_idle(bool(v2.get("parado_livre", False)))
                 if hasattr(b, "set_pose_boost"):
@@ -1105,8 +1102,6 @@ def run_tracking_settings(b, v2: dict) -> None:
                     b.set_free_step_height(float(v2.get("passo_baixo", 0.0)))
                 if hasattr(b, "set_idle_bent_end"):
                     b.set_idle_bent_end(bool(v2.get("parado_dobrado_encerra", False)))
-                if hasattr(b, "set_upper_imitation"):
-                    b.set_upper_imitation(bool(v2.get("imitacao_tronco", False)))
                 if hasattr(b, "set_idle_wide"):
                     b.set_idle_wide(bool(v2.get("parado_largo", False)))
                 if hasattr(b, "set_mirror_cycles"):
@@ -1646,9 +1641,6 @@ def build_parser() -> argparse.ArgumentParser:
     # (31/10 22h35, ele: so esta rede daqui em diante, com os basicos do B21 - os rumos e o giro parado suave -, o
     # autoequilibrio o principal: "se locomover resistindo a impactos e adversidades".)
     parser.add_argument("--habilidades-separadas", action="store_true", help="atores/críticos separados dentro da mesma política")
-    # (03/11, o rastreio dos clipes - vault 04_locomocao/plano_rastreio_locomocao_03_11.md: nos rumos e no giro a nota e
-    # so o rastreio do clipe do passo, calculado no ambiente; perder o equilibrio custa a queda e encerra.)
-    parser.add_argument("--rastreio", action="store_true", help="a locomocao pelo rastreio dos clipes do modo padrao")
     # (04/11 00h, a ordem dele: "forcar a forca auxiliar em 100% para os exercicios de locomocao, assim ele sera obrigado
     # a aprender" - a mao de fora na pelve, no rastreio; desce --ajuda-passo so com o dominio medido desde a ultima
     # mudanca: --ajuda-nota de nota do rastreio e --ajuda-sem-cair nos rumos e no giro, em --ajuda-intervalo atualizacoes.)
@@ -1811,9 +1803,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--joelho-dentro", type=float, default=0.0,
                         help="(09/11 01h20, ele: 'evitar dele correr com os joelhos colados') m: andando, o joelho para dentro da linha "
                              "quadril-tornozelo alem do clipe (+2 cm) derruba a semelhanca: exp(-(excesso/F)^2); 0: nao")
-    parser.add_argument("--velocidade-teto", type=float, default=0.0,
-                        help="(09/11 03h35, ele: o trote a 4,5 com meta 4,0 'nao ser tao veloz quanto a corrida') andando no rumo acima "
-                             "desta fracao da pedida, a nota da velocidade cai exp(-((r - teto)/0,10)^2); 0: nao")
     parser.add_argument("--idle-altura", type=float, default=0.0,
                         help="(09/11 03h40, ele: 'quando ele esta parado ... dificuldades de manter a pose') m: no idle, a pelve abaixo "
                              "da do idle alem de 1,5 cm derruba a semelhanca da pose: exp(-(excesso/F)^2); 0: nao")
@@ -1822,8 +1811,6 @@ def build_parser() -> argparse.ArgumentParser:
                              "(ou 2,5 s depois da ordem); antes a corrida ia ao idle a 4 m/s e tombava")
     parser.add_argument("--estilo-velocidade", type=float, default=0.0,
                         help="(08/11 23h55) na locomocao, o estilo do juiz vezes F + (1 - F) x a nota da velocidade; 0: nao")
-    parser.add_argument("--rumo-cauda-lado", type=float, default=0.0,
-                        help="(08/11 18h55) nos laterais retos, o peso da cauda larga do rumo (no lugar do --rumo-cauda); 0: o mesmo")
     parser.add_argument("--diagonal-peito", type=float, default=0.0,
                         help="(08/11 18h40) o portao do peito alto para a vista nos diagonais retos do treino (0,4 como o --peito-vista); 0: sem")
     parser.add_argument("--fogo-alvo", type=float, default=0.0,
@@ -1850,8 +1837,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sincronizar-fase", action="store_true",
                         help="(08/11) no pouso do pe esquerdo nos rumos retos, a fase do clipe volta ao pouso esquerdo dele: as "
                              "comparacoes com o clipe e a fase observada no passo do corpo")
-    parser.add_argument("--recompensa-rastreio", type=int, default=1, choices=tuple(range(1, 20)),
-                        help="a nota do rastreio: 1 a de 03/11, 2 a de 04/11 (o plano das recompensas), 3 a 2 com o progresso da arrancada, 4 a 3 com mais semelhanca")
     parser.add_argument("--rastreio-encerra", type=float, default=0.0,
                         help="a media movel da nota do rastreio (~0,5 s) abaixo disto encerra, depois de 1 s (0: so a queda)")
     parser.add_argument("--residuo", type=float, default=0.0,
@@ -1892,9 +1877,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--troca-assentada-frente", type=float, default=0.0,
                         help="(09/11 04h30, ele: 'mais na troca de direcao forte') de frente (0, 1, 7), a freada ate esta velocidade "
                              "(m/s) antes da meia-volta das trocas; 0: sem")
-    parser.add_argument("--imitacao-tronco", action="store_true",
-                        help="(10/11 01h40, ele: a semelhanca da cintura para cima, as pernas flexiveis) a imitacao: coluna 0,30, pelve 0,20, "
-                             "bracos 0,20, cabeca 0,15, pernas 0,10, pes 0,05")
     parser.add_argument("--simetria-ciclos", action="store_true",
                         help="(10/11 02h30) o espelho da perda de simetria tambem nos clipes ciclo_* (frente e costas meio ciclo, "
                              "esquerda e direita em par) - com os nomes antigos so, ela estava desligada nos retos")
@@ -1922,9 +1904,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--parado-livre", action="store_true",
                         help="(09/11 17h30, a etapa 3a) no parado da cabeca da locomocao (parado e equilibrio com empurroes), a nota "
                              "do parado da parada livre, sem o gerador de passos e sem o fim por pose perdida")
-    parser.add_argument("--peito-comando", type=float, default=0.0,
-                        help="(09/11 17h05) no comando, o portao do peito alto contra o da referencia (na vista) em todas as teclas, "
-                             "como o --diagonal-peito dos retos; pela metade na janela da troca de tecla; 0: sem")
     parser.add_argument("--parada-pose", type=float, default=0.0,
                         help="(09/11 15h40) na parada livre, ja parado, a nota vezes 1 - isto x (1 - pose de pe: a altura da pelve e o "
                              "peito alto reto contra os do idle); 0: so a parcela somada")
@@ -2209,8 +2188,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="nos rumos, a fatia que comeca ja no clipe do passo, na velocidade dele (o RSI)")
     parser.add_argument("--locomocao-segundos", type=float, default=0.0, help="o tempo dos rumos e do giro (s; 0: 6)")
     parser.add_argument("--queda-encerra", action="store_true", help="nos rumos e no giro, cair encerra o episodio")
-    parser.add_argument("--troca-pedido", type=float, nargs=2, default=[0.0, 0.0],
-                        help="nos rumos, a troca do pedido a cada um tempo nesta faixa (s; 0 0: sem)")
     parser.add_argument("--peso-tarefa-loco", type=float, default=None, help="o peso da tarefa na locomocao")
     parser.add_argument("--peso-estilo-loco", type=float, default=None, help="o peso do estilo na locomocao")
     parser.add_argument("--suave-loco", type=float, default=None, help="o peso do custo do tranco na locomocao")
@@ -2272,8 +2249,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(06/11 17h55, ele: a autonomia da velocidade dos motores tambem no levantar) a cabeca da recuperacao "
                              "usa as velocidades da acao; o desvio delas ao ligar (uma vez); com --preservar-peso a ancora so nas "
                              "posicoes e nos canais")
-    parser.add_argument("--rumo-percurso", type=float, default=0.0,
-                        help="(06/11 22h30) nas curvas, a nota pela distancia a linha e o progresso de voltar a ela, com este ganho")
     parser.add_argument("--manobras-pesos", type=float, nargs=7, default=None,
                         help="(06/11 22h10) os pesos do sorteio das manobras: troca suave, media, forte, livre, curva suave, S, fechada")
     parser.add_argument("--juiz-mm", action="store_true",
@@ -2353,14 +2328,13 @@ def ler_receita(argv: list[str]):
 def configurar(b, args, counters: dict, training: bool) -> None:
     """Os ajustes da receita num lote (o do treino com training=True; as avaliacoes e a suite com False). A unica traducao
     das flags para o ambiente (10/11: antes um fecho dentro do main, e as sondas usavam outra)."""
-    b.set_tracking_reward(args.recompensa_rastreio)
+    # (A nota e so a v19; o 19 aqui so liga a inclinacao da referencia, que o lote nasce sem - ver o trackingReward no .hpp.)
+    b.set_tracking_reward(19)
     b.set_phase_sync(args.sincronizar_fase)
     b.set_imitation_loosen(args.imitacao_folga if training else 1.0)
     b.set_facing_gate(args.peito_vista if training else 0.0)
     if args.rumo_suave > 0:
         b.set_course_smoothing(args.rumo_suave)
-    if args.rumo_cauda_lado > 0:
-        b.set_course_tail_lateral(args.rumo_cauda_lado)
     if args.rumo_limite > 0:
         b.set_course_angle_limit(math.radians(args.rumo_limite) if training else 0.0)
     if args.sem_potencial_loco:
@@ -2369,8 +2343,6 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_speed_gate(args.nota_velocidade)
     if args.joelho_dentro > 0:
         b.set_knee_inward(args.joelho_dentro)
-    if args.velocidade_teto > 0:
-        b.set_speed_ceiling(args.velocidade_teto)
     if args.idle_altura > 0:
         b.set_idle_height(args.idle_altura)
     if args.parada_corpo:
@@ -2410,8 +2382,6 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_fire_groups(fire_group_bands(counters["fogo_niveis"]))
         b.set_push_variety(args.fogo_pontos)
         b.set_push_imitation_relief(args.fogo_alivio)
-    if args.rumo_percurso > 0:
-        b.set_course_shaping(args.rumo_percurso)
     if args.amortecimento_livre > 0 and hasattr(b, "set_free_damping_scale"):
         b.set_free_damping_scale(args.amortecimento_livre)
     if args.soltar_teste_velocidade and hasattr(b, "set_self_teacher_velocity_mode"):
@@ -2512,8 +2482,6 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_free_troca(args.troca_livre)
     if hasattr(b, "set_free_stand_gate"):
         b.set_free_stand_gate(args.parada_pose)
-    if hasattr(b, "set_command_chest_gate"):
-        b.set_command_chest_gate(args.peito_comando)
     if hasattr(b, "set_free_idle"):
         b.set_free_idle(args.parado_livre)
     if hasattr(b, "set_pose_boost"):
@@ -2526,8 +2494,6 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_free_step_height(args.passo_baixo)
     if hasattr(b, "set_idle_bent_end"):
         b.set_idle_bent_end(args.parado_dobrado_encerra)
-    if hasattr(b, "set_upper_imitation"):
-        b.set_upper_imitation(args.imitacao_tronco)
     if hasattr(b, "set_idle_wide"):
         b.set_idle_wide(args.parado_largo)
     if hasattr(b, "set_mirror_cycles"):
@@ -2562,7 +2528,7 @@ def configurar(b, args, counters: dict, training: bool) -> None:
 
 def montar_v2(args) -> dict:
     """Os ajustes de todo lote da receita, o do treino e os das avaliacoes (10/11: fora do main, para a suite)."""
-    return dict(separate_skills=args.habilidades_separadas, locomotion_tracking=args.rastreio,
+    return dict(separate_skills=args.habilidades_separadas,
               locomotion_residual=args.residuo > 0,
               tracking_termination=args.rastreio_encerra, avoid_newtons=tuple(args.evitar_forca), push_newtons=tuple(args.empurrao_forca),
               move_speed=tuple(args.velocidade), push_hold_fraction=args.empurrao_continuo,
@@ -2594,7 +2560,7 @@ def lote_do_treino(args) -> dict:
                 obstacle_fraction=args.obstaculo, weight_fraction=args.peso_em_cima,
                 run_fraction=args.corrida, sprint_fraction=args.sprint,
                 locomotion_clip_fraction=args.locomocao_clipe,
-                command_change=tuple(args.troca_pedido), step_reward=args.passo,
+                step_reward=args.passo,
                 **({"speed_ramp_power": args.rampa_velocidade} if args.rampa_velocidade != 0.5 else {}),
                 **({"imitation_weight": args.imitacao} if args.imitacao > 0 else {}),
                 **({"only_clip": args.so_clipe} if args.so_clipe else {}))
@@ -2626,7 +2592,7 @@ def main() -> int:
     info["v2"] = {"movimento": args.movimento, "evitar": args.evitar, "arrancada": args.arrancada,
                   "deitado": bool(args.levantar_deitado), "juiz_unreal": bool(args.juiz_unreal),
                   "preservar_peso": args.preservar_peso, "habilidades_separadas": args.habilidades_separadas,
-                  "rastreio": args.rastreio, "rastreio_encerra": args.rastreio_encerra, "residuo": args.residuo,
+                  "rastreio": True, "recompensa_rastreio": 19, "rastreio_encerra": args.rastreio_encerra, "residuo": args.residuo,
                   "acao_velocidade": args.acao_velocidade, "levantar_velocidade": args.levantar_velocidade is not None,
                   "congelar_recuperacao": args.congelar_recuperacao,
                   "peso_tarefa": args.peso_tarefa, "peso_estilo": args.peso_estilo, "suave": args.suave,
@@ -2646,7 +2612,7 @@ def main() -> int:
                   "empurrao_forca": list(args.empurrao_forca), "velocidade": list(args.velocidade),
                   "corrida": args.corrida, "sprint": args.sprint, "locomocao_clipe": args.locomocao_clipe,
                   "locomocao_segundos": args.locomocao_segundos, "queda_encerra": args.queda_encerra,
-                  "troca_pedido": list(args.troca_pedido), "peso_tarefa_loco": args.peso_tarefa_loco,
+                  "peso_tarefa_loco": args.peso_tarefa_loco,
                   "peso_estilo_loco": args.peso_estilo_loco, "suave_loco": args.suave_loco, "passo": args.passo,
                   "mistura_clipe": args.mistura_clipe, "queda_programada": args.queda_programada,
                   "levantar_guiado": args.levantar_guiado, "levantar_segundos": args.levantar_segundos,
@@ -2655,7 +2621,7 @@ def main() -> int:
                   "professor": args.professor, "professor_beta": args.professor_beta,
                   "professor_pedidos": list(args.professor_pedidos), "professor_aluna": list(args.professor_aluna),
                   "professor_retomada": list(args.professor_retomada), "musculo": args.musculo,
-                  "ajuda_locomocao": args.ajuda_locomocao, "recompensa_rastreio": args.recompensa_rastreio, "sincronizar_fase": args.sincronizar_fase, "imitacao_folga": args.imitacao_folga, "peito_vista": args.peito_vista, "bracos_clipe": args.bracos_clipe, "estrela": args.estrela, "estrela_segundos": args.estrela_segundos, "comando": args.comando, "comando_segundos": args.comando_segundos, "parada": args.parada, "parada_clipes": args.parada_clipes, "passos_ciclos": args.passos_ciclos, "levantar_voo": args.levantar_voo, "lateral_pernas_rigor": args.lateral_pernas_rigor, "lento": args.lento, "cabeca_clipe": args.cabeca_clipe, "fogo_fatia": args.fogo_fatia if args.fogo >= 0 else 0.0, "fogo_pontos": args.fogo_pontos, "fogo_alvo": args.fogo_alvo, "diagonal_peito": args.diagonal_peito, "rumo_suave": args.rumo_suave, "rumo_cauda_lado": args.rumo_cauda_lado, "rumo_limite": args.rumo_limite, "sem_potencial_loco": args.sem_potencial_loco, "nota_velocidade": args.nota_velocidade, "estilo_velocidade": args.estilo_velocidade, "joelho_dentro": args.joelho_dentro, "velocidade_teto": args.velocidade_teto, "idle_altura": args.idle_altura, "parada_corpo": args.parada_corpo, "lento_faixa": args.lento_faixa,
+                  "ajuda_locomocao": args.ajuda_locomocao, "sincronizar_fase": args.sincronizar_fase, "imitacao_folga": args.imitacao_folga, "peito_vista": args.peito_vista, "bracos_clipe": args.bracos_clipe, "estrela": args.estrela, "estrela_segundos": args.estrela_segundos, "comando": args.comando, "comando_segundos": args.comando_segundos, "parada": args.parada, "parada_clipes": args.parada_clipes, "passos_ciclos": args.passos_ciclos, "levantar_voo": args.levantar_voo, "lateral_pernas_rigor": args.lateral_pernas_rigor, "lento": args.lento, "cabeca_clipe": args.cabeca_clipe, "fogo_fatia": args.fogo_fatia if args.fogo >= 0 else 0.0, "fogo_pontos": args.fogo_pontos, "fogo_alvo": args.fogo_alvo, "diagonal_peito": args.diagonal_peito, "rumo_suave": args.rumo_suave, "rumo_limite": args.rumo_limite, "sem_potencial_loco": args.sem_potencial_loco, "nota_velocidade": args.nota_velocidade, "estilo_velocidade": args.estilo_velocidade, "joelho_dentro": args.joelho_dentro, "idle_altura": args.idle_altura, "parada_corpo": args.parada_corpo, "lento_faixa": args.lento_faixa,
                   "ajuda_corrida": -1.0, "manobras": args.manobras, "ajuda_manobra": -1.0,
                   "comeco_clipe": args.comeco_clipe, "comeco_de_pe": args.comeco_de_pe,
                   "imitacao_parado": args.imitacao_parado, "idle_pos_levantar": args.idle_pos_levantar,
@@ -2667,7 +2633,7 @@ def main() -> int:
                   "velocidades_trote": gait_speeds(args.velocidade_trote),
                   "velocidades_corrida": gait_speeds(args.velocidade_corrida),
                   "largada_costas": args.largada_costas, "curva_fora": args.curva_fora, "curva_inclinar": args.curva_inclinar, "pisada_largura": args.pisada_largura,
-                  "troca_freio": args.troca_freio, "troca_pe": args.troca_pe, "troca_assentada": args.troca_assentada, "troca_arrancada": args.troca_arrancada, "troca_pratica": args.troca_pratica, "corrida_largada": args.corrida_largada, "rumo_cauda": args.rumo_cauda, "inclinacao_cauda": args.inclinacao_cauda, "sem_penhascos": args.sem_penhascos, "penhascos_partes": args.penhascos_partes, "arrancada_pulo": args.arrancada_pulo, "largada_lado": args.largada_lado, "troca_assentada_lado": args.troca_assentada_lado, "troca_assentada_frente": args.troca_assentada_frente, "troca_giro_tempo": args.troca_giro_tempo, "parada_passada": args.parada_passada, "idle_pose": args.idle_pose, "parada_clipes_frente": args.parada_clipes_frente, "parada_clipes_comando": args.parada_clipes_comando, "parada_portao": args.parada_portao, "parada_livre": args.parada_livre, "parada_postura": args.parada_postura, "rigor_superior": args.rigor_superior, "arrancada_unreal": args.arrancada_unreal, "arrancada_unreal_escala": args.arrancada_unreal_escala, "largada_viva": args.largada_viva, "largada_passo": args.largada_passo, "largada_no_lugar": args.largada_no_lugar, "largada_bracos_calmos": args.largada_bracos_calmos, "coluna_sem_velocidade": args.coluna_sem_velocidade, "ruido_parado": args.ruido_parado, "tonus": args.tonus, "postura_cauda": args.postura_cauda, "tonus_coluna": args.tonus_coluna, "custo_batente": args.custo_batente, "pes_firmes": args.pes_firmes, "parado_fixo": args.parado_fixo, "gravidade_motores": args.gravidade_motores, "volta_pose": args.volta_pose, "postura_base": args.postura_base, "largada_clipe": args.largada_clipe, "largada_mao": args.largada_mao, "parada_clipes_base": args.parada_clipes_base, "parada_variantes": args.parada_variantes, "parada_variantes_mascara": args.parada_variantes_mascara, "parada_entrada": args.parada_entrada, "troca_livre": args.troca_livre, "parada_pose": args.parada_pose, "peito_comando": args.peito_comando, "parado_livre": args.parado_livre, "pose_reforco": args.pose_reforco, "empurrao_livre": args.empurrao_livre, "parado_semelhanca": args.parado_semelhanca, "passo_baixo": args.passo_baixo, "parado_dobrado_encerra": args.parado_dobrado_encerra, "imitacao_tronco": args.imitacao_tronco, "parado_largo": args.parado_largo, "simetria_ciclos": args.simetria_ciclos, "peso_tarefa_parado": args.peso_tarefa_parado, "peso_estilo_parado": args.peso_estilo_parado, "troca_assentada_costas": args.troca_assentada_costas, "troca_peito_fixo": args.troca_peito_fixo, "capacidade_minutos": args.capacidade_minutos, "rampa_forca": args.rampa_forca, "descida": args.descida, "descida_forcas_de": args.descida_forcas_de, "pegada_cruzada": args.pegada_cruzada, "estab_ancora": args.estab_ancora,
+                  "troca_freio": args.troca_freio, "troca_pe": args.troca_pe, "troca_assentada": args.troca_assentada, "troca_arrancada": args.troca_arrancada, "troca_pratica": args.troca_pratica, "corrida_largada": args.corrida_largada, "rumo_cauda": args.rumo_cauda, "inclinacao_cauda": args.inclinacao_cauda, "sem_penhascos": args.sem_penhascos, "penhascos_partes": args.penhascos_partes, "arrancada_pulo": args.arrancada_pulo, "largada_lado": args.largada_lado, "troca_assentada_lado": args.troca_assentada_lado, "troca_assentada_frente": args.troca_assentada_frente, "troca_giro_tempo": args.troca_giro_tempo, "parada_passada": args.parada_passada, "idle_pose": args.idle_pose, "parada_clipes_frente": args.parada_clipes_frente, "parada_clipes_comando": args.parada_clipes_comando, "parada_portao": args.parada_portao, "parada_livre": args.parada_livre, "parada_postura": args.parada_postura, "rigor_superior": args.rigor_superior, "arrancada_unreal": args.arrancada_unreal, "arrancada_unreal_escala": args.arrancada_unreal_escala, "largada_viva": args.largada_viva, "largada_passo": args.largada_passo, "largada_no_lugar": args.largada_no_lugar, "largada_bracos_calmos": args.largada_bracos_calmos, "coluna_sem_velocidade": args.coluna_sem_velocidade, "ruido_parado": args.ruido_parado, "tonus": args.tonus, "postura_cauda": args.postura_cauda, "tonus_coluna": args.tonus_coluna, "custo_batente": args.custo_batente, "pes_firmes": args.pes_firmes, "parado_fixo": args.parado_fixo, "gravidade_motores": args.gravidade_motores, "volta_pose": args.volta_pose, "postura_base": args.postura_base, "largada_clipe": args.largada_clipe, "largada_mao": args.largada_mao, "parada_clipes_base": args.parada_clipes_base, "parada_variantes": args.parada_variantes, "parada_variantes_mascara": args.parada_variantes_mascara, "parada_entrada": args.parada_entrada, "troca_livre": args.troca_livre, "parada_pose": args.parada_pose, "parado_livre": args.parado_livre, "pose_reforco": args.pose_reforco, "empurrao_livre": args.empurrao_livre, "parado_semelhanca": args.parado_semelhanca, "passo_baixo": args.passo_baixo, "parado_dobrado_encerra": args.parado_dobrado_encerra, "parado_largo": args.parado_largo, "simetria_ciclos": args.simetria_ciclos, "peso_tarefa_parado": args.peso_tarefa_parado, "peso_estilo_parado": args.peso_estilo_parado, "troca_assentada_costas": args.troca_assentada_costas, "troca_peito_fixo": args.troca_peito_fixo, "capacidade_minutos": args.capacidade_minutos, "rampa_forca": args.rampa_forca, "descida": args.descida, "descida_forcas_de": args.descida_forcas_de, "pegada_cruzada": args.pegada_cruzada, "estab_ancora": args.estab_ancora,
                   "trote_frente_inclinar": list(args.trote_frente_inclinar),
                   "corrida_inclinar": list(args.corrida_inclinar),
                   "corrida_costas_inclinar": list(args.corrida_costas_inclinar),
@@ -2770,7 +2736,7 @@ def main() -> int:
             str(REPO / "assets"), environments=14, threads=eval_threads, seed=888, evaluation=True, evaluation_kind=4,
             evaluation_band=1, **dict(v2, moving_push_newtons=(0.0, 0.0), moving_push_hold_newtons=(0.0, 0.0)))
         evaluations["manobras_"].set_maneuvers(0.0, 0)
-        evaluations["manobras_"].set_tracking_reward(args.recompensa_rastreio)
+        evaluations["manobras_"].set_tracking_reward(19)
     if teacher_files:
         # (A prova do dominio: a aluna SOZINHA nos 8 rumos - de pe, no rumo, no pedido do que a professora faz, sem
         # retomada -, 4 por rumo; e a professora no volante, a regua, na mesma cena.)
@@ -3045,9 +3011,7 @@ def main() -> int:
     def write_status(state: str) -> None:
         counters["segundos"] = trained_before + (time.time() - opened)
         data = {"run": args.treino, "task": args.treino, "state": state, "pid": os.getpid(),
-                "taskName": "rl_final: locomocao pelo rastreio dos clipes" if args.rastreio
-                else "rl_final: levantar, proteger-se e se locomover" if args.locomocao > 0
-                else "Levantar do chão, em movimento e evitar a queda",
+                "taskName": "rl_final: locomocao pelo rastreio dos clipes",
                 "iteration": counters["atualizacao"], "steps": counters["amostras"], "episodes": counters["episodios"],
                 "trainSeconds": counters["segundos"], "sps": last_status["sps"], "threads": args.threads,
                 "environments": n, "device": device.type, "cpuTemperature": cpu_temperature() or 0.0,
@@ -3333,7 +3297,7 @@ def main() -> int:
             # (07/11: com o juiz proprio da locomocao, as linhas dos exercicios dela entram no treino dele - antes, com o
             # rastreio, a nota de estilo da locomocao (peso 0,5) vinha de um juiz que so via como "falso" o parado e o
             # pos-levantar, nunca a rede correndo.)
-            style_rows = ~(roll["loco"].reshape(-1) > .5) if args.rastreio and disc_loco is None \
+            style_rows = ~(roll["loco"].reshape(-1) > .5) if disc_loco is None \
                 else torch.ones(T * n, dtype=torch.bool, device=device)
             # (A professora no volante: as linhas dela nao sao da aluna - fora do juiz, do PPO e da vantagem.)
             drove = roll["drove"].reshape(-1) > .5
@@ -3397,18 +3361,13 @@ def main() -> int:
                 low = (roll["obs"][..., 0] < args.chao_altura).float() * (1.0 - loco)
                 style_w = style_w + (args.estilo_chao - style_w) * low
                 task_w = task_w + ((1.0 - args.estilo_chao) - task_w) * low
-            # (03/11 18h10, ele: "ainda esta trapaceando no ir para os lados e nao anda de costas" - o juiz dos clipes nao sabe
-            # o pedido: trotar de frente bonito no rumo errado pagava o estilo inteiro. Na locomocao sem o rastreio, o estilo
-            # so paga na proporcao da tarefa cumprida (0 parado ou no rumo errado, inteiro no rumo e velocidade pedidos).)
-            if not args.rastreio and disc_loco is None:
-                style = torch.where(loco > .5, style * roll["task"].clamp(0.0, 1.0), style)
             if args.estilo_manobras_zero:
                 # (06/11 22h: o juiz so conhece os clipes em linha reta - nas curvas e trocas a rede tem de inclinar e girar;
                 # a curva fechada de trote saia do percurso em 80% (desvio 95 graus) depois do PPO. Nas manobras, so a tarefa.)
                 maneuver = (roll["espelho"][..., 2] > 0.5) & (roll["loco"] > .5)
                 task_w = torch.where(maneuver, torch.ones_like(task_w), task_w)
                 style_w = torch.where(maneuver, torch.zeros_like(style_w), style_w)
-            if args.estilo_velocidade > 0 and args.rastreio:
+            if args.estilo_velocidade > 0:
                 # (08/11 23h55: o estilo pagava ~70% do premio da locomocao e quase nao dependia da velocidade - devagar e de pe
                 # rendia quase o mesmo. Na locomocao, vezes o portao da velocidade, como a nota.)
                 # (A coluna do portao vale 0 onde a nota andando nao foi calculada - o idle, o parado: ali sem portao.)
@@ -3417,10 +3376,9 @@ def main() -> int:
                 style = torch.where((loco > .5) & moving, style * gate, style)
             task_style = task_w * roll["task"] + style_w * style
             costs = (1.0 - args.protecao_alivio * roll["prot"]) * (jerk_w * roll["jerk"] + args.limite * roll["limit"])
-            if args.rastreio:
-                # (03/11: no rastreio os custos so comem a nota do passo, nunca a deixam negativa - com a nota baixa do
-                # comeco, o limite x2 deixava cada passo negativo e cair voltava a compensar, o erro da locomocao livre.)
-                costs = torch.where(loco > .5, torch.minimum(costs, roll["feedback"][..., 0]), costs)
+            # (03/11: no rastreio os custos so comem a nota do passo, nunca a deixam negativa - com a nota baixa do
+            # comeco, o limite x2 deixava cada passo negativo e cair voltava a compensar, o erro da locomocao livre.)
+            costs = torch.where(loco > .5, torch.minimum(costs, roll["feedback"][..., 0]), costs)
             rew = (1.0 - gamma) * (task_style - costs) + gamma * roll["boot"]
             adv = torch.zeros(T, n, device=device)
             gae = torch.zeros(n, device=device)
@@ -3730,12 +3688,12 @@ def main() -> int:
         out.update({"estilo": float(style.mean()), "peso_coleta": float(weight.mean()), "t_ppo": time.time() - start,
                     "loco_recompensa": float((task_style * loco).sum() / loco.sum().clamp_min(1)),
                     **({f"rastreio_{name}": float((roll["feedback"][..., k] * loco).sum() / loco.sum().clamp_min(1))
-                        for k, name in enumerate(TRACKING_TERMS)} if args.rastreio else {}),
+                        for k, name in enumerate(TRACKING_TERMS)}),
                     # (04/11, ele: "confere se isso e mesmo a 30%" - o pico da mao, o p90 da sustentacao nos passos com ela: a media
                     # esconde o "segurar" no tropeco.)
                     **({"rastreio_mao_sustenta_p90": float(torch.quantile(
                         roll["feedback"][..., TRACKING_TERMS.index("mao_sustenta_n")][(loco > .5) & (roll["feedback"][..., 0] > 0)]
-                        .float(), 0.9))} if args.rastreio and bool(((loco > .5) & (roll["feedback"][..., 0] > 0)).any()) else {}),
+                        .float(), 0.9))} if bool(((loco > .5) & (roll["feedback"][..., 0] > 0)).any()) else {}),
                     "ator_parado": float(actor_frozen), "ator_recuperacao_parado": float(skill_frozen[0]),
                     "ator_locomocao_parado": float(skill_frozen[1]),
                     "passos_ator_rec": skill_steps[0], "passos_ator_loco": skill_steps[1], "minilotes": minibatches,
@@ -3893,7 +3851,7 @@ def main() -> int:
         set_assist(args.ajuda_forcar)
         counters["ajuda_desde"] = counters["atualizacao"]
     if "ajuda" in counters:
-        print(f"forca auxiliar da locomocao: {counters['ajuda']} (nota do rastreio v{args.recompensa_rastreio})", flush=True)
+        print(f"forca auxiliar da locomocao: {counters['ajuda']}", flush=True)
     assist_rows: list = []
     run_rows: list = []
     move_rows: list = []
@@ -4199,8 +4157,7 @@ def main() -> int:
                     lab = torch.as_tensor(batch.self_teacher_labels(), device=device)
                     roll["clip"][t] = torch.where(lab[:, -1:] > 0, lab[:, :-1], torch.zeros_like(lab[:, :-1]))
                     roll["drove"][t] = (lab[:, -1] > 1.5).float()
-                if args.rastreio:
-                    roll["feedback"][t] = torch.as_tensor(batch.locomotion_feedback(), device=device)
+                roll["feedback"][t] = torch.as_tensor(batch.locomotion_feedback(), device=device)
                 physics += time.time() - tick
                 roll["task"][t] = torch.as_tensor(task, device=device)
                 takeover = None

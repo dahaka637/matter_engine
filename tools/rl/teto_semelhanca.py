@@ -23,7 +23,7 @@ RUN_V2: dict = {}
 
 
 def medir(key: str, mundos: int, segundos: float, idle_alcance: float) -> tuple[float, float, float]:
-    common = dict(separate_skills=True, locomotion_tracking=True, locomotion_residual=True, locomotion_termination=True,
+    common = dict(separate_skills=True, locomotion_residual=True, locomotion_termination=True,
                   locomotion_seconds=segundos, moving_push_newtons=(0.0, 0.0), moving_push_hold_newtons=(0.0, 0.0))
     A = str(L.REPO / "assets")
     if key == "lev_parado":

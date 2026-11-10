@@ -344,9 +344,9 @@ NB_MODULE(matter_tracking_native, m) {
                 float locomotionFallFraction, float partnerSeconds, float partnerFallPenalty, bool partnerAvoid,
                 float touchDownPenalty, float supportBonus, float flexReward, float obstacleFraction,
                 float weightFraction, float runFraction, float sprintFraction, float locomotionClipFraction,
-                float locomotionSeconds, bool locomotionTermination, std::array<float, 2> commandChange,
+                float locomotionSeconds, bool locomotionTermination,
                 int evaluationBand, float speedRampPower, float imitationWeight, const std::string& onlyClip, float clipBlend,
-                bool protectiveFall, bool getUpGuide, float getUpSeconds, float rollBlend, std::array<float, 6> scenery, float avoidSceneryFraction, bool evaluationScenery, bool separateSkills, bool locomotionTracking, float trackingTermination, bool locomotionResidual, bool taughtHeadings, bool balanceObservation, bool stepChannels) {
+                bool protectiveFall, bool getUpGuide, float getUpSeconds, float rollBlend, std::array<float, 6> scenery, float avoidSceneryFraction, bool evaluationScenery, bool separateSkills, float trackingTermination, bool locomotionResidual, bool taughtHeadings, bool balanceObservation, bool stepChannels) {
                 TrackingGetUpAmpSettings3D settings;
                 settings.balanceObservation = balanceObservation;
                 settings.stepChannels = stepChannels;
@@ -400,8 +400,6 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.locomotionClipFraction = locomotionClipFraction;
                 settings.locomotionSeconds = locomotionSeconds;
                 settings.locomotionTermination = locomotionTermination;
-                settings.commandChangeMinimumSeconds = commandChange[0];
-                settings.commandChangeMaximumSeconds = commandChange[1];
                 settings.evaluationBand = evaluationBand;
                 settings.speedRampPower = speedRampPower;
                 settings.imitationWeight = imitationWeight;
@@ -421,7 +419,6 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.avoidSceneryFraction = avoidSceneryFraction;
                 settings.evaluationScenery = evaluationScenery;
                 settings.separateSkills = separateSkills;
-                settings.locomotionTracking = locomotionTracking;
                 settings.trackingTermination = trackingTermination;
                 settings.locomotionResidual = locomotionResidual;
                 settings.taughtHeadings = taughtHeadings;
@@ -444,10 +441,10 @@ NB_MODULE(matter_tracking_native, m) {
             "touch_down_penalty"_a = 0.0f, "support_bonus"_a = 0.0f, "flex_reward"_a = 0.0f,
             "obstacle_fraction"_a = 0.0f, "weight_fraction"_a = 0.0f, "run_fraction"_a = 0.0f,
             "sprint_fraction"_a = 0.0f, "locomotion_clip_fraction"_a = 0.5f, "locomotion_seconds"_a = 0.0f,
-            "locomotion_termination"_a = false, "command_change"_a = std::array<float, 2> { 0.0f, 0.0f },
+            "locomotion_termination"_a = false,
             "evaluation_band"_a = -1, "speed_ramp_power"_a = 0.5f, "imitation_weight"_a = 0.0f, "only_clip"_a = std::string(), "clip_blend"_a = 1.0f,
             "protective_fall"_a = false, "get_up_guide"_a = false, "get_up_seconds"_a = 1.7f, "roll_blend"_a = 1.0f,
-            "scenery"_a = std::array<float, 6> { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, "avoid_scenery_fraction"_a = 0.0f, "evaluation_scenery"_a = false, "separate_skills"_a = false, "locomotion_tracking"_a = false, "tracking_termination"_a = 0.0f, "locomotion_residual"_a = false, "taught_headings"_a = false, "balance_observation"_a = false, "step_channels"_a = false)
+            "scenery"_a = std::array<float, 6> { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, "avoid_scenery_fraction"_a = 0.0f, "evaluation_scenery"_a = false, "separate_skills"_a = false, "tracking_termination"_a = 0.0f, "locomotion_residual"_a = false, "taught_headings"_a = false, "balance_observation"_a = false, "step_channels"_a = false)
         .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
         // As quedas da locomocao (01/11): [n, links, 13] - a posicao, a orientacao (xyzw) e as velocidades linear e
         // angular de cada link no instante da queda (take_fall_states do lote da locomocao).
@@ -595,7 +592,6 @@ NB_MODULE(matter_tracking_native, m) {
         .def("set_recovery_velocity", &TrackingGetUpAmpTraining3D::setRecoveryVelocity, "on"_a)
         .def("set_teacher_free_drills", &TrackingGetUpAmpTraining3D::setTeacherFreeDrills, "drills"_a)
         .def("set_maneuver_weights", &TrackingGetUpAmpTraining3D::setManeuverWeights, "weights"_a)
-        .def("set_course_shaping", &TrackingGetUpAmpTraining3D::setCourseShaping, "gain"_a)
         .def("set_turn_settle_lateral", &TrackingGetUpAmpTraining3D::setTurnSettleLateral, "speed"_a)
         .def("set_turn_settle_front", &TrackingGetUpAmpTraining3D::setTurnSettleFront, "speed"_a)
         .def("set_run_turn_time_scale", &TrackingGetUpAmpTraining3D::setRunTurnTimeScale, "scale"_a)
@@ -631,7 +627,6 @@ NB_MODULE(matter_tracking_native, m) {
         .def("set_stop_entry", &TrackingGetUpAmpTraining3D::setStopEntry, "blend_seconds"_a, "window_seconds"_a)
         .def("set_free_troca", &TrackingGetUpAmpTraining3D::setFreeTroca, "on"_a)
         .def("set_free_stand_gate", &TrackingGetUpAmpTraining3D::setFreeStandGate, "gate"_a)
-        .def("set_command_chest_gate", &TrackingGetUpAmpTraining3D::setCommandChestGate, "gate"_a)
         .def("set_free_idle", &TrackingGetUpAmpTraining3D::setFreeIdle, "on"_a)
         .def("set_pose_boost", &TrackingGetUpAmpTraining3D::setPoseBoost, "gate"_a)
         .def("set_free_push", &TrackingGetUpAmpTraining3D::setFreePush, "on"_a)
@@ -639,7 +634,6 @@ NB_MODULE(matter_tracking_native, m) {
         .def("set_free_step_height", &TrackingGetUpAmpTraining3D::setFreeStepHeight, "meters"_a)
         .def("set_idle_bent_end", &TrackingGetUpAmpTraining3D::setIdleBentEnd, "on"_a)
         .def("set_idle_like_stop", &TrackingGetUpAmpTraining3D::setIdleLikeStop, "on"_a)
-        .def("set_upper_imitation", &TrackingGetUpAmpTraining3D::setUpperImitation, "on"_a)
         .def("set_idle_wide", &TrackingGetUpAmpTraining3D::setIdleWide, "on"_a)
         .def("set_mirror_cycles", &TrackingGetUpAmpTraining3D::setMirrorCycles, "on"_a)
         .def("set_turn_settle_back", &TrackingGetUpAmpTraining3D::setTurnSettleBack, "speed"_a)
@@ -672,12 +666,10 @@ NB_MODULE(matter_tracking_native, m) {
         .def("set_stop_clips", &TrackingGetUpAmpTraining3D::setStopClips, "on"_a)
         .def("set_diagonal_chest", &TrackingGetUpAmpTraining3D::setDiagonalChest, "gate"_a)
         .def("set_course_smoothing", &TrackingGetUpAmpTraining3D::setCourseSmoothing, "seconds"_a)
-        .def("set_course_tail_lateral", &TrackingGetUpAmpTraining3D::setCourseTailLateral, "weight"_a)
         .def("set_course_angle_limit", &TrackingGetUpAmpTraining3D::setCourseAngleLimit, "radians"_a)
         .def("set_locomotion_shaping", &TrackingGetUpAmpTraining3D::setLocomotionShaping, "on"_a)
         .def("set_speed_gate", &TrackingGetUpAmpTraining3D::setSpeedGate, "floor"_a)
         .def("set_knee_inward", &TrackingGetUpAmpTraining3D::setKneeInward, "slack"_a)
-        .def("set_speed_ceiling", &TrackingGetUpAmpTraining3D::setSpeedCeiling, "ratio"_a)
         .def("set_idle_height", &TrackingGetUpAmpTraining3D::setIdleHeight, "slack"_a)
         .def("set_stop_wait_body", &TrackingGetUpAmpTraining3D::setStopWaitBody, "on"_a)
         .def("set_gait_cycles", &TrackingGetUpAmpTraining3D::setGaitCycles, "on"_a)

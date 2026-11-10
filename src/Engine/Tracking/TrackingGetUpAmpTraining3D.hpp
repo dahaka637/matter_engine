@@ -25,10 +25,6 @@ struct TrackingGetUpAmpSettings3D {
     // Duas cabecas numa politica (a recuperacao e a locomocao): a ultima entrada diz qual age (1: a locomocao, de pe
     // com pedido de deslocamento).
     bool separateSkills = false;
-    // A locomocao por rastreio do clipe (03/11, vault 04_locomocao/plano_rastreio_locomocao_03_11.md): nos rumos, a
-    // nota de estado e so o rastreio do clipe do passo (TrackingLocomotionScore, o produto das partes, pior perna e pior
-    // pe), o clipe tocado na velocidade pedida; a queda ou a perda do equilibrio encerra com a multa.
-    bool locomotionTracking = false;
     // O rastreio ruim sustentado encerra (o early termination por desvio): a media movel da nota (~0,5 s) abaixo disto,
     // depois de 1 s. 0: so a queda.
     float trackingTermination = 0.0f;
@@ -48,12 +44,9 @@ struct TrackingGetUpAmpSettings3D {
     // (locomotionResidual), o pe do clipe no ar pousa deslocado pelo ponto de captura do corpo real contra o pedido -
     // o balanceFootPlacement do modo fisico - e o IK das pernas (synthesizeAthleteLegs3D) leva a perna ate la.
     bool balanceFeet = false;
-    // A nota do rastreio: 1 a de 03/11 (portas x forma); 2 a de 04/11 para baixar a forca (vault
-    // 04_locomocao/plano_rastreio_locomocao_03_11.md, "Plano das recompensas"): 0,10 viva + 0,30 velocidade +
-    // (0,40 semelhanca + 0,20 estabilidade) x (0,5 + 0,5 velocidade).
-    // 3 (04/11 03h25): a 2 com a velocidade metade precisao e metade progresso (a arrancada).
-    // 6 (04/11 04h15): a 5 com a janela de improviso nas trocas (a semelhanca afrouxada na troca).
-    // 5 (04/11 04h10): a 4 com o giro - sem deslocamento - cobrando a semelhanca 0,65 numa regua 2x mais exigente.
+    // A nota do rastreio e so a v19 desde 10/11; o campo ficou como o portao da inclinacao da referencia (leanSide, runPitch:
+    // so com 10 ou mais). shortcut: o lote nasce com 1 e o treinador poe 19 no configurar - os comecos sorteados no construtor
+    // saem sem a inclinacao, e o ouro da prova depende disso; tirar num passo proprio com ouro novo.
     int trackingReward = 1;
     // O parado em alerta (04/11 04h10): o peso da imitacao do clipe IDLE ALERTA na regua estrita (DeepMimic, suavidade 1),
     // no rumo do proprio corpo; 0 = como antes (o imitationWeight, se houver).
@@ -129,8 +122,6 @@ struct TrackingGetUpAmpSettings3D {
     float courseTail = 0.0f;
     // (08/11 18h45) O rumo da nota numa velocidade suavizada mais longa (s; 0: a de 0,25 s de sempre).
     float courseSmoothing = 0.0f;
-    // (18h55) A cauda larga do rumo nos laterais retos (o peso dela, no lugar do courseTail; 0: o courseTail).
-    float courseTailLateral = 0.0f;
     // (20h05) Nos retos, o deslocamento fora do rumo pedido mais que isto (rad; 0: nao) por StraySeconds encerra como a queda.
     float courseAngleLimit = 0.0f;
     // (08/11 23h55) Os potenciais do levantar (Ng 1999) tambem nos passos da cabeca da locomocao. De pe valem 24, e
@@ -143,9 +134,6 @@ struct TrackingGetUpAmpSettings3D {
     // (09/11 01h20) O joelho para dentro da linha quadril-tornozelo alem do clipe (+ 2 cm de margem) derruba a semelhanca:
     // exp(-(excesso / kneeInwardSlack)^2), andando. 0: nao.
     float kneeInwardSlack = 0.0f;
-    // (09/11 03h35) Andando no rumo acima desta fracao da pedida (fora da largada e da parada), a nota da velocidade cai:
-    // exp(-((r - teto) / 0,10)^2). 0: nao.
-    float speedCeiling = 0.0f;
     // (09/11 03h40) No idle da cabeca da locomocao, a pelve abaixo da do idle alem de 1,5 cm derruba a semelhanca da pose:
     // exp(-(excesso / idleHeightSlack)^2). 0: nao.
     float idleHeightSlack = 0.0f;
@@ -233,8 +221,6 @@ struct TrackingGetUpAmpSettings3D {
     std::vector<std::uint8_t> teacherFreeDrills;
     // (06/11 22h10) Os pesos do sorteio das 7 manobras no treino (troca suave, media, forte, livre, curva suave, S, fechada).
     std::array<float, 7> maneuverWeights { 0.12f, 0.16f, 0.16f, 0.16f, 0.12f, 0.14f, 0.14f };
-    // (06/11 22h30) Nas curvas, a nota pela distancia a linha e o progresso de voltar a ela (0: sem).
-    float courseShaping = 0.0f;
     // (06/11 10h50, a vigilia: as trocas media/forte paradas em ~15% ha 2 h - no atlas, a meia-volta saindo de LADO cai 30-69%
     // no trote e 100% correndo (de frente 5-23%): de lado ela entra a 4 m/s, a do trote) De lado (2 e 6), a freada ate esta
     // velocidade antes da meia-volta (m/s; 0: sem - em 05/11 a 1,5 m/s, na forca de entao, derrubava no passo lateral).
@@ -362,9 +348,6 @@ struct TrackingGetUpAmpSettings3D {
     // da pelve vezes o peito alto reto contra os do idle - as folhas da r75500 paravam de pe, mas curvadas e agachadas 4-6 cm, a
     // base mais estavel pagava quase o mesmo. 0: so a parcela somada de antes.
     float freeStandGate = 0.0f;
-    // (09/11 17h05) No comando, o portao do peito alto contra o da referencia (que fica na vista) em todas as teclas, como o
-    // diagonalChestGate dos retos; pela metade na janela de improviso da troca de tecla. 0: so o facingGate da pelve.
-    float commandChestGate = 0.0f;
     // (09/11 17h30, a etapa 3a) O parado livre: no parado com a cabeca da locomocao (o exercicio parado e o do equilibrio com
     // empurroes), a nota e a do parado da parada livre - quieto, de pe e ereto na altura do idle, o peito na vista, a pose do idle
     // so como termo leve -, sem o gerador de passos e sem o fim por pose perdida (os pes fora do lugar do idle); cair encerra.
@@ -393,11 +376,6 @@ struct TrackingGetUpAmpSettings3D {
     // na observacao e com a vista contra o peito de verdade (antes fixa em "de frente"). A mesma rede fica de pe depois de uma
     // parada livre e se dobra na cintura no exercicio parado - o teste de que o contexto liga o modo dobrado.
     bool idleLikeStop = false;
-    // (10/11 01h40, ele: "um bom equilibrio entre a semelhanca com o clipe e a velocidade, pois 50% da meta e inaceitavel.. talvez
-    // algo que cobre a semelhanca com o clipe mais da cintura para cima e flexibilize as pernas") A imitacao da cintura para cima:
-    // a coluna 0,40, os bracos 0,25, a cabeca 0,20; as pernas 0,10 e os pes 0,05 (antes 0,30 e 0,15). (02h30: sem a pelve - com as
-    // pernas soltas ela gira com elas: em 30 min o giro da pelve contra o clipe subiu em 14 de 16 retos e o lateral esquerdo parou.)
-    bool upperImitation = false;
     // (10/11 01h50, ele: "Esta totalmente errado a forma do parado.. investigue profundamente e corrija") Medido: o parado agachado
     // 15 cm e o peito 18 graus, e ali a nota plana - a altura num nucleo de 3 cm, a semelhanca 0,03. A altura e o peito alto com o
     // nucleo fino mais uma rampa larga (ate 20 cm e 40 graus), e a semelhanca com o idle tambem na regua larga (suavidade 6).
@@ -656,8 +634,6 @@ struct TrackingGetUpAmpSettings3D {
     float locomotionClipFraction = 0.5f;
     float locomotionSeconds = 0.0f;
     bool locomotionTermination = false;
-    float commandChangeMinimumSeconds = 0.0f;
-    float commandChangeMaximumSeconds = 0.0f;
     // Na avaliacao dos rumos, a faixa (-1: o meio do trote nos 8 rumos, como antes; 0 andar, 1 trote, 2 corrida, 3
     // sprint: para a frente, de pe no parado em alerta, na velocidade do primeiro clipe da faixa).
     int evaluationBand = -1;
@@ -802,6 +778,9 @@ struct TrackingGetUpAmpSettings3D {
     float teacherTakeoverChest = 25.0f;
     float teacherTakeoverTravel = 20.0f;
     float teacherTakeoverSeconds = 1.0f;
+    // shortcut: sem efeito desde a limpeza de 10/11 (a locomocao e sempre o rastreio); so o Workbench
+    // (TrackingViewer3D.cpp) ainda o escreve. Sair junto com essa linha dele.
+    bool locomotionTracking = true;
 };
 
 // Um episodio do levantar livre que acabou (no fim do tempo).
@@ -1084,7 +1063,6 @@ public:
     void setRecoveryVelocity(bool on);
     void setTeacherFreeDrills(const std::vector<int>& drills);
     void setManeuverWeights(std::array<float, 7> weights);
-    void setCourseShaping(float gain);
     static constexpr float VelocityActionLimit = 12.0f;
     void setTurnSettleLateral(float speed);
     void setTurnSettleFront(float speed);
@@ -1121,7 +1099,8 @@ public:
     void setStopEntry(float blendSeconds, float windowSeconds);
     void setFreeTroca(bool on);
     void setFreeStandGate(float gate);
-    void setCommandChestGate(float gate);
+    // shortcut: sem efeito desde a limpeza de 10/11; so o Workbench (TrackingViewer3D.cpp) ainda chama. Sair junto com ele.
+    void setCommandChestGate(float) {}
     void setFreeIdle(bool on);
     void setPoseBoost(float gate);
     void setFreePush(bool on);
@@ -1129,7 +1108,8 @@ public:
     void setFreeStepHeight(float meters);
     void setIdleBentEnd(bool on);
     void setIdleLikeStop(bool on);
-    void setUpperImitation(bool on);
+    // shortcut: sem efeito desde a limpeza de 10/11; so o Workbench (TrackingViewer3D.cpp) ainda chama. Sair junto com ele.
+    void setUpperImitation(bool) {}
     void setIdleWide(bool on);
     void setMirrorCycles(bool on);
     void setTurnSettleBack(float speed);
@@ -1160,12 +1140,10 @@ public:
     void setFireShown(bool on);
     void setDiagonalChest(float gate);
     void setCourseSmoothing(float seconds);
-    void setCourseTailLateral(float weight);
     void setCourseAngleLimit(float radians);
     void setLocomotionShaping(bool on);
     void setSpeedGate(float floor);
     void setKneeInward(float slackMeters);
-    void setSpeedCeiling(float ratio);
     void setIdleHeight(float slackMeters);
     void setStopWaitBody(bool on);
     // (08/11) Os passos do trote e da corrida pelos ciclos nas velocidades-meta (CycleClips) ou pelos clipes de antes.

@@ -74,8 +74,6 @@ constexpr float IdleFeetLimit = 0.12f, IdlePelvisDrop = 0.05f, IdleLostSeconds =
 constexpr float IdleQuietSlack = 0.15f;
 // (07/11) O topo do levantar: o centro de massa acima disto (m; de pe ~0,96) e a subida que ali nao custa (m/s) - ver riseOvershoot.
 constexpr float RiseTopHeight = 0.80f, RiseTopSpeed = 0.35f;
-// (07/11) As fases do ciclo do clipe procuradas na pose do quadro mais parecido (v17).
-constexpr int PoseSearchFrames = 16;
 // A rl_final: os passos de cada faixa (0 andar, 1 trote, 2 corrida, 3 sprint) - o clipe em ciclo e o rumo do
 // deslocamento dele em relacao ao corpo (0 a frente, de 45 em 45 graus para a esquerda). O primeiro de cada faixa e o da
 // avaliacao. Na troca do pedido, parar tem esta chance.
@@ -91,7 +89,6 @@ constexpr GaitEntry GaitTable[] {
     { "sprint_maximo", 3, 0 }, { "sprint", 3, 0 }, { "sprint_strafe_left", 3, 2 }, { "sprint_backward_long", 3, 4 },
     { "sprint_strafe_right", 3, 6 },
 };
-constexpr float CommandStopChance = 0.15f;
 
 // Uma rotacao uniforme (Shoemake, "Uniform random rotations", 1992).
 Quaternion uniformRotation(std::mt19937& rng) {
@@ -449,7 +446,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // (04/11 07h45) A velocidade que a referencia pede no rumo, nos mesmos instantes (a arrancada, as frenagens e as viradas).
         double wantedSum = 0.0;
         // (04/11) As partes da nota do rastreio no episodio: a semelhanca com o clipe e a estabilidade (somas e quantas).
-        double imitationSum = 0.0, stabilitySum = 0.0;
+        double imitationSum = 0.0;
         // (05/11 23h) Os apoios na corrida para a frente e nas diagonais da frente, e quantos com o pe apoiado mais de
         // CrossedInward para dentro que o mesmo pe do clipe (o pe cruzado; ver footCross do episodio).
         std::uint32_t crossStance = 0, crossBad = 0;
@@ -487,7 +484,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // para (s; < 0: nao para), no giro a velocidade (rad/s, com o sinal), quanto falta do giro (rad) e o fim da pausa
         // (s; < 0: girando), e o erro do rumo do corpo de pe (a soma, rad).
         bool locomotion = false;
-        // O rastreio (locomotionTracking): a ultima nota e os erros (TrackingFeedbackSize), o alvo do clipe da decisao
+        // O rastreio: a ultima nota e os erros (TrackingFeedbackSize), o alvo do clipe da decisao
         // (o teste de mergulho), a media movel da nota (o fim por desvio) e a velocidade do centro de massa suavizada
         // na passada.
         std::array<float, TrackingGetUpAmpTraining3D::TrackingFeedbackSize> locomotionFeedback {};
@@ -562,10 +559,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         std::uint32_t heading = 0;
         float moveYaw = 0.0f;
         float faceYaw = 0.0f;
-        float stopAt = -1.0f;
         float turnRate = 0.0f;
         float turnLeft = 0.0f;
-        float pauseUntil = -1.0f;
         double faceErrorSum = 0.0;
         std::uint32_t faceErrorSamples = 0;
         // A rl_final: a faixa do passo de agora e a do comeco, e a proxima troca do pedido (s; < 0: sem troca).
@@ -585,8 +580,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // (06/11, freeVelocityFeedforward) O alvo da cabeca da locomocao na decisao anterior (vazio: sem).
         std::vector<float> freeTarget;
         std::vector<float> armClipNow, armClipNext;
-        // (06/11 22h30, courseShaping) A distancia a linha da curva na decisao anterior (< 0: sem).
-        float lastCourseError = -1.0f;
         // (06/11, a locomocao livre) O rotulo da professora nesta decisao: o alvo, a velocidade-alvo, se vale e se ela dirigiu.
         std::vector<float> selfLabel;
         std::vector<float> selfLabelVelocity;
@@ -745,7 +738,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         std::size_t twistClip = std::numeric_limits<std::size_t>::max();
         float trackStart = 0.0f;
         float trackYaw = 0.0f;
-        float nextCommandAt = -1.0f;
         // A troca de rede ao ficar de pe: ha quanto tempo ele esta de pe e firme (s) e quando trocou (s; < 0: nao).
         float firmSeconds = 0.0f;
         float handoffAt = -1.0f;
@@ -1053,8 +1045,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // 5-7 seguem o clipe da frente no rumo 0, entao a coluna da frente vale nelas tambem.)
     int leanSide(const World& w) const {
         // (04/11 23h40: e nas trocas 1-4 tambem - o rumo delas vale como o reto.)
-        if (!(settings.trackingReward >= 10 && settings.locomotionTracking && w.locomotion
-                && w.commandSpeed > 0.0f && !starting(w)))
+        if (!(settings.trackingReward >= 10 && w.locomotion && w.commandSpeed > 0.0f && !starting(w)))
             return 0;
         if (w.heading >= 3 && w.heading <= 5) return -1;
         return !w.runBand && (w.heading == 0 || w.heading == 1 || w.heading == 7) ? 1 : 0;
@@ -1085,8 +1076,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // inclinacao dela) e da largada.
     float runPitch(const World& w) const {
         if (!w.runBand || w.runTurn >= 0) return 0.0f;
-        if (!(settings.trackingReward >= 10 && settings.locomotionTracking && w.locomotion && w.commandSpeed > 0.0f
-                && !starting(w)))
+        if (!(settings.trackingReward >= 10 && w.locomotion && w.commandSpeed > 0.0f && !starting(w)))
             return 0.0f;
         if (w.band == 3) return w.heading == 0 ? settings.sprintLean : 0.0f;
         if (w.heading == 0 || w.heading == 1 || w.heading == 7) return settings.runLean;
@@ -1813,12 +1803,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
             beginTaughtHeading(w);
             return;
         }
-        const bool changes = !settings.evaluation && settings.commandChangeMaximumSeconds > 0.0f;
         const Gait* gait = nullptr;
         if (settings.evaluation) {
             w.band = settings.evaluationBand >= 0 && settings.evaluationBand < 4 ? static_cast<std::uint32_t>(settings.evaluationBand) : 1u;
-            w.heading = settings.heading >= 0 ? static_cast<std::uint32_t>(settings.heading) % 8u
-                : settings.evaluationBand >= 0 && !settings.locomotionTracking ? 0u : w.index % 8u;
+            w.heading = settings.heading >= 0 ? static_cast<std::uint32_t>(settings.heading) % 8u : w.index % 8u;
             // (05/11: o sprint so para a frente.)
             if (w.band == 3) w.heading = 0;
             gait = gaitFor(w.band, w.heading);
@@ -1831,111 +1819,99 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.heading = gait->heading;
             // (04/11, ele: "nos temos mecanica das diagonais" - no rastreio, os 8 rumos por igual: a diagonal com o clipe
             // da frente ou de costas, a pelve no rumo e a coluna devolvendo o peito para a vista.)
-            if (settings.locomotionTracking) {
-                const std::uint32_t h = std::uniform_int_distribution<std::uint32_t>(0u, 7u)(w.rng);
-                if (const Gait* g = gaitFor(w.band, h)) {
-                    gait = g;
-                    w.heading = h;
-                }
-                // (05/11: o sprint so para a frente, no sprint_maximo - o primeiro da faixa 3.)
-                if (w.band == 3)
-                    if (const Gait* g = gaitFor(3u, 0u)) {
-                        gait = g;
-                        w.heading = 0;
-                    }
+            const std::uint32_t h = std::uniform_int_distribution<std::uint32_t>(0u, 7u)(w.rng);
+            if (const Gait* g = gaitFor(w.band, h)) {
+                gait = g;
+                w.heading = h;
             }
-            // (03/11 17h25, a locomocao por AMP: os 8 rumos tambem no treino - as diagonais com o clipe da frente ou de
-            // costas e o corpo virado para o rumo, como na avaliacao e no modo padrao; antes so os 4 cardinais.)
-            if (!settings.locomotionTracking && (w.heading == 0u || w.heading == 4u)) {
-                const int k = std::uniform_int_distribution<int>(-1, 1)(w.rng);
-                w.heading = static_cast<std::uint32_t>((static_cast<int>(w.heading) + k + 8) % 8);
-            }
-        }
-        // (As manobras: na avaliacao a fixa - ou uma por mundo em ciclo -, no treino na fatia maneuverFraction. Os codigos
-        // 1-3 seguem do rumo sorteado; a troca livre e as curvas comecam para a frente.)
-        if (settings.locomotionTracking) {
-            // (08/11, a estrela: 8-10 os tres peitos, 11 os tres em ciclo pelo mundo; no treino, a fatia starFraction - um
-            // dos 6 pelos pesos, a faixa dele.)
-            if (settings.evaluation)
-                w.maneuver = settings.evaluationManeuver == CommandManeuver ? CommandManeuver
-                    : settings.evaluationManeuver >= 11 ? 8 + static_cast<int>(w.index % 3u)
-                    : settings.evaluationManeuver >= 8 ? settings.evaluationManeuver
-                    : settings.evaluationManeuver > 0 ? std::min(settings.evaluationManeuver, 7)
-                    : settings.evaluationManeuver == 0 ? 1 + static_cast<int>(w.index % 7u) : 0;
-            else if (w.band < 3 && settings.commandFraction > 0.0f && u(w.rng) < settings.commandFraction) {
-                w.maneuver = CommandManeuver;
-                if (settings.commandPhase <= 1) w.band = 1u;
-            } else if (w.band < 3 && settings.starFraction > 0.0f && u(w.rng) < settings.starFraction) {
-                float total = 0.0f;
-                for (const float v : settings.starWeights) total += std::max(0.0f, v);
-                float draw = u(w.rng) * (total > 0.0f ? total : 1.0f);
-                int pick = 5;
-                for (int k = 0; k < 6; ++k)
-                    if ((draw -= std::max(0.0f, settings.starWeights[static_cast<std::size_t>(k)])) < 0.0f) {
-                        pick = k;
-                        break;
-                    }
-                w.maneuver = 8 + pick % 3;
-                w.band = pick < 3 ? 1u : 2u;
-            } else if (w.band < 3 && u(w.rng) < settings.maneuverFraction) {
-                // (06/11 22h10, ele: "intensificar a quantidade de treinos destinados aos mais deficientes": os pesos das 7
-                // manobras pelo treino - maneuverWeights.)
-                const auto& Weights = settings.maneuverWeights;
-                float total = 0.0f;
-                for (const float v : Weights) total += std::max(0.0f, v);
-                float draw = u(w.rng) * (total > 0.0f ? total : 1.0f);
-                w.maneuver = 7;
-                for (int k = 0; k < 7; ++k)
-                    if ((draw -= std::max(0.0f, Weights[static_cast<std::size_t>(k)])) < 0.0f) {
-                        w.maneuver = k + 1;
-                        break;
-                    }
-            }
-            // (06/11 01h10, ele: "precisamos de uma solucao melhor para a troca de direcoes, ainda esta muito fragil... pense bem
-            // o que fazer para ajudar ele a aprender melhor" - trocaPractice) Nas trocas de peito fixo e pela meia-volta (1-3),
-            // o rumo de partida pelos pesos que o treino manda (metade por igual, metade pelas quedas recentes de cada rumo): as
-            // variantes que caem treinam mais. Medido na r35080: das quedas da media no trote, 13 de 15 partiam do lateral
-            // esquerdo; da media e da forte correndo, 9 de 13 e 7 de 11.
-            if (!settings.evaluation && settings.trocaPractice && w.maneuver >= 1 && w.maneuver <= 3) {
-                float total = 0.0f;
-                for (float v : settings.trocaHeadingWeights) total += std::max(0.0f, v);
-                if (total > 0.0f) {
-                    float draw = u(w.rng) * total;
-                    std::uint32_t h = 7u;
-                    for (std::uint32_t k = 0; k < 8u; ++k)
-                        if ((draw -= std::max(0.0f, settings.trocaHeadingWeights[k])) < 0.0f) {
-                            h = k;
-                            break;
-                        }
-                    if (const Gait* g = gaitFor(w.band, h)) {
-                        gait = g;
-                        w.heading = h;
-                    }
-                }
-            }
-            if (isCommand(w)) {
-                // (O comando: o rumo e a faixa sorteados sao a primeira tecla.)
-                if (const Gait* g = gaitFor(w.band, w.heading)) gait = g;
-            } else if (isStar(w)) {
-                // (A estrela: a primeira ponta sorteada; o peito fixo e o girando saem no rumo dela, o livre de frente.)
-                w.star = {};
-                w.star.phase = std::clamp(settings.starPhases[(w.band >= 2 ? 3u : 0u) + static_cast<std::size_t>(w.maneuver - 8)], 1, 4);
-                w.star.next = std::uniform_int_distribution<int>(0, 7)(w.rng);
-                const std::uint32_t h = w.maneuver == 9 ? 0u : static_cast<std::uint32_t>(w.star.next);
-                if (const Gait* g = gaitFor(w.band, h)) {
-                    gait = g;
-                    w.heading = h;
-                }
-            } else if (w.maneuver >= 4) {
-                if (const Gait* g = gaitFor(w.band, 0u)) {
+            // (05/11: o sprint so para a frente, no sprint_maximo - o primeiro da faixa 3.)
+            if (w.band == 3)
+                if (const Gait* g = gaitFor(3u, 0u)) {
                     gait = g;
                     w.heading = 0;
                 }
+        }
+        // (As manobras: na avaliacao a fixa - ou uma por mundo em ciclo -, no treino na fatia maneuverFraction. Os codigos
+        // 1-3 seguem do rumo sorteado; a troca livre e as curvas comecam para a frente.)
+        // (08/11, a estrela: 8-10 os tres peitos, 11 os tres em ciclo pelo mundo; no treino, a fatia starFraction - um
+        // dos 6 pelos pesos, a faixa dele.)
+        if (settings.evaluation)
+            w.maneuver = settings.evaluationManeuver == CommandManeuver ? CommandManeuver
+                : settings.evaluationManeuver >= 11 ? 8 + static_cast<int>(w.index % 3u)
+                : settings.evaluationManeuver >= 8 ? settings.evaluationManeuver
+                : settings.evaluationManeuver > 0 ? std::min(settings.evaluationManeuver, 7)
+                : settings.evaluationManeuver == 0 ? 1 + static_cast<int>(w.index % 7u) : 0;
+        else if (w.band < 3 && settings.commandFraction > 0.0f && u(w.rng) < settings.commandFraction) {
+            w.maneuver = CommandManeuver;
+            if (settings.commandPhase <= 1) w.band = 1u;
+        } else if (w.band < 3 && settings.starFraction > 0.0f && u(w.rng) < settings.starFraction) {
+            float total = 0.0f;
+            for (const float v : settings.starWeights) total += std::max(0.0f, v);
+            float draw = u(w.rng) * (total > 0.0f ? total : 1.0f);
+            int pick = 5;
+            for (int k = 0; k < 6; ++k)
+                if ((draw -= std::max(0.0f, settings.starWeights[static_cast<std::size_t>(k)])) < 0.0f) {
+                    pick = k;
+                    break;
+                }
+            w.maneuver = 8 + pick % 3;
+            w.band = pick < 3 ? 1u : 2u;
+        } else if (w.band < 3 && u(w.rng) < settings.maneuverFraction) {
+            // (06/11 22h10, ele: "intensificar a quantidade de treinos destinados aos mais deficientes": os pesos das 7
+            // manobras pelo treino - maneuverWeights.)
+            const auto& Weights = settings.maneuverWeights;
+            float total = 0.0f;
+            for (const float v : Weights) total += std::max(0.0f, v);
+            float draw = u(w.rng) * (total > 0.0f ? total : 1.0f);
+            w.maneuver = 7;
+            for (int k = 0; k < 7; ++k)
+                if ((draw -= std::max(0.0f, Weights[static_cast<std::size_t>(k)])) < 0.0f) {
+                    w.maneuver = k + 1;
+                    break;
+                }
+        }
+        // (06/11 01h10, ele: "precisamos de uma solucao melhor para a troca de direcoes, ainda esta muito fragil... pense bem
+        // o que fazer para ajudar ele a aprender melhor" - trocaPractice) Nas trocas de peito fixo e pela meia-volta (1-3),
+        // o rumo de partida pelos pesos que o treino manda (metade por igual, metade pelas quedas recentes de cada rumo): as
+        // variantes que caem treinam mais. Medido na r35080: das quedas da media no trote, 13 de 15 partiam do lateral
+        // esquerdo; da media e da forte correndo, 9 de 13 e 7 de 11.
+        if (!settings.evaluation && settings.trocaPractice && w.maneuver >= 1 && w.maneuver <= 3) {
+            float total = 0.0f;
+            for (float v : settings.trocaHeadingWeights) total += std::max(0.0f, v);
+            if (total > 0.0f) {
+                float draw = u(w.rng) * total;
+                std::uint32_t h = 7u;
+                for (std::uint32_t k = 0; k < 8u; ++k)
+                    if ((draw -= std::max(0.0f, settings.trocaHeadingWeights[k])) < 0.0f) {
+                        h = k;
+                        break;
+                    }
+                if (const Gait* g = gaitFor(w.band, h)) {
+                    gait = g;
+                    w.heading = h;
+                }
+            }
+        }
+        if (isCommand(w)) {
+            // (O comando: o rumo e a faixa sorteados sao a primeira tecla.)
+            if (const Gait* g = gaitFor(w.band, w.heading)) gait = g;
+        } else if (isStar(w)) {
+            // (A estrela: a primeira ponta sorteada; o peito fixo e o girando saem no rumo dela, o livre de frente.)
+            w.star = {};
+            w.star.phase = std::clamp(settings.starPhases[(w.band >= 2 ? 3u : 0u) + static_cast<std::size_t>(w.maneuver - 8)], 1, 4);
+            w.star.next = std::uniform_int_distribution<int>(0, 7)(w.rng);
+            const std::uint32_t h = w.maneuver == 9 ? 0u : static_cast<std::uint32_t>(w.star.next);
+            if (const Gait* g = gaitFor(w.band, h)) {
+                gait = g;
+                w.heading = h;
+            }
+        } else if (w.maneuver >= 4) {
+            if (const Gait* g = gaitFor(w.band, 0u)) {
+                gait = g;
+                w.heading = 0;
             }
         }
         w.startBand = w.band;
-        w.stopAt = -1.0f;
-        w.nextCommandAt = -1.0f;
         w.pendingClip = std::numeric_limits<std::size_t>::max();
         if (gait == nullptr) {
             beginFromClip(w, true);
@@ -1944,11 +1920,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         const float clipSpeed = std::max(0.1f, travel[gait->clip].speed);
         const float clipDirection = travel[gait->clip].direction;
-        if (settings.locomotionTracking) {
-            w.trackTwist = wrapAngle(clipDirection - 0.25f * Pi * static_cast<float>(w.heading));
-            w.twistClip = gait->clip;
-            w.runBand = w.band >= 2;
-        }
+        w.trackTwist = wrapAngle(clipDirection - 0.25f * Pi * static_cast<float>(w.heading));
+        w.twistClip = gait->clip;
+        w.runBand = w.band >= 2;
         // (04/11 12h35: com o pedido fixo do rumo, ele - na avaliacao e no treino, sem o sorteio de +-15%.)
         // (07/11, a receita nova: no treino o pedido fixo vezes o sorteio da faixa - ver speedRangeLow.)
         w.speedScale = settings.evaluation || settings.speedRangeLow >= 1.0f ? 1.0f
@@ -1961,7 +1935,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // duas - a do clipe nos motores ou a do outro.)
         std::size_t motor = gait->clip;
         float motorSpeed = clipSpeed;
-        if (settings.locomotionTracking && w.maneuver == 0 && gait->clip == runBackIndex && jogBackIndex < references.size()) {
+        if (w.maneuver == 0 && gait->clip == runBackIndex && jogBackIndex < references.size()) {
             // (04/11 06h45: o trote nos motores saiu - tocado na velocidade da corrida era ~1,4x a cadencia dele, e a
             // semelhanca da corrida de costas caiu de 0,60 a 0,15 com o pe engasgando e arrastando. O sprint sempre nos
             // motores; a semelhanca segue aceitando a melhor das duas.)
@@ -1973,8 +1947,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             beginFromClip(w, true);
             w.trackClip = motor;
             w.trackStart = 0.0f;
-            w.trackYaw = settings.locomotionTracking ? w.lastClipYaw + 0.25f * Pi * static_cast<float>(w.heading) - clipDirection
-                                                     : w.lastClipYaw;
+            w.trackYaw = w.lastClipYaw + 0.25f * Pi * static_cast<float>(w.heading) - clipDirection;
             w.trackScale = fixed > 0.0f ? 1.0f : w.commandSpeed / motorSpeed;
             w.rampFrom = 0.0f;
             // (06/11: os rumos de lado com a largada mais suave - ver lateralStartAcceleration.)
@@ -2006,15 +1979,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         // (01/11 22h30: a frente do corpo e a frente do clipe, nao a pelve - nas corridas de lado a pelve fica ~22 graus
         // virada.)
-        w.faceYaw = w.trackYaw + (settings.locomotionTracking ? w.trackTwist : 0.0f);
+        w.faceYaw = w.trackYaw + w.trackTwist;
         // (03/11 17h40, ele: o peito sempre para o ponto de vista e o rumo exato - "em treino de andar para direita, andar
-        // na diagonal frente direita" e trapaca. Sem o rastreio, nas diagonais o corpo nao vira: o deslocamento pedido e
-        // 45 graus x rumo a partir da frente, de pe ou no clipe.)
-        w.moveYaw = settings.locomotionTracking ? w.trackYaw + clipDirection
-                                                : w.trackYaw + 0.25f * Pi * static_cast<float>(w.heading);
+        // na diagonal frente direita" e trapaca.)
+        w.moveYaw = w.trackYaw + clipDirection;
         // (10/11 04h, settings.unrealStarts) De pe nos retos da corrida, a arrancada da Unreal do rumo antes do ciclo.
         w.unrealStart = -1;
-        if (settings.unrealStarts && settings.locomotionTracking && (w.band == 1 || w.band == 2) && w.maneuver == 0 && w.rampFrom >= 0.0f)
+        if (settings.unrealStarts && (w.band == 1 || w.band == 2) && w.maneuver == 0 && w.rampFrom >= 0.0f)
             enterUnrealStart(w);
         if (w.maneuver > 0) {
             w.refActive = true;
@@ -2030,16 +2001,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         // (08/11 15h20: a parada no fim dos retos - na fatia stopFraction do treino, no instante sorteado na janela; na avaliacao,
         // so com stopInEvaluation, no meio dela.)
-        if (settings.locomotionTracking && w.maneuver == 0 && w.band < 3
+        if (w.maneuver == 0 && w.band < 3
             && (settings.evaluation ? settings.stopInEvaluation : settings.stopFraction > 0.0f && u(w.rng) < settings.stopFraction))
             w.finalStopAt = settings.evaluation ? 0.5f * (settings.stopEarliest + settings.stopLatest)
                 : settings.stopEarliest + (settings.stopLatest - settings.stopEarliest) * u(w.rng);
-        if (!settings.locomotionTracking) {
-            w.stopAt = !settings.evaluation && !changes && u(w.rng) < 0.2f ? 2.0f + 3.0f * u(w.rng) : -1.0f;
-            w.nextCommandAt = changes ? settings.commandChangeMinimumSeconds
-                    + (settings.commandChangeMaximumSeconds - settings.commandChangeMinimumSeconds) * u(w.rng)
-                                      : -1.0f;
-        }
     }
 
     // O giro parado e o parado com a professora (03/11 20h30): parada, com a vista no rumo pedido do corpo (no giro, a que
@@ -2078,8 +2043,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.startBand = 1;
         w.heading = settings.evaluation ? (settings.heading >= 0 ? static_cast<std::uint32_t>(settings.heading) % 8u : w.index % 8u)
                                         : std::uniform_int_distribution<std::uint32_t>(0u, 7u)(w.rng);
-        w.stopAt = -1.0f;
-        w.nextCommandAt = -1.0f;
         w.pendingClip = std::numeric_limits<std::size_t>::max();
         w.taught = true;
         w.commandSpeed = std::max(0.1f, settings.teacherStudentSpeeds[w.heading]);
@@ -3743,34 +3706,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
     }
 
-    void changeCommand(World& w) {
-        std::uniform_real_distribution<float> u(0.0f, 1.0f);
-        w.pendingClip = std::numeric_limits<std::size_t>::max();
-        w.rampFrom = -1.0f;
-        if (u(w.rng) < CommandStopChance) {
-            w.commandSpeed = 0.0f;
-            w.trackClip = standingIndex;
-            w.trackScale = 1.0f;
-            w.trackStart = -w.time;
-            w.trackYaw = w.faceYaw;
-        } else {
-            const Gait& gait = pickGait(w);
-            const float clipSpeed = std::max(0.1f, travel[gait.clip].speed);
-            w.heading = gait.heading;
-            w.commandSpeed = clipSpeed * (0.85f + 0.3f * u(w.rng));
-            if (gait.heading == 0) w.faceYaw = wrapAngle(w.faceYaw + (2.0f * u(w.rng) - 1.0f) * Pi);
-            w.moveYaw = w.faceYaw + travel[gait.clip].direction;
-            w.trackClip = gait.clip;
-            w.trackScale = w.commandSpeed / clipSpeed;
-            w.trackStart = -w.time * w.trackScale;
-            w.trackYaw = w.faceYaw;
-        }
-        w.nextCommandAt = w.time + settings.commandChangeMinimumSeconds
-            + (settings.commandChangeMaximumSeconds - settings.commandChangeMinimumSeconds) * u(w.rng);
-    }
-
     // O giro parado (o "giro" do B21: de pe, o rumo pedido do corpo gira e o deslocamento pedido e zero). Sem o rastreio,
-    // como antes: 30-450 graus a 0,4-0,8 rad/s para um lado sorteado, com pausas de 1-3 s; na avaliacao, 0,6 rad/s o
+    // como antes: 30-450 graus a 0,4-0,8 rad/s para um lado sorteado; na avaliacao, 0,6 rad/s o
     // episodio todo, metade dos mundos para cada lado. (03/11, ele: "tambem bote o treino de girar parado". Com o
     // rastreio: os clipes do modo padrao - turn_left e turn_right, 90 graus por ciclo de 1 s em dois passos - em ciclos
     // encadeados, cada um somando o giro do clipe ao rumo do quadro, na velocidade do clipe x 0,7-1,15; giros de 1 a 8
@@ -3778,7 +3715,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     void beginTurn(World& w) {
         beginFromClip(w, true);
         // (Ensinado: a vista do peito - o rumo do clipe parado -, nao a da pelve, ~22 graus virada no parado em alerta.)
-        w.faceYaw = settings.locomotionTracking || teacher || settings.taughtHeadings ? w.lastClipYaw : bodyYaw(w);
+        w.faceYaw = w.lastClipYaw;
         w.moveYaw = w.faceYaw;
         nextTurn(w);
     }
@@ -3786,9 +3723,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
         // (Na avaliacao, metade para cada lado pelo indice e a semente: o laboratorio, um mundo, alterna pela semente.)
         const bool left = settings.evaluation ? (w.index + static_cast<std::uint32_t>(settings.seed)) % 2u == 0u : u(w.rng) < 0.5f;
-        w.pauseUntil = -1.0f;
         const std::size_t clip = turnIndices[left ? 0 : 1];
-        if (settings.locomotionTracking && clip < references.size()) {
+        if (clip < references.size()) {
             // (No comeco, a pelve do quadro na do corpo: o parado em alerta tem a pelve ~22 graus virada.)
             if (w.time <= 0.0f) {
                 references[clip]->frame(0.0f, {}, 0.0f, w.frame);
@@ -3833,16 +3769,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // O rumo pedido do giro, uma decisao adiante.
     void advanceTurn(World& w) {
         if (w.startKind != 7) return;
-        if (w.pauseUntil >= 0.0f) {
-            if (w.time >= w.pauseUntil) nextTurn(w);
-            return;
-        }
         const float step = std::min(std::abs(w.turnRate) * TicksPerDecision * TickSeconds, w.turnLeft);
         w.faceYaw = wrapAngle(w.faceYaw + std::copysign(step, w.turnRate));
         w.turnLeft -= step;
         if (w.turnLeft > 0.0f) return;
-        if (settings.locomotionTracking) nextTurn(w);
-        else w.pauseUntil = w.time + 1.0f + 2.0f * std::uniform_real_distribution<float>(0.0f, 1.0f)(w.rng);
+        nextTurn(w);
     }
 
     // A flexao do corpo agora (de -2 a 1): as maos a frente do peito e os joelhos a frente da pelve, cada um ate 0,25 m
@@ -5143,8 +5074,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.pushShares = { 0.20f, 0.32f, 0.48f };
         w.commandSpeed = 0.0f;
         w.locomotion = kind == 6 || kind == 7;
-        w.stopAt = -1.0f;
-        w.pauseUntil = -1.0f;
         w.faceErrorSum = 0.0;
         w.faceErrorSamples = 0;
         w.firmSeconds = 0.0f;
@@ -5251,7 +5180,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.recoveryRough = w.recoveryLimits = 0.0f;
         w.idleBlendFrom = -1.0e9f;
         w.freeTarget.clear();
-        w.lastCourseError = -1.0f;
         w.lastRecoveryAction.clear();
         w.riseKnown = false;
         w.lastMargin = w.stumble = 0.0f;
@@ -5276,7 +5204,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.towardSum = 0.0;
         w.towardSamples = 0;
         w.wantedSum = 0.0;
-        w.imitationSum = w.stabilitySum = w.stabilityDeficitSum = 0.0;
+        w.imitationSum = w.stabilityDeficitSum = 0.0;
         w.crossStance = w.crossBad = 0;
         w.trackSamples = w.stabilitySamples = 0;
         w.avoidAt = -1.0f;
@@ -5487,12 +5415,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         return std::atan2(f.y, f.x);
     }
     float facing(const World& w) const {
-        if (w.locomotion && !settings.locomotionTracking) {
-            const float c = std::cos(wrapAngle(faceDirection(w) - chestYaw(w)));
-            if (w.startKind == 7) return 0.5f * (1.0f + c);
-            const float p = std::max(0.0f, c);
-            return p * p * p * p;
-        }
         const float c = std::cos(wrapAngle(faceDirection(w) - characterYaw(w)));
         return w.startKind == 7 ? 0.5f * (1.0f + c) : std::max(0.0f, c);
     }
@@ -5537,7 +5459,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float* c = w.observation.data() + b;
         const bool moving = w.commandSpeed > 0.0f;
         // (04/11: tambem no rastreio - o erro 5 do balanco de 03/11, o pedido contra a pelve que gira trocava frente e lado.)
-        if ((w.taught || (settings.locomotionTracking && w.locomotion)) && w.locomotionControl) {
+        if ((w.taught || w.locomotion) && w.locomotionControl) {
             // (So com a cabeca da locomocao: caido, a recuperacao levanta com o pedido de sempre - a revisao de 03/11.)
             // (03/11 20h35, ele: "o andar para frente ele esta tentando andar para as laterais": contra a pelve, que gira na
             // passada - ~22 graus no parado em alerta, mais nas laterais -, o rumo pedido nao aparecia direto e um rumo
@@ -5580,7 +5502,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     float facePotential(const World& w, const TrackingGetUpPosture3D& posture) const {
         if (w.commandSpeed <= 0.0f && !w.locomotion) return 0.0f;
         // (O rastreio cobra o rumo pela pelve do clipe; o potencial pela media dela brigaria com o giro.)
-        if (settings.locomotionTracking && w.locomotion) return 0.0f;
+        if (w.locomotion) return 0.0f;
         const float rise = std::clamp((posture.headHeight - 0.15f) / 1.35f, 0.0f, 1.0f);
         return 5.0f * rise * facing(w);
     }
@@ -5604,22 +5526,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         if (!posture.standing) return 0.0f;
         const Vec3 v = rlBodyCenterOfMassVelocity3D(*profile, w.body->links);
         const float toward = moveDirection(w);
-        // (03/11 18h, ele na folha: "no de costas ele esta andando para o lado; nos de lado, nas diagonais" - a nota pela
-        // velocidade no rumo deixava qualquer outro rumo quase de graca. Na locomocao por AMP a nota e o erro do vetor da
-        // velocidade contra o pedido: 1 - |v - pedida| / pedida - parado 0, o rumo exato ate 1, outro rumo negativo (ate
-        // -1); a parte positiva com o portao do peito.)
-        if (w.locomotion && !settings.locomotionTracking) {
-            const float ex = v.x - std::cos(toward) * w.commandSpeed, ey = v.y - std::sin(toward) * w.commandSpeed;
-            const float along = v.x * std::cos(toward) + v.y * std::sin(toward);
-            w.towardSum += along;
-            ++w.towardSamples;
-            // (03/11 23h15, a imagem dele: "se jogar para tras para cair, quando deveria andar para frente" - a nota media
-            // da locomocao era negativa, -0,03 a -0,05 por passo: cair encerrava o prejuizo e ele aprendeu a se jogar. Agora
-            // nunca negativa: 0,2 por estar de pe e tentando, mais ate 1 pelo vetor da velocidade - exp(-2 e^2), e o erro
-            // relativo ao pedido - com o portao do peito. Viver vale sempre mais que cair.)
-            const float e = std::sqrt(ex * ex + ey * ey) / w.commandSpeed;
-            return 0.2f + facing(w) * std::exp(-2.0f * e * e);
-        }
         const float along = v.x * std::cos(toward) + v.y * std::sin(toward);
         const float across = -v.x * std::sin(toward) + v.y * std::cos(toward);
         w.towardSum += along;
@@ -5658,7 +5564,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     }
     // A locomocao com pedido: o deslocamento ou, com o rastreio, o giro parado.
     bool locomotionCommanded(const World& w) const {
-        return w.taught || (w.locomotion && (w.commandSpeed > 0.0f || (settings.locomotionTracking && w.startKind == 7)
+        return w.taught || (w.locomotion && (w.commandSpeed > 0.0f || w.startKind == 7
             || (isCommand(w) && w.command.state == 3)));
     }
     // O clipe seguido agora (o do passo com o pedido de deslocamento, o do giro com o rastreio, ou o idle parado).
@@ -5705,7 +5611,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
     }
     // O pedido fixo de uma faixa num rumo (m/s; 0: sem, o do clipe).
     float fixedSpeed(std::uint32_t band, std::uint32_t heading) const {
-        if (!settings.locomotionTracking) return 0.0f;
         if (band == 3) return heading % 8u == 0 ? settings.sprintSpeed : 0.0f;
         return band == 1 ? settings.trotSpeeds[heading % 8u] : band == 2 ? settings.runSpeeds[heading % 8u] : 0.0f;
     }
@@ -5746,8 +5651,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // pior perna 0,5, os pes no quadro da propria pelve (passada, largura e altura do pe; o pior) 0,2, o tronco 0,15 e os
     // bracos 0,15. (10h55: o produto de tudo, a primeira versao, quase zerava com os erros do comeco - a pelve a 1 rad^2
     // ja multiplicava por 0,007 - e sem sinal o treino andou para tras.)
-    static constexpr float TrackVelocity = 0.5f, TrackPelvis = 1.5f, TrackSymmetry = 4.0f, TrackLegs = 3.0f,
-                           TrackFeet = 10.0f, TrackTrunk = 5.0f, TrackArms = 2.0f;
+    static constexpr float TrackSymmetry = 4.0f, TrackLegs = 3.0f, TrackFeet = 10.0f, TrackArms = 2.0f;
     // A v2: a velocidade (1 / (m/s)^2: 0,5 m/s fora 0,78, 1 m/s 0,37, parado pedindo 2,6 ~0), a pelve (1 / rad^2: 15 graus
     // 0,75) e o giro da pelve e da cabeca contra o do clipe (1 / (rad/s)^2) - os dois ultimos calibrados no cartao.
     // A v7: as reguas da coluna (abdomen, peito, peito alto), dos bracos e da cabeca (pescoco e cabeca), por parte (a soma
@@ -5762,17 +5666,14 @@ struct TrackingGetUpAmpTraining3D::Impl {
     static constexpr float RollSlack = 0.08f, RollTailSlack = 0.35f;
     // (06/11) As reguas largas das caudas sem os penhascos: o pe cruzado (m alem da margem) e o pulo da pelve (m).
     static constexpr float FootCrossTailMeters = 0.08f, HopTailMeters = 0.15f, LaunchRiseSlack = 0.03f;
-    static constexpr float TrackVelocity2 = 1.0f, TrackPelvis2 = 4.0f, TrackPelvisSpin = 0.25f, TrackHeadSpin = 0.25f;
-    // A folga do tronco na estabilidade: o erro das juntas da coluna até 7° (o clipe puro erra 2,5-6°) e 1 rad/s de giro do
-    // peito além do clipe pagam cheio; 14° de coluna ~0,39, 19° ~0,07.
-    static constexpr float TrunkSlackDegrees = 7.0f, TrunkSpinSlack = 1.0f, TrackTrunkLean = 0.019f;
+    static constexpr float TrackVelocity2 = 1.0f, TrackHeadSpin = 0.25f;
     // (04/11 08h55, ele: "no quesito de estabilidade considerar tambem a ALTURA da pelve, para detectar os pulinhos dele
     // contraditorios ao se movimentar - parecendo um cabrito"): o pulo e a pelve SUBINDO acima da linha dela contra a do
     // clipe tocado (a altura do corpo menos a do clipe, menos a media movel disso em PelvisHopSeconds - o desvio fixo do
     // agachar ou do afundar da fisica fica de fora). Medido (09h25): a 100% de forca, clipe puro e rede, o p90 2-4 cm; a 10%,
     // a rede no trote 13 cm. Ate PelvisHopSlack paga cheio, 7 cm metade, 10 cm 0,12. (A velocidade vertical contra a do
     // clipe nao serve: o clipe puro ja erra 0,4-1 m/s.)
-    static constexpr float PelvisHopSeconds = 0.6f, PelvisHopSlack = 0.03f, TrackPelvisHop = 433.0f;
+    static constexpr float PelvisHopSeconds = 0.6f, PelvisHopSlack = 0.03f;
     // (04/11 13h50, ele: "a estabilidade levar mais em conta esses saltinhos - tipo ao correr de lado quando tropeca da uns
     // saltos": medido, a corrida de lado a ~20% de forca salta p99 15-18 cm (max 21; acima de 5 cm 16-24% do tempo) e ainda
     // pagava 0,82-0,88 de estabilidade; o clipe puro com a mao cheia, p99 4 cm.) Na v11: 2 cm alem da folga ja pagam metade
@@ -6024,7 +5925,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         return out;
     }
     float launchWeight(const World& w) const {
-        if (settings.trackingReward < 10 || w.launchEnd < 0.0f) return 0.0f;
+        if (w.launchEnd < 0.0f) return 0.0f;
         return std::clamp((w.launchEnd + LaunchFadeSeconds - w.time) / LaunchFadeSeconds, 0.0f, 1.0f);
     }
     // (10/11) A largura da regua de cauda longa do tronco (o seno de ~10 graus).
@@ -6036,7 +5937,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float part[6] {};
         for (std::size_t j = 0; j < trackingParts.size() && j < w.jointErrors.size(); ++j) part[trackingParts[j]] += w.jointErrors[j];
         const float legs = std::max(part[PartLeftLeg], part[PartRightLeg]);
-        // (Ate a v6 o tronco somava o pescoco e a cabeca.)
         const float trunkAll = part[PartTrunk] + part[PartHead];
         const auto degrees = [&](TrackingPart p) {
             return trackingPartCount[p] > 0.0f ? std::sqrt(part[p] / trackingPartCount[p]) * 180.0f / Pi : 0.0f;
@@ -6068,9 +5968,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 * std::min(1.0f, TicksPerDecision * TickSeconds / settings.courseSmoothing);
         const Vec3 wanted = wantedVelocity(w, 0.0f);
         const float drift = (w.smoothVelocity - wanted).lengthSquared();
-        const float gates = std::exp(-(TrackVelocity * drift + TrackPelvis * part[PartRoot] + TrackSymmetry * asymmetry * asymmetry));
-        const float shape = 0.5f * std::exp(-TrackLegs * legs) + 0.2f * std::exp(-TrackFeet * feet)
-            + 0.15f * std::exp(-TrackTrunk * trunkAll) + 0.15f * std::exp(-TrackArms * part[PartArms]);
         // (04/11, a nota v2 para baixar a forca - o plano no cartao: as partes somam em vez de multiplicar - com a forca
         // descendo a velocidade cai e o produto zerava o sinal da forma -, a semelhanca e a estabilidade valem metade
         // parado - andar no lugar nunca paga como andar -, e a estabilidade compara o giro da pelve e da cabeca com o do
@@ -6100,10 +5997,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         if (wantedSpeed > 0.3f && std::hypot(courseV.x, courseV.y) > 0.3f) {
             const float course = std::atan2(wanted.x * courseV.y - wanted.y * courseV.x, wanted.x * courseV.x + wanted.y * courseV.y);
             straight = std::exp(-(course / CourseSlack) * (course / CourseSlack));
-            // (18h55: nos laterais retos a cauda larga pesa courseTailLateral - a corrida lateral esquerda anda 20-33 graus fora
-            // do rumo, onde o portao estreito e zero e a cauda de 0,25 quase nao inclina: nem corrigir nem acelerar rendia.)
-            const float tail = w.maneuver == 0 && (w.heading == 2u || w.heading == 6u) && settings.courseTailLateral > 0.0f
-                ? settings.courseTailLateral : settings.courseTail;
+            const float tail = settings.courseTail;
             if (tail > 0.0f)
                 straight = (1.0f - tail) * straight + tail * std::exp(-(course / CourseTailSlack) * (course / CourseTailSlack));
         }
@@ -6114,17 +6008,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // (07/11, v15 - a revisao geral, ele: "o importante e sairmos da situacao atual de estagnacao": com a largura de 1 m/s,
         // longe da pedida o exp valia ~0 - a 57% da corrida de 6 m/s, exp(-6,8) - e subir a 80% rendia ~0,03 na recompensa; a
         // velocidade parou desde 00h. A largura acompanha a pedida - 0,35 dela -, nunca menos que o 1 m/s de antes.)
-        const float driftWidth = settings.trackingReward >= 15 ? std::max(1.0f, 0.35f * wantedSpeed) : 1.0f;
+        const float driftWidth = std::max(1.0f, 0.35f * wantedSpeed);
         const float driftTerm = std::exp(-TrackVelocity2 * drift / (driftWidth * driftWidth));
-        float velocityTerm = (settings.trackingReward >= 3 ? 0.5f * driftTerm + 0.5f * alongRumo : driftTerm) * straight;
-        // (09/11 03h35, ele: "vejo o trote pegando 4.5 m/s, seria bom se ele tentasse algo mais proximo de 3.5 - 4.0, para nao ser
-        // tao veloz quanto a corrida": acima de speedCeiling x a pedida, no rumo, a nota da velocidade cai - exp(-((r - teto) /
-        // 0,10)^2): 4,5 contra 4,0 vale 0,57. Fora da largada e da parada, onde a referencia muda de velocidade.)
-        if (settings.speedCeiling > 0.0f && wantedSpeed > 0.3f && !starting(w) && !w.stopping) {
-            const float ratio = (w.smoothVelocity.x * wanted.x + w.smoothVelocity.y * wanted.y) / (wantedSpeed * wantedSpeed);
-            const float over = std::max(0.0f, ratio - settings.speedCeiling) / 0.10f;
-            velocityTerm *= std::exp(-over * over);
-        }
+        float velocityTerm = (0.5f * driftTerm + 0.5f * alongRumo) * straight;
         // (05/11 06h, ele: "fazer o trote costas recompensar melhor pelo impulso inicial para engatar velocidade": na largada
         // do trote de costas e das diagonais de costas, o progresso vale inteiro - a nota da velocidade sobe em linha reta com ela.)
         // (10/11 06h35, settings.liveLaunch; ele: "nada de passinhos nem lentidao, o IMPULSO real da corrida"): o progresso inteiro
@@ -6133,11 +6019,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
             velocityTerm += (std::max(velocityTerm, progress) - velocityTerm) * launchWeight(w);
         // (04/11 04h10, ele: "no giro parado nao esta sendo cobrada a semelhanca com o clipe, o que faz ele ficar numa pose
         // meio estranha": na v5, sem deslocamento pedido - o giro -, a regua da semelhanca duas vezes mais exigente.)
-        const bool stationary = settings.trackingReward >= 5 && w.commandSpeed <= 0.0f;
+        const bool stationary = w.commandSpeed <= 0.0f;
         // (04/11 04h15, ele: "nao podemos cobrar tanta semelhanca com o clipe nos momentos em que ele troca de direcao, nao
         // temos clipes para isso, ele naturalmente vai precisar improvisar": na v6, na janela da troca - as de peito fixo e
         // a livre -, a semelhanca vale 0,20 numa regua com metade da exigencia; a estabilidade 0,30 e a velocidade 0,40.)
-        const float improvise = settings.trackingReward >= 6 && ((w.maneuver >= 1 && w.maneuver <= 4) || isStar(w) || isCommand(w))
+        const float improvise = ((w.maneuver >= 1 && w.maneuver <= 4) || isStar(w) || isCommand(w))
                 && w.improviseUntil >= 0.0f
             ? std::clamp((w.improviseUntil - w.time) / ImproviseFadeSeconds, 0.0f, 1.0f) : 0.0f;
         // (08/11 13h50, o fogo: girando parado o giro so segurava 36% dos empurroes - a regua da imitacao parado e 2x e se apoiar
@@ -6168,24 +6054,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // (10/11 04h, ele: "cobrar a coluna correta, cabeca, bracos com mais rigor durante as locomocoes e parado") A regua da
         // coluna, da cabeca e dos bracos vezes upperRigor - andando, no giro e nas trocas; as pernas e os pes com a de sempre. 1: sem.
         const float rig = settings.upperRigor;
-        // (10/11 01h40, settings.upperImitation: a semelhanca da cintura para cima, as pernas flexiveis - ver o .hpp.)
-        const bool upper = settings.upperImitation && settings.trackingReward >= 7;
-        float imitation = upper
-            ? (0.10f * std::exp(-loose * strictLegs * TrackLegs * legs) + 0.05f * std::exp(-loose * strictLegs * TrackFeet * feet)
-                + 0.40f * std::exp(-loose * strictUpper * rig * TrackSpine7 * part[PartTrunk])
-                + 0.25f * std::exp(-loose * strict * rig * TrackArms7 * part[PartArms])
-                + 0.20f * std::exp(-loose * strictUpper * rig * TrackHead7 * part[PartHead]))
-                * std::exp(-loose * TrackSymmetry * asymmetry * asymmetry)
-            : settings.trackingReward >= 7
-            ? (0.30f * std::exp(-loose * strictLegs * TrackLegs * legs) + 0.15f * std::exp(-loose * strictLegs * TrackFeet * feet)
+        float imitation =
+            (0.30f * std::exp(-loose * strictLegs * TrackLegs * legs) + 0.15f * std::exp(-loose * strictLegs * TrackFeet * feet)
                 + 0.20f * std::exp(-loose * strictUpper * rig * TrackSpine7 * part[PartTrunk])
                 + 0.20f * std::exp(-loose * strict * rig * TrackArms7 * part[PartArms])
                 + 0.15f * std::exp(-loose * strictUpper * rig * TrackHead7 * part[PartHead]))
-                * std::exp(-loose * TrackSymmetry * asymmetry * asymmetry)
-            : (0.40f * std::exp(-strict * TrackLegs * legs) + 0.25f * std::exp(-strict * TrackFeet * feet)
-                + 0.20f * std::exp(-strict * TrackTrunk * trunkAll) + 0.15f * std::exp(-strict * TrackArms * part[PartArms]))
-                * std::exp(-TrackSymmetry * asymmetry * asymmetry);
-        if (settings.trackingReward >= 7 && w.altClip < references.size() && w.trackClip < references.size()
+                * std::exp(-loose * TrackSymmetry * asymmetry * asymmetry);
+        if (w.altClip < references.size() && w.trackClip < references.size()
             && w.trackClip != w.altClip) {
             // (O outro jeito aceito: o quadro dele na mesma fase do pe esquerdo, no mesmo rumo e com a mesma cintura.)
             const auto [t, yaw] = trackSample(w, 0.0f);
@@ -6315,10 +6190,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
             const float gap = std::max(0.0f, kneeExcess - KneeInwardMargin) / settings.kneeInwardSlack;
             imitation *= std::exp(-gap * gap);
         }
-        const float chestLean = std::max(0.0f, degrees(PartTrunk) - TrunkSlackDegrees - 8.0f * launchUpper);
-        const float chestSpin = std::max(0.0f, std::sqrt(spin(upperChestLink)) - TrunkSpinSlack);
-        const float trunkSteady = 0.6f * std::exp(-TrackTrunkLean * chestLean * chestLean)
-            + 0.4f * std::exp(-TrackPelvisSpin * chestSpin * chestSpin);
         const PhysicsBodyState3D& pelvisNow = w.body->links[rootLink];
         const PhysicsBodyState3D& pelvisClip = w.frame.links[rootLink];
         const float pelvisRise = pelvisNow.position.z - pelvisClip.position.z;
@@ -6329,7 +6200,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.riseMean += (pelvisRise - w.riseMean) * std::min(1.0f, TicksPerDecision * TickSeconds / PelvisHopSeconds);
         const float pelvisHop = std::max(0.0f, pelvisRise - w.riseMean);
         const float hop = std::max(0.0f, pelvisHop - PelvisHopSlack);
-        const float hopNarrow = std::exp(-(settings.trackingReward >= 11 ? TrackPelvisHop11 : TrackPelvisHop) * hop * hop);
+        const float hopNarrow = std::exp(-TrackPelvisHop11 * hop * hop);
         const float heightSteady = settings.cliffHop
             ? 0.75f * hopNarrow + 0.25f * std::exp(-(hop / HopTailMeters) * (hop / HopTailMeters)) : hopNarrow;
         const auto upTilt = [&](const PhysicsBodyState3D& link, std::size_t index) {
@@ -6343,9 +6214,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             if (launch > 0.0f && w.commandSpeed > 0.0f) d = d - travel * std::clamp(dot(d, travel), 0.0f, LaunchLean * launch);
             return d.length();
         };
-        const float leanLinks = settings.trackingReward >= 10
-            ? std::max({ leanOf(rootLink), leanOf(upperChestLink), leanOf(contract->headLink()) })
-            : std::max(leanOf(rootLink), leanOf(upperChestLink));
+        const float leanLinks = std::max({ leanOf(rootLink), leanOf(upperChestLink), leanOf(contract->headLink()) });
         float footSlide = 0.0f;
         for (int f = 0; f < 2; ++f) {
             const bool down = std::any_of(w.body->contacts.begin(), w.body->contacts.end(),
@@ -6357,29 +6226,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const float leanExcess = std::max(0.0f, leanLinks - LeanSlack - LeanImproviseSlack * improvise);
         const float leanSteady = std::exp(-TrackLean * leanExcess * leanExcess);
         const Firmness firm = firmness(w, rate, heightSteady, headSpin);
-        const float stability = settings.trackingReward >= 13 ? firm.total
-            : settings.trackingReward >= 12
-            ? 0.15f * std::exp(-TrackPelvis2 * part[PartRoot]) + 0.10f * std::exp(-TrackPelvisSpin * pelvisSpin)
-                + 0.05f * std::exp(-TrackHeadSpin * headSpin) + 0.10f * trunkSteady + 0.30f * heightSteady + 0.15f * leanSteady
-                + 0.15f * slideSteady
-            : settings.trackingReward >= 11
-            ? 0.15f * std::exp(-TrackPelvis2 * part[PartRoot]) + 0.10f * std::exp(-TrackPelvisSpin * pelvisSpin)
-                + 0.05f * std::exp(-TrackHeadSpin * headSpin) + 0.15f * trunkSteady + 0.35f * heightSteady + 0.20f * leanSteady
-            : settings.trackingReward >= 9
-            ? 0.20f * std::exp(-TrackPelvis2 * part[PartRoot]) + 0.10f * std::exp(-TrackPelvisSpin * pelvisSpin)
-                + 0.10f * std::exp(-TrackHeadSpin * headSpin) + 0.20f * trunkSteady + 0.15f * heightSteady + 0.25f * leanSteady
-            : settings.trackingReward >= 8
-            ? 0.30f * std::exp(-TrackPelvis2 * part[PartRoot]) + 0.15f * std::exp(-TrackPelvisSpin * pelvisSpin)
-                + 0.15f * std::exp(-TrackHeadSpin * headSpin) + 0.25f * trunkSteady + 0.15f * heightSteady
-            : 0.35f * std::exp(-TrackPelvis2 * part[PartRoot]) + 0.20f * std::exp(-TrackPelvisSpin * pelvisSpin)
-                + 0.20f * std::exp(-TrackHeadSpin * headSpin) + 0.25f * trunkSteady;
+        const float stability = firm.total;
         // (04/11 03h30, ele: "aumentar um pouco mais a recompensa por similaridade da pose com o clipe - quero que ele
         // aprenda mas por enquanto sem fazer movimentos feios": na v4 a semelhanca 0,40 -> 0,50, a velocidade 0,30 -> 0,25 e a
         // estabilidade 0,20 -> 0,15.)
         // (v5, o giro: a semelhanca 0,65 e a velocidade - parado, quase de graca - 0,10.)
-        const float leanGate = (settings.trackingReward >= 9 ? 0.75f + 0.25f * leanSteady : 1.0f)
-            * (settings.trackingReward >= 11 ? 0.80f + 0.20f * heightSteady : 1.0f)
-            * (settings.trackingReward >= 12 ? 0.85f + 0.15f * slideSteady : 1.0f);
+        const float leanGate = (0.75f + 0.25f * leanSteady) * (0.80f + 0.20f * heightSteady) * (0.85f + 0.15f * slideSteady);
         // (06/11, a arrancada: a pelve acima da do clipe na janela dela, na corrida, corta a nota em linha reta - sem saturar.)
         // (09h35, o A/B: so na arrancada pelo impulso - a frente e as diagonais da frente; nas largadas de lado e de costas a
         // punicao piorava as corridas 2/6.)
@@ -6387,57 +6239,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const float riseCut = settings.launchRiseSpan > 0.0f && w.runBand && launch > 0.0f
             && (launchHeading == 0u || launchHeading == 1u || launchHeading == 7u)
             ? 1.0f - 0.6f * launch * std::clamp((pelvisRise - LaunchRiseSlack) / settings.launchRiseSpan, 0.0f, 1.0f) : 1.0f;
-        // (06/11, v14, a locomocao livre - ele: "as recompensas calibradas devidamente como velocidade, rumo, estabilidade":
-        // andando, sem a semelhanca com o clipe - a forma fica com o juiz de estilo, como no levantar livre -: a velocidade no
-        // rumo e a estabilidade; parado e no giro, como antes - a pose do parado, como a pose de pe do levantar.)
-        // (06/11 22h30: nas curvas a nota so cobrava a velocidade paralela a da curva - longe da linha e paralelo, nada o
-        // trazia de volta ate sair dos 1,5 m; a curva de trote saia do percurso em 62-68%. Com courseShaping: a nota vezes
-        // 0,5 + 0,5 exp(-(erro/0,75 m)^2) - sempre com inclinacao - e o progresso de voltar a linha, courseShaping x a
-        // aproximacao (m) desde a decisao anterior.)
-        float courseFactor = 1.0f, courseGain = 0.0f;
-        if (settings.courseShaping > 0.0f && (isCurve(w) || isStar(w)) && !stationary) {
-            const float e = w.courseError;
-            courseFactor = 0.5f + 0.5f * std::exp(-(e / 0.75f) * (e / 0.75f));
-            if (w.lastCourseError >= 0.0f) courseGain = settings.courseShaping * (w.lastCourseError - e);
-            w.lastCourseError = e;
-        }
-        // (07/11, v16 - a receita nova; a revisao da causa de fundo, ele: "NADA esta melhorando... voce nao aceita que o
-        // problema e mais profundo". A sonda de 07/11 10h: na v15 correr 1 m/s mais rapido rendia +0,023 por passo e o risco
-        // a mais de cair com o ruido do treino custava ~0,03 - para a rede, correr mais rapido dava prejuizo -; o portao do rumo
-        // (5,7 graus) zerava a nota da velocidade nos laterais; a estabilidade comparava a pelve, o giro e a cabeca com o clipe no
-        // relogio dele. Andando, so somas: a velocidade e o rumo num termo so - o erro do vetor velocidade: andar torto punido
-        // sem zerar tudo -, o progresso no rumo e a firmeza absoluta (o equilibrio pelo ponto de captura e a base: escorregao e
-        // tropeco); a forma fica com o juiz. Sem os 0,10 de graca. Parado e no giro, como antes.)
-        // (07/11 19h30, v17 - a semelhanca com o clipe sem o relogio dele; ele: "trabalhar forte na semelhanca com clipe". A
-        // sonda: a corrida de frente presa em ~4,1 m/s com o quadril dobrado 46 graus na mediana - correndo sentada -, desde
-        // a v14 (06/11) a pose saiu da nota andando porque o quadro do relogio do clipe nunca estava na fase do passo da rede.
-        // Agora a pose contra o quadro MAIS PARECIDO do ciclo (PoseSearchFrames fases), com a mesma regua da v7.)
-        float poseNearest = 0.0f;
-        if (settings.trackingReward == 17 && !stationary && w.trackClip < references.size()) {
-            const auto [tNow, yawNow] = trackSample(w, 0.0f);
-            (void)tNow;
-            const TrackingClipReference3D& ref = *references[w.trackClip];
-            const float duration = std::max(1.0e-3f, ref.durationSeconds());
-            for (int k = 0; k < PoseSearchFrames; ++k) {
-                ref.frame(duration * static_cast<float>(k) / PoseSearchFrames, { root.x, root.y, floorUnder(w) }, yawNow, w.altFrame,
-                    twist(w), pitch(w), legPitch(w));
-                w.altErrors.assign(w.jointErrors.size(), 0.0f);
-                contract->jointErrors(w.body->links, w.altFrame, w.altErrors);
-                float p[6] {};
-                for (std::size_t j = 0; j < trackingParts.size() && j < w.altErrors.size(); ++j) p[trackingParts[j]] += w.altErrors[j];
-                const float pHeading = heading(w.altFrame.links[rootLink]);
-                const Vec3 pRoot = w.altFrame.links[rootLink].position;
-                float pFeet = 0.0f;
-                for (std::uint32_t f : footLinks)
-                    pFeet = std::max(pFeet, (local(w.body->links[f].position - root, bodyHeading)
-                                             - local(w.altFrame.links[f].position - pRoot, pHeading)).lengthSquared());
-                const float pLegs = std::max(p[PartLeftLeg], p[PartRightLeg]);
-                const float value = 0.30f * std::exp(-TrackLegs * pLegs) + 0.15f * std::exp(-TrackFeet * pFeet)
-                    + 0.20f * std::exp(-TrackSpine7 * p[PartTrunk]) + 0.20f * std::exp(-TrackArms7 * p[PartArms])
-                    + 0.15f * std::exp(-TrackHead7 * p[PartHead]);
-                poseNearest = std::max(poseNearest, value);
-            }
-        }
         // (08/11 03h, v18 - ele: "sem semelhanca alguma com os clipes": desde a v14 a forma saiu da nota andando e a semelhanca
         // medida caiu de 0,54 para 0,05 (as pernas 11x mais longe do clipe). A v18 e a composicao da v13 - a imitacao 0,50 no
         // relogio do clipe, as janelas de improviso das trocas - com a largura da velocidade da v15.)
@@ -6471,35 +6272,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 imitation += (std::max(imitation, nearest) - imitation) * lw;
             }
         }
-        const bool v19 = settings.trackingReward == 19;
-        const bool v18 = settings.trackingReward == 18 || v19;
-        const bool simple = settings.trackingReward == 16 && !stationary;
-        float steady = stability;
-        if (simple) {
-            const float width = 0.25f * wantedSpeed + 0.5f;
-            const float forward = wantedSpeed > 0.3f
-                ? (w.smoothVelocity.x * wanted.x + w.smoothVelocity.y * wanted.y) / wantedSpeed : 0.0f;
-            const float side2 = std::max(0.0f, w.smoothVelocity.x * w.smoothVelocity.x
-                + w.smoothVelocity.y * w.smoothVelocity.y - forward * forward);
-            const float match = std::exp(-drift / (width * width));
-            const float onCourse = wantedSpeed > 0.3f
-                ? std::clamp(forward / wantedSpeed, 0.0f, 1.0f) * std::exp(-side2 / (width * width)) : match;
-            velocityTerm = 0.5f * match + 0.5f * onCourse;
-            steady = std::sqrt(firm.balance * firm.base);
-        }
-        const float legacy = courseGain + courseFactor * riseCut * leanGate * (stationary
+        const float steady = stability;
+        const float legacy = riseCut * leanGate * (stationary
             ? 0.10f + 0.10f * velocityTerm + (0.65f * imitation + 0.15f * stability) * (0.5f + 0.5f * velocityTerm)
-            : settings.trackingReward >= 14 && !v18
-            ? 0.10f + (0.45f + 0.10f * launch) * velocityTerm + (0.45f - 0.10f * launch) * stability * (0.5f + 0.5f * velocityTerm)
-            : settings.trackingReward >= 4
-            ? 0.10f + (v19 ? 0.40f + 0.10f * improvise + 0.10f * launch : 0.25f + 0.15f * improvise + 0.15f * launch) * velocityTerm
-                + ((v19 ? 0.35f - 0.25f * improvise - 0.10f * launch : 0.50f - 0.30f * improvise - 0.15f * launch) * imitation
+            : 0.10f + (0.40f + 0.10f * improvise + 0.10f * launch) * velocityTerm
+                + ((0.35f - 0.25f * improvise - 0.10f * launch) * imitation
                    + (0.15f + 0.15f * improvise) * stability)
-                    * (0.5f + 0.5f * velocityTerm)
-            : settings.trackingReward >= 2
-            ? 0.10f + 0.30f * velocityTerm + (0.40f * imitation + 0.20f * stability) * (0.5f + 0.5f * velocityTerm)
-            : gates * shape);
-        // (v17: a v15 inteira - os portoes que seguram as curvas e a frente de pe - com a pose do quadro mais parecido somada.)
+                    * (0.5f + 0.5f * velocityTerm));
         // (08/11, settings.facingGate: o peito para a vista cobrado antes do encerramento.)
         float facing = 1.0f;
         // (06h30: so nas trocas - nos rumos retos ele cobrava tambem o giro natural da pelve na passada longa, e a rede
@@ -6529,23 +6308,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
             facing *= 1.0f - settings.diagonalChestGate
                 + settings.diagonalChestGate * std::exp(-(excess / DiagonalChestWidth) * (excess / DiagonalChestWidth));
         }
-        // (09/11 17h05, settings.commandChestGate) No comando, o mesmo portao do peito alto contra o da referencia - que fica na
-        // vista - em todas as teclas. Medido (r76276): ja assentado na passada, o peito a 12-34 graus da vista (mediana; p90 34-69),
-        // o pior nas diagonais da frente e no lateral direito, e 20 dos 30 fins do comando por virado (o peito 60-108 graus longe
-        // da vista no ultimo 1 s). Pela metade na janela de improviso da troca de tecla.
-        if (settings.commandChestGate > 0.0f && !stationary && isCommand(w) && w.locomotion
-            && upperChestLink < w.body->links.size() && upperChestLink < w.frame.links.size()) {
-            const auto chest = [&](const PhysicsBodyState3D& link) {
-                const Vec3 f = (link.orientation * profile->links[upperChestLink].modelOrientation.conjugate()).normalized()
-                                   .rotate({ 1.0f, 0.0f, 0.0f });
-                return std::atan2(f.y, f.x);
-            };
-            constexpr float CommandChestSlack = 0.09f, CommandChestWidth = 0.30f;
-            const float excess = std::max(0.0f, std::abs(wrapAngle(chest(w.body->links[upperChestLink]) - chest(w.frame.links[upperChestLink])))
-                - CommandChestSlack);
-            const float g = settings.commandChestGate * (1.0f - 0.5f * improvise);
-            facing *= 1.0f - g + g * std::exp(-(excess / CommandChestWidth) * (excess / CommandChestWidth));
-        }
         // (08/11 15h20: parando, a precisao da parada contra o ponto de referencia.)
         const float stopFactor = w.stopping && w.stopError >= 0.0f
             ? 1.0f - StopPrecisionWeight + StopPrecisionWeight * std::exp(-(w.stopError / StopPrecisionWidth) * (w.stopError / StopPrecisionWidth))
@@ -6567,8 +6329,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             if (settings.stopGateFloor > 0.0f && w.stopping && w.stopPhase == 1 && w.stopClip >= 0)
                 speedGateNow = std::max(speedGateNow, settings.stopGateFloor);
         }
-        float score = speedGateNow * stopFactor * facing * (simple ? courseGain + courseFactor * (0.65f * velocityTerm + 0.35f * steady)
-            : settings.trackingReward == 17 && !stationary ? 0.80f * legacy + 0.20f * poseNearest * (0.5f + 0.5f * velocityTerm) : legacy);
+        float score = speedGateNow * stopFactor * facing * legacy;
         // (09/11 19h15, settings.poseBoost) Andando, a pose multiplica a nota inteira: a coluna, a inclinação e a altura da pelve
         // contra o clipe - medido desde r44000: a coluna 3,3-5 -> 16,7 graus por junta, a inclinação 3-5 -> 18,5 graus, a pelve 2 ->
         // 8 cm abaixo, a semelhança 0,58-0,79 -> 0,14; o portão da inclinação de antes tirava no maximo 25%.
@@ -6582,7 +6343,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.imitationSum += imitation;
         ++w.trackSamples;
         if (!guidedRise(w)) {
-            w.stabilitySum += steady;
             w.stabilityDeficitSum += (1.0f - steady) * (1.0f - steady);
             ++w.stabilitySamples;
         }
@@ -7385,16 +7145,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.commandSpeed = 0.0f;
             w.reachedAt = w.time;
         }
-        if (w.stopAt >= 0.0f && w.time >= w.stopAt) {
-            w.commandSpeed = 0.0f;
-            w.stopAt = -1.0f;
-            // (Parado no rumo: o idle, no rumo do corpo pedido.)
-            w.trackClip = standingIndex;
-            w.trackScale = 1.0f;
-            w.trackStart = -w.time;
-            w.trackYaw = w.faceYaw;
-        }
-        if (w.startKind == 6 && w.nextCommandAt >= 0.0f && w.time >= w.nextCommandAt) changeCommand(w);
         advanceTurn(w);
         advanceManeuver(w);
         advanceStop(w);
@@ -7411,8 +7161,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         if (settings.separateSkills && (w.locomotion || w.taught || movingRun)) {
             // (04/11: no rastreio a cabeca ate 0,9 m - a frenagem da troca agacha a 1,05-1,1 m e passava o controle para a
             // recuperacao no meio dela.)
-            if ((!locomotionCommanded(w) && !movingRun && !freeStopNow(w)) || down || now.headHeight < (settings.locomotionTracking ? LostHeadHeight : 1.1f)
-                || now.pelvisHeight < (settings.locomotionTracking ? LostPelvisHeight : 0.5f))
+            if ((!locomotionCommanded(w) && !movingRun && !freeStopNow(w)) || down || now.headHeight < LostHeadHeight
+                || now.pelvisHeight < LostPelvisHeight)
                 w.locomotionControl = false;
             else if (now.standing) w.locomotionControl = true;
         } else if (settings.separateSkills && settings.idleOnLocomotion) {
@@ -7466,18 +7216,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const bool freeNow = freeStopNow(w) || w.freeTroca || pushFree;
         float state = freeStopNow(w) ? freeStopScore(w, comVelocity) : w.freeTroca ? freeTrocaScore(w, comVelocity)
             : pushFree ? freePushScore(w, comVelocity)
-            : settings.locomotionTracking && (locomotionCommanded(w) || guidedRise(w)) && clipTracked(w)
+            : (locomotionCommanded(w) || guidedRise(w)) && clipTracked(w)
             ? trackingScore(w, comVelocity)
             : w.commandSpeed > 0.0f ? moveReward(w, now)
-            // (03/11 18h, ele: "no girar parado ele so nao faz nada" - de pe pagava 0,7 sem girar. Na locomocao por AMP, de pe
-            // vale na proporcao do peito para o rumo pedido.)
-            : w.locomotion && !settings.locomotionTracking ? posture->standingReward(now, w.body->links, settled) * (now.standing ? facing(w) : 0.0f)
             : w.locomotion ? 0.7f * posture->standingReward(now, w.body->links, settled) + (now.standing ? 0.3f * facing(w) : 0.0f)
                            : posture->standingReward(now, w.body->links, settled);
-        if (w.locomotion && now.standing && !settings.locomotionTracking) {
-            w.faceErrorSum += std::abs(wrapAngle(faceDirection(w) - chestYaw(w)));
-            ++w.faceErrorSamples;
-        }
         // O premio do passo (com o pedido de deslocamento, de pe): cada pe que pousa depois de um tempo no ar.
         if (settings.stepReward > 0.0f) {
             float steps = 0.0f;
@@ -7490,9 +7233,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 w.footDown[f] = down;
             }
             // (Com o mesmo portao do rumo: passo virado para o lado errado nao vale.)
-            // (03/11 18h15: na locomocao por AMP o passo longo so paga na proporcao da nota do rumo - antes so o peito: trotar
-            // de frente no rumo errado com passada longa ainda ganhava o passo.)
-            const float stepGate = !settings.locomotionTracking && w.locomotion ? std::clamp(state, 0.0f, 1.0f) : facing(w);
+            const float stepGate = facing(w);
             state += settings.stepReward * steps * (steps > 0.0f ? stepGate : 1.0f);
         }
         // (10/11 07h05, settings.launchStepReward; ele: "o maior ganho de velocidade inicial de arrancada com o menor numero de passos"):
@@ -7504,7 +7245,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             // passo falso que rearruma a base do idle para a da largada. Na largada, cada pe que pousa tendo andado menos de
             // LaunchStepMinimum no rumo pedido desde que saiu do chao custa ate launchInPlacePenalty (para tras, o maximo).
             constexpr float LaunchStepMinimum = 0.15f;
-            const float lw = settings.locomotionTracking && w.locomotion ? launchWeight(w) : 0.0f;
+            const float lw = w.locomotion ? launchWeight(w) : 0.0f;
             const Vec3 dir { std::cos(w.moveYaw), std::sin(w.moveYaw), 0.0f };
             float steps = 0.0f, inPlace = 0.0f;
             for (int f = 0; f < 2; ++f) {
@@ -7786,7 +7527,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
                         state += settings.idleImitationWeight * (match + 0.5f * still);
                     w.imitationSum += match;
                     if (measured >= 0.0f) {
-                        w.stabilitySum += measured;
                         w.stabilityDeficitSum += (1.0f - measured) * (1.0f - measured);
                         ++w.stabilitySamples;
                     }
@@ -7901,16 +7641,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // (O rastreio: perder o equilibrio - o tronco no chao, a cabeca abaixo de 1,1 m ou a pelve abaixo de 0,5 m - com
         // a queda encerrando custa a multa da queda e encerra; o rastreio ruim sustentado tambem - 03/11 10h20: sem a multa,
         // frear e travar o corpo ate o rastreio acabar saia de graca e cair tentando custava 10, o atalho de parar.)
-        const bool trackingNow = settings.locomotionTracking && locomotionCommanded(w) && !freeNow;
-        // (03/11 17h50, ele: "caindo muito no comeco do trote... nao esta sendo penalizado por quedas?" - na locomocao por
-        // AMP perder o equilibrio tambem encerra ja na cabeca abaixo de 1,1 m ou na pelve abaixo de 0,5 m, e a multa dobra.)
-        // (03/11 21h55, a ultima tentativa: no parado ensinado a queda tambem encerra com a multa - so ganha quem nao cai.)
-        const bool amplocomotion = !settings.locomotionTracking && (w.locomotion || w.taught);
-        const bool lostBalance = (trackingNow || amplocomotion || freeNow) && settings.locomotionTermination
-            && (down || now.headHeight < (settings.locomotionTracking ? LostHeadHeight : 1.1f)
-                || now.pelvisHeight < (settings.locomotionTracking ? LostPelvisHeight : 0.5f));
+        const bool trackingNow = locomotionCommanded(w) && !freeNow;
+        const bool lostBalance = (trackingNow || freeNow) && settings.locomotionTermination
+            && (down || now.headHeight < LostHeadHeight || now.pelvisHeight < LostPelvisHeight);
         if (lostBalance && !down && w.stoodAt >= 0.0f) {
-            reward -= amplocomotion || !shaped ? 2.0f * FallPenalty : FallPenalty;
+            reward -= !shaped ? 2.0f * FallPenalty : FallPenalty;
             w.fellAfterStanding = true;
         }
         if (trackingNow) w.trackingAverage += (w.locomotionFeedback[0] - w.trackingAverage) * (TicksPerDecision * TickSeconds / 0.5f);
@@ -7959,7 +7694,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             // (01/11 23h35: no levantar em movimento a queda depois de ficar de pe custava 10 e, de pe, so a velocidade ao
             // alvo pagava - correr logo depois de levantar quase sempre caia, e ele aprendeu a nao levantar: 27% -> 1% em
             // 20 min. Com o levantar guiado, ali 2.)
-            reward -= amplocomotion || !shaped ? 2.0f * FallPenalty
+            reward -= !shaped ? 2.0f * FallPenalty
                 : settings.getUpGuide && (w.startKind == 3 || w.startKind == 5) ? 0.2f * FallPenalty : FallPenalty;
             w.fellAfterStanding = true;
         }
@@ -8109,15 +7844,14 @@ struct TrackingGetUpAmpTraining3D::Impl {
             // (04/11 07h45, ele: "o quanto % ele acompanha o pedido": no rastreio, a media do que a referencia pede no rumo
             // nos mesmos instantes - a razao com a coluna 12 e o % do pedido; antes, o pedido do comeco, e a arrancada e as
             // frenagens das trocas contavam como lentidao.)
-            episode.commandSpeed = settings.locomotionTracking && w.locomotion && w.towardSamples > 0 && w.startCommandSpeed > 0.0f
+            episode.commandSpeed = w.locomotion && w.towardSamples > 0 && w.startCommandSpeed > 0.0f
                 ? std::max(0.05f, static_cast<float>(w.wantedSum / w.towardSamples)) : w.startCommandSpeed;
             episode.reachedSeconds = w.reachedAt;
             episode.meanTowardSpeed = w.towardSamples ? static_cast<float>(w.towardSum / w.towardSamples) : 0.0f;
             episode.meanImitation = w.trackSamples ? static_cast<float>(w.imitationSum / w.trackSamples) : -1.0f;
             // (v13: a do episodio e 1 - a raiz da media do quadrado da falta - os tropecos raros pesam, a media os diluia.)
             episode.meanStability = !w.stabilitySamples ? -1.0f
-                : settings.trackingReward >= 13 ? 1.0f - static_cast<float>(std::sqrt(w.stabilityDeficitSum / w.stabilitySamples))
-                : static_cast<float>(w.stabilitySum / w.stabilitySamples);
+                : 1.0f - static_cast<float>(std::sqrt(w.stabilityDeficitSum / w.stabilitySamples));
             episode.fellAfterStanding = w.fellAfterStanding;
             episode.recomposedSeconds = w.recomposedAt >= 0.0f ? w.recomposedAt - w.avoidEnd : -1.0f;
             episode.endPoseMatch = now.standing ? posture->idlePoseMatch(w.body->links) : 0.0f;
@@ -8131,7 +7865,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             episode.obstructed = w.obstructed;
             episode.band = w.startBand;
             // (04/11: nos rumos, a manobra do episodio - 0 nenhuma - no lugar do cenario.)
-            episode.sceneryPreset = w.startKind == 6 && settings.locomotionTracking ? w.maneuver : w.controlledPreset;
+            episode.sceneryPreset = w.startKind == 6 ? w.maneuver : w.controlledPreset;
             episode.meanFaceError = w.faceErrorSamples
                 ? static_cast<float>(w.faceErrorSum / w.faceErrorSamples) * 180.0f / Pi : 0.0f;
             episode.teacherShare = static_cast<float>(w.teacherDecisions) / static_cast<float>(std::max<std::uint32_t>(1, w.decisions));
@@ -8189,17 +7923,17 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         && (settings.avoidFraction > 0.0f || settings.locomotionFallFraction > 0.0f))
         names.insert(names.end(), std::begin(ProtectionClips), std::end(ProtectionClips));
     // (A rl_final: a corrida e o sprint so com as fatias deles - ou a avaliacao dessas faixas -, cada clipe uma vez.)
-    if (settings.locomotionTracking && (settings.runFraction > 0.0f || settings.evaluationBand == 2)) {
+    if (settings.runFraction > 0.0f || settings.evaluationBand == 2) {
         names.insert(names.end(), std::begin(TrackedRunClips), std::end(TrackedRunClips));
     }
     // (05/11: o sprint para a frente - so o sprint_maximo, rastreado.)
-    if (settings.locomotionTracking && (settings.sprintFraction > 0.0f || settings.evaluationBand == 3))
+    if (settings.sprintFraction > 0.0f || settings.evaluationBand == 3)
         names.emplace_back("sprint_maximo");
     // (04/11 08h50, ele: "nos exercicios de correr para frente ele da uma patinada no comeco, precisa aprender a pegar no
     // tranco... temos clipe exatamente para isso"): no rastreio a arrancada idle_to_sprint e a largada de pe do trote e
     // da corrida para a frente e nas diagonais da frente - so rastreada, fora do juiz da recuperacao (sem o levantar em
     // movimento ela nem era carregada: a largada era o ciclo na rampa).
-    if (settings.locomotionTracking && (settings.locomotionFraction > 0.0f || settings.evaluationKind == 4)) {
+    if (settings.locomotionFraction > 0.0f || settings.evaluationKind == 4) {
         // (08/11: os ciclos na meta, para o setGaitCycles.)
         names.insert(names.end(), std::begin(CycleClips), std::end(CycleClips));
         names.emplace_back("idle_to_sprint");
@@ -8211,7 +7945,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     // que ele DEVERIA usar como referencia, e nao esse atual inventado": no rastreio o giro segue o do modo padrao - o idle
     // alerta com os passos do StandTurnFeet3D, capturado do lider (tools/animation/clips/giro_idle.py) -; os da Mixamo
     // ficam so no juiz da recuperacao, como antes.)
-    if (settings.locomotionTracking && (settings.turnFraction > 0.0f || settings.evaluationKind == 4 || settings.evaluationKind == 6)) {
+    if (settings.turnFraction > 0.0f || settings.evaluationKind == 4 || settings.evaluationKind == 6) {
         names.emplace_back(TrackedTurnClips[0]);
         names.emplace_back(TrackedTurnClips[1]);
     } else if (settings.runFraction > 0.0f || settings.sprintFraction > 0.0f || settings.evaluationBand >= 2) {
@@ -8226,7 +7960,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     // (05/11 23h20) A arrancada agachada da saida da meia-volta (turnLaunch): no fim da lista - nenhum indice muda -, so
     // quando o levantar em movimento nao a carrega; ai so rastreada (fora do juiz e da largada agachada).
     const bool movingClips = settings.movingFraction > 0.0f || settings.sprintStartFraction > 0.0f || settings.evaluationKind == 1;
-    if (settings.locomotionTracking && std::find(names.begin(), names.end(), "crouched_to_sprint") == names.end())
+    if (std::find(names.begin(), names.end(), "crouched_to_sprint") == names.end())
         names.emplace_back("crouched_to_sprint");
     for (const std::string& name : names) {
         impl.clips.push_back(std::make_unique<AnimationClip3D>(
@@ -8235,7 +7969,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         impl.clipNames.push_back(name);
         if (name == "idle_to_sprint") {
             impl.startClipIndex = impl.references.size() - 1;
-            impl.startClipTrackedOnly = settings.locomotionTracking && settings.movingFraction <= 0.0f
+            impl.startClipTrackedOnly = settings.movingFraction <= 0.0f
                 && settings.sprintStartFraction <= 0.0f && settings.evaluationKind != 1;
         }
         if (name == "turn_left" && impl.turnIndices[0] >= impl.references.size() - 1) impl.turnIndices[0] = impl.references.size() - 1;
@@ -8246,13 +7980,11 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         if (name == "running_turn_180_esquerda") impl.runTurnIndices[1] = impl.references.size() - 1;
         if (name == "jog_backward") impl.jogBackIndex = impl.references.size() - 1;
         if (name == "turn_right" && impl.turnIndices[1] >= impl.references.size() - 1) impl.turnIndices[1] = impl.references.size() - 1;
-        // (07/11: com o levantar correndo ligado - o --movimento - a arrancada da meia-volta das trocas continua; antes ela
-        // sumia em silencio quando o levantar em movimento carregava o clipe; o setTurnLaunch vem depois do construtor, entao a
-        // condicao e o rastreio, e o uso confere o turnLaunch.)
-        const bool launchExit = !movingClips || settings.locomotionTracking;
+        // (07/11: com o levantar correndo ligado - o --movimento - a arrancada da meia-volta das trocas continua; o uso confere
+        // o turnLaunch.)
         if (name == "crouched_to_sprint") {
             if (movingClips) impl.sprintStartIndex = impl.references.size() - 1;
-            if (launchExit) impl.launchExitIndex = impl.references.size() - 1;
+            impl.launchExitIndex = impl.references.size() - 1;
         }
         if (name == "stand_up_back_kimodo" || name == "stand_up_back_kimodo_espelho")
             impl.rollIndices.push_back(impl.references.size() - 1);
@@ -8264,7 +7996,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         Impl::Travel travel;
         const AnimationClip3D& clip = *impl.clips.back();
         travel.direction = clip.travelDirectionRadians;
-        if (name == "idle_to_sprint" || (name == "crouched_to_sprint" && launchExit))
+        if (name == "idle_to_sprint" || name == "crouched_to_sprint")
             travel.rampDisplacement = std::hypot(clip.sourceRootDisplacementMeters.x,
             clip.sourceRootDisplacementMeters.y);
         else if (name == "mixamo_running" || name == "run_forward_medium" || name == "sprint_forward" || heading
@@ -8457,7 +8189,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     impl.actionNames = impl.contract->actionNames();
     if (settings.stepChannels)
         for (const char* name : { "passo.vai", "passo.pouso_frente", "passo.pouso_esquerda", "passo.tempo" }) impl.actionNames.emplace_back(name);
-    if (settings.locomotionTracking && (settings.locomotionFraction > 0.0f || settings.evaluationKind == 4))
+    if (settings.locomotionFraction > 0.0f || settings.evaluationKind == 4)
         for (std::uint32_t h = 0; h < 8; h += 2)
             if (impl.gaitFor(1, h) == nullptr) throw std::runtime_error("rastreio: o trote sem o clipe de um rumo cardinal");
     impl.classifyTrackingLinks();
@@ -8754,10 +8486,8 @@ void TrackingGetUpAmpTraining3D::setCourseAngleLimit(float radians) { m_impl->se
 void TrackingGetUpAmpTraining3D::setLocomotionShaping(bool on) { m_impl->settings.locomotionShaping = on; }
 void TrackingGetUpAmpTraining3D::setSpeedGate(float floor) { m_impl->settings.speedGate = std::clamp(floor, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setKneeInward(float slackMeters) { m_impl->settings.kneeInwardSlack = std::max(0.0f, slackMeters); }
-void TrackingGetUpAmpTraining3D::setSpeedCeiling(float ratio) { m_impl->settings.speedCeiling = std::max(0.0f, ratio); }
 void TrackingGetUpAmpTraining3D::setIdleHeight(float slackMeters) { m_impl->settings.idleHeightSlack = std::max(0.0f, slackMeters); }
 void TrackingGetUpAmpTraining3D::setStopWaitBody(bool on) { m_impl->settings.stopWaitBody = on; }
-void TrackingGetUpAmpTraining3D::setCourseTailLateral(float weight) { m_impl->settings.courseTailLateral = std::clamp(weight, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setCourseSmoothing(float seconds) { m_impl->settings.courseSmoothing = std::max(0.0f, seconds); }
 void TrackingGetUpAmpTraining3D::setDiagonalChest(float gate) { m_impl->settings.diagonalChestGate = std::clamp(gate, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setStopClips(bool on) {
@@ -8787,6 +8517,7 @@ void TrackingGetUpAmpTraining3D::setSlowLimits(std::vector<float> fractions) {
     for (std::size_t k = 0; k < 6; ++k) s.slowLimits[k] = std::clamp(fractions[k % fractions.size()], 0.0f, 0.95f);
     s.slowLimit = *std::max_element(s.slowLimits.begin(), s.slowLimits.end());
 }
+void TrackingGetUpAmpTraining3D::setTrackingReward(int version) { m_impl->settings.trackingReward = version; }
 void TrackingGetUpAmpTraining3D::setGaitCycles(bool on) {
     Impl& impl = *m_impl;
     if (impl.baseGaits[1].empty() && impl.baseGaits[2].empty()) {
@@ -8806,7 +8537,6 @@ void TrackingGetUpAmpTraining3D::setGaitCycles(bool on) {
         impl.jogBackIndex = impl.cycleJogBack;
     }
 }
-void TrackingGetUpAmpTraining3D::setTrackingReward(int version) { m_impl->settings.trackingReward = version; }
 void TrackingGetUpAmpTraining3D::setPhaseSync(bool on) { m_impl->settings.phaseSync = on; }
 void TrackingGetUpAmpTraining3D::setImitationLoosen(float factor) { m_impl->settings.imitationLoosen = std::max(1.0f, factor); }
 void TrackingGetUpAmpTraining3D::setFacingGate(float gate) { m_impl->settings.facingGate = std::clamp(gate, 0.0f, 1.0f); }
@@ -8890,7 +8620,6 @@ void TrackingGetUpAmpTraining3D::setUnrealStarts(bool on) {
 }
 void TrackingGetUpAmpTraining3D::setFreeTroca(bool on) { m_impl->settings.freeTroca = on; }
 void TrackingGetUpAmpTraining3D::setFreeStandGate(float gate) { m_impl->settings.freeStandGate = std::clamp(gate, 0.0f, 1.0f); }
-void TrackingGetUpAmpTraining3D::setCommandChestGate(float gate) { m_impl->settings.commandChestGate = std::clamp(gate, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setFreeIdle(bool on) { m_impl->settings.freeIdle = on; }
 void TrackingGetUpAmpTraining3D::setPoseBoost(float gate) { m_impl->settings.poseBoost = std::clamp(gate, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setFreePush(bool on) { m_impl->settings.freePush = on; }
@@ -8898,7 +8627,6 @@ void TrackingGetUpAmpTraining3D::setFreeIdleMatch(float weight) { m_impl->settin
 void TrackingGetUpAmpTraining3D::setFreeStepHeight(float meters) { m_impl->settings.freeStepHeight = std::max(0.0f, meters); }
 void TrackingGetUpAmpTraining3D::setIdleBentEnd(bool on) { m_impl->settings.idleBentEnd = on; }
 void TrackingGetUpAmpTraining3D::setIdleLikeStop(bool on) { m_impl->settings.idleLikeStop = on; }
-void TrackingGetUpAmpTraining3D::setUpperImitation(bool on) { m_impl->settings.upperImitation = on; }
 void TrackingGetUpAmpTraining3D::setIdleWide(bool on) { m_impl->settings.idleWide = on; }
 void TrackingGetUpAmpTraining3D::setMirrorCycles(bool on) { m_impl->settings.mirrorCycles = on; }
 void TrackingGetUpAmpTraining3D::setIdlePoseGate(float gate) { m_impl->settings.idlePoseGate = std::clamp(gate, 0.0f, 1.0f); }
@@ -8989,7 +8717,6 @@ void TrackingGetUpAmpTraining3D::setIdleHandoff(float blendSeconds, float blendR
 void TrackingGetUpAmpTraining3D::setIdleImitation(float weight) { m_impl->settings.idleImitationWeight = std::max(0.0f, weight); }
 void TrackingGetUpAmpTraining3D::setRunAssist(float assist) { m_impl->settings.runAssist = std::min(assist, 1.0f); }
 void TrackingGetUpAmpTraining3D::setManeuverWeights(std::array<float, 7> weights) { m_impl->settings.maneuverWeights = weights; }
-void TrackingGetUpAmpTraining3D::setCourseShaping(float gain) { m_impl->settings.courseShaping = std::clamp(gain, 0.0f, 10.0f); }
 void TrackingGetUpAmpTraining3D::setManeuvers(float fraction, int evaluationManeuver) {
     m_impl->settings.maneuverFraction = std::clamp(fraction, 0.0f, 1.0f);
     m_impl->settings.evaluationManeuver = std::clamp(evaluationManeuver, -1, 12);
@@ -9367,7 +9094,7 @@ std::vector<float> TrackingGetUpAmpTraining3D::referencePairsOf(const std::vecto
         if (!clips.empty() && std::find(clips.begin(), clips.end(), impl.clipNames[r]) == clips.end()) continue;
         if (clips.empty() && r >= impl.taskClipCount) continue;
         // (Os da corrida do rastreio ficam fora do juiz geral - o da recuperacao.)
-        if (clips.empty() && impl.settings.locomotionTracking
+        if (clips.empty()
             && std::find(std::begin(TrackedRunClips), std::end(TrackedRunClips), impl.clipNames[r]) != std::end(TrackedRunClips))
             continue;
         if (clips.empty() && r == impl.startClipIndex && impl.startClipTrackedOnly) continue;

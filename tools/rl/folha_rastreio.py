@@ -32,7 +32,7 @@ def main() -> int:
     common = dict(environments=1, threads=1, seed=args.semente, clip_start_fraction=0.0, standing_start_fraction=0.0,
                   locomotion_clip_fraction=1.0, locomotion_seconds=float(v2.get("locomocao_segundos", 8.0)),
                   locomotion_termination=bool(v2.get("queda_encerra", True)), separate_skills=True,
-                  locomotion_tracking=True, tracking_termination=float(v2.get("rastreio_encerra", 0.0)),
+                  tracking_termination=float(v2.get("rastreio_encerra", 0.0)),
                   locomotion_residual=float(v2.get("residuo", 0.0)) > 0,
                   clip_blend=float(v2.get("mistura_clipe", 1.0)), walk_fraction=0.0)
     jobs = [(name, dict(common, locomotion_fraction=1.0, only_clip=name)) for name in args.clipes]

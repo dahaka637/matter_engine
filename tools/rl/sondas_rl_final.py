@@ -26,7 +26,7 @@ torch.set_num_threads(2)
 
 ASSETS = str(L.REPO / "assets")
 RUNS = Path.home() / ".local/share/matter-engine/rl/runs"
-TRACK = dict(separate_skills=True, locomotion_tracking=True, locomotion_residual=True, locomotion_termination=True,
+TRACK = dict(separate_skills=True, locomotion_residual=True, locomotion_termination=True,
              locomotion_seconds=8.0, moving_push_newtons=(0.0, 0.0), moving_push_hold_newtons=(0.0, 0.0))
 
 
