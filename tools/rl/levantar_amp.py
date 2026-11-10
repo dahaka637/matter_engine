@@ -2560,6 +2560,46 @@ def configurar(b, args, counters: dict, training: bool) -> None:
     b.set_accel_lean(math.radians(args.troca_inclinar))
 
 
+def montar_v2(args) -> dict:
+    """Os ajustes de todo lote da receita, o do treino e os das avaliacoes (10/11: fora do main, para a suite)."""
+    return dict(separate_skills=args.habilidades_separadas, locomotion_tracking=args.rastreio,
+              locomotion_residual=args.residuo > 0,
+              tracking_termination=args.rastreio_encerra, avoid_newtons=tuple(args.evitar_forca), push_newtons=tuple(args.empurrao_forca),
+              move_speed=tuple(args.velocidade), push_hold_fraction=args.empurrao_continuo,
+              push_hold_newtons=tuple(args.empurrao_continuo_forca), walk_fraction=args.andar,
+              walk_speed=tuple(args.andar_velocidade), trot_speed=tuple(args.trote_velocidade),
+              moving_push_newtons=tuple(args.empurrao_mov_forca), moving_push_hold_fraction=args.empurrao_mov_continuo,
+              moving_push_hold_newtons=tuple(args.empurrao_mov_continuo_forca),
+              locomotion_seconds=args.locomocao_segundos, locomotion_termination=args.queda_encerra,
+              # (Com a professora, todos os lotes no protocolo ensinado - as avaliacoes sem ela tambem: a revisao de 03/11.)
+              **({"taught_headings": True} if args.professor else {}),
+              **({"clip_blend": args.mistura_clipe} if args.mistura_clipe < 1.0 else {}),
+              **({"protective_fall": True} if args.queda_programada else {}),
+              **({"roll_blend": args.rolar_clipe} if args.rolar_clipe < 1.0 else {}),
+              **({"scenery": tuple(args.ambientes)} if any(args.ambientes) else {}),
+              **({"avoid_scenery_fraction": args.evitar_ambientes} if args.evitar_ambientes > 0 else {}),
+              **({"get_up_guide": True, "get_up_seconds": args.levantar_segundos} if args.levantar_guiado else {}))
+
+
+def lote_do_treino(args) -> dict:
+    """Os ajustes so do lote do treino (as fatias dos comecos e dos exercicios), alem do montar_v2 (10/11: fora do main)."""
+    return dict(seed=args.semente, clip_start_fraction=args.comeco_clipe,
+                standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,
+                avoid_fraction=args.evitar, sprint_start_fraction=args.arrancada,
+                locomotion_fraction=args.locomocao, turn_fraction=args.giro,
+                handoff_on_stand=args.troca_de_pe, locomotion_fall_fraction=args.quedas_locomocao,
+                partner_seconds=args.parceiro_segundos, partner_fall_penalty=args.parceiro_punicao,
+                partner_avoid=args.evitar_com_parceiro, touch_down_penalty=args.toque_punicao,
+                support_bonus=args.apoio_premio, flex_reward=args.flexao,
+                obstacle_fraction=args.obstaculo, weight_fraction=args.peso_em_cima,
+                run_fraction=args.corrida, sprint_fraction=args.sprint,
+                locomotion_clip_fraction=args.locomocao_clipe,
+                command_change=tuple(args.troca_pedido), step_reward=args.passo,
+                **({"speed_ramp_power": args.rampa_velocidade} if args.rampa_velocidade != 0.5 else {}),
+                **({"imitation_weight": args.imitacao} if args.imitacao > 0 else {}),
+                **({"only_clip": args.so_clipe} if args.so_clipe else {}))
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -2659,40 +2699,8 @@ def main() -> int:
         device = Prova.preparar()
         prova = Prova(args.prova, sys.argv)
     torch.manual_seed(args.semente)
-    v2 = dict(separate_skills=args.habilidades_separadas, locomotion_tracking=args.rastreio,
-              locomotion_residual=args.residuo > 0,
-              tracking_termination=args.rastreio_encerra, avoid_newtons=tuple(args.evitar_forca), push_newtons=tuple(args.empurrao_forca),
-              move_speed=tuple(args.velocidade), push_hold_fraction=args.empurrao_continuo,
-              push_hold_newtons=tuple(args.empurrao_continuo_forca), walk_fraction=args.andar,
-              walk_speed=tuple(args.andar_velocidade), trot_speed=tuple(args.trote_velocidade),
-              moving_push_newtons=tuple(args.empurrao_mov_forca), moving_push_hold_fraction=args.empurrao_mov_continuo,
-              moving_push_hold_newtons=tuple(args.empurrao_mov_continuo_forca),
-              locomotion_seconds=args.locomocao_segundos, locomotion_termination=args.queda_encerra,
-              # (Com a professora, todos os lotes no protocolo ensinado - as avaliacoes sem ela tambem: a revisao de 03/11.)
-              **({"taught_headings": True} if args.professor else {}),
-              **({"clip_blend": args.mistura_clipe} if args.mistura_clipe < 1.0 else {}),
-              **({"protective_fall": True} if args.queda_programada else {}),
-              **({"roll_blend": args.rolar_clipe} if args.rolar_clipe < 1.0 else {}),
-              **({"scenery": tuple(args.ambientes)} if any(args.ambientes) else {}),
-              **({"avoid_scenery_fraction": args.evitar_ambientes} if args.evitar_ambientes > 0 else {}),
-              **({"get_up_guide": True, "get_up_seconds": args.levantar_segundos} if args.levantar_guiado else {}))
-    batch = get_up_batch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
-                                 seed=args.semente, clip_start_fraction=args.comeco_clipe,
-                                 standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,
-                                 avoid_fraction=args.evitar, sprint_start_fraction=args.arrancada,
-                                 locomotion_fraction=args.locomocao, turn_fraction=args.giro,
-                                 handoff_on_stand=args.troca_de_pe, locomotion_fall_fraction=args.quedas_locomocao,
-                                 partner_seconds=args.parceiro_segundos, partner_fall_penalty=args.parceiro_punicao,
-                                 partner_avoid=args.evitar_com_parceiro, touch_down_penalty=args.toque_punicao,
-                                 support_bonus=args.apoio_premio, flex_reward=args.flexao,
-                                 obstacle_fraction=args.obstaculo, weight_fraction=args.peso_em_cima,
-                                 run_fraction=args.corrida, sprint_fraction=args.sprint,
-                                 locomotion_clip_fraction=args.locomocao_clipe,
-                                 command_change=tuple(args.troca_pedido), step_reward=args.passo,
-                                 **({"speed_ramp_power": args.rampa_velocidade} if args.rampa_velocidade != 0.5 else {}),
-                                 **({"imitation_weight": args.imitacao} if args.imitacao > 0 else {}),
-                                 **({"only_clip": args.so_clipe} if args.so_clipe else {}),
-                                 **v2)
+    v2 = montar_v2(args)
+    batch = get_up_batch(str(REPO / "assets"), environments=args.mundos, threads=args.threads, **lote_do_treino(args), **v2)
     if args.professor and not args.habilidades_separadas:
         raise SystemExit("--professor pede --habilidades-separadas")
     muscle = json.loads(Path(args.musculo).read_text()) if args.musculo else None
