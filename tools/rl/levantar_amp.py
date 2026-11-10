@@ -1536,7 +1536,8 @@ def warm_start(model: Policy, threads: int, steps: int, device: torch.device) ->
     return {"aprendeu": True, "amostras_professor": int(len(x)), "perda": float(loss.item()), "de_pe_brucos": standing}
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """O parser do treinador (10/11: fora do main, para a suite e a prova lerem a mesma receita)."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--treino", required=True)
     parser.add_argument("--mundos", type=int, default=512)
@@ -2313,7 +2314,11 @@ def main() -> int:
                         help="na locomocao, o peso da imitacao do clipe do passo pedido (DeepMimic; 0: sem)")
     parser.add_argument("--rampa-velocidade", type=float, default=0.5,
                         help="a rampa da velocidade ate a pedida: (feita/pedida)^isto (0,5 a raiz; 1 linear)")
-    args = parser.parse_args()
+    return parser
+
+
+def aplicar_receita(parser: argparse.ArgumentParser, args) -> None:
+    """As validacoes, os padroes derivados e o estado de modulo que a receita liga (10/11: fora do main)."""
     STAR_SECONDS[0] = args.estrela_segundos
     COMMAND_SECONDS[0] = args.comando_segundos
     if args.juiz_mm and not (args.juiz_unreal and args.estilo_loco_proprio):
@@ -2334,6 +2339,231 @@ def main() -> int:
         args.suave_loco = args.suave
     if args.equilibrio:
         BATCH_EXTRA.update(balance_observation=True, step_channels=True)
+    VELOCITY_ACTIONS[0] = bool(args.acao_velocidade)
+
+
+def ler_receita(argv: list[str]):
+    """A receita (a lista de argumentos do treinador) lida e aplicada como no treino: os args."""
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    aplicar_receita(parser, args)
+    return args
+
+
+def configurar(b, args, counters: dict, training: bool) -> None:
+    """Os ajustes da receita num lote (o do treino com training=True; as avaliacoes e a suite com False). A unica traducao
+    das flags para o ambiente (10/11: antes um fecho dentro do main, e as sondas usavam outra)."""
+    b.set_tracking_reward(args.recompensa_rastreio)
+    b.set_phase_sync(args.sincronizar_fase)
+    b.set_imitation_loosen(args.imitacao_folga if training else 1.0)
+    b.set_facing_gate(args.peito_vista if training else 0.0)
+    if args.rumo_suave > 0:
+        b.set_course_smoothing(args.rumo_suave)
+    if args.rumo_cauda_lado > 0:
+        b.set_course_tail_lateral(args.rumo_cauda_lado)
+    if args.rumo_limite > 0:
+        b.set_course_angle_limit(math.radians(args.rumo_limite) if training else 0.0)
+    if args.sem_potencial_loco:
+        b.set_locomotion_shaping(False)
+    if args.nota_velocidade > 0:
+        b.set_speed_gate(args.nota_velocidade)
+    if args.joelho_dentro > 0:
+        b.set_knee_inward(args.joelho_dentro)
+    if args.velocidade_teto > 0:
+        b.set_speed_ceiling(args.velocidade_teto)
+    if args.idle_altura > 0:
+        b.set_idle_height(args.idle_altura)
+    if args.parada_corpo:
+        b.set_stop_wait_body(True)
+    if args.diagonal_peito > 0:
+        b.set_diagonal_chest(args.diagonal_peito if training else 0.0)
+    b.set_arm_clip_reach(args.bracos_clipe)
+    b.set_gait_cycles(args.passos_ciclos)
+    b.set_head_clip_reach(args.cabeca_clipe)
+    b.set_rise_flight(args.levantar_voo if training else 0.0)
+    b.set_lateral_leg_strict(args.lateral_pernas_rigor if training else 1.0)
+    b.set_slow_limits([float(x) for x in counters["lento"]] if training and args.lento > 0 else [0.0, 0.0, 0.0])
+    if training:
+        b.set_maneuvers(args.manobras, -1)
+    b.set_idle_imitation(args.imitacao_parado)
+    if hasattr(b, "set_free_velocity_feedforward"):
+        b.set_free_velocity_feedforward(args.velocidade_propria)
+    if args.levantar_velocidade is not None:
+        b.set_recovery_velocity(True)
+    if args.soltar_livres:
+        b.set_teacher_free_drills([DRILL_KEYS.index(k) for k in args.soltar_livres])
+    if args.manobras_pesos:
+        b.set_maneuver_weights(list(args.manobras_pesos))
+    if args.comando > 0:
+        b.set_command(args.comando if training else 0.0, int(counters["comando_fase"]), args.comando_segundos)
+    if args.parada > 0:
+        b.set_final_stop(args.parada if training else 0.0, *args.parada_janela, args.parada_freio, False)
+        if args.parada_clipes:
+            b.set_stop_clips(True)
+    if args.estrela > 0:
+        # (08/11: a estrela so no treino - a fatia; nas avaliacoes, so as dela.)
+        b.set_star(args.estrela if training else 0.0, [float(x) for x in counters["estrela_pesos"]],
+                   [int(x) for x in counters["estrela_fases"]], args.estrela_segundos)
+    if args.fogo >= 0 and training:
+        hit, hold = fire_bands(counters["fogo_nivel"])
+        b.set_fire(args.fogo_fatia, hit, hold, FIRE_HOLD_SECONDS, FIRE_HOLD_FRACTION)
+        b.set_fire_groups(fire_group_bands(counters["fogo_niveis"]))
+        b.set_push_variety(args.fogo_pontos)
+        b.set_push_imitation_relief(args.fogo_alivio)
+    if args.rumo_percurso > 0:
+        b.set_course_shaping(args.rumo_percurso)
+    if args.amortecimento_livre > 0 and hasattr(b, "set_free_damping_scale"):
+        b.set_free_damping_scale(args.amortecimento_livre)
+    if args.soltar_teste_velocidade and hasattr(b, "set_self_teacher_velocity_mode"):
+        b.set_self_teacher_velocity_mode(args.soltar_teste_velocidade)
+    b.set_idle(args.idle_pos_levantar, args.parado_locomocao, args.idle_alcance)
+    b.set_idle_handoff(args.idle_entrega, args.idle_entrega_alcance)
+    b.set_rise_handoff(args.entrega_subindo)
+    b.set_recovery_natural(args.naturalidade)
+    b.set_lateral_hand_push(not args.trote_lateral_sem_puxao)
+    b.set_lateral_run_leg_reach(args.corrida_lateral_pernas)
+    b.set_gait_speeds(gait_speeds(args.velocidade_trote), gait_speeds(args.velocidade_corrida))
+    b.set_back_start_lean(-np.radians(args.largada_costas))
+    b.set_course_limit(args.curva_fora)
+    b.set_curve_lean(args.curva_inclinar)
+    b.set_foot_width(args.pisada_largura)
+    b.set_run_turn_brake(args.troca_freio)
+    b.set_run_turn_align(args.troca_pe)
+    b.set_turn_settle(args.troca_assentada)
+    b.set_turn_launch(args.troca_arrancada)
+    b.set_run_launch_ease(*(args.corrida_largada or (0.0, 0.0, 0.0)))
+    b.set_course_tail(args.rumo_cauda)
+    if training and hasattr(b, "set_speed_range"):
+        b.set_speed_range(args.faixa_velocidade)
+    if hasattr(b, "set_idle_quiet"):
+        b.set_idle_quiet(args.quietude_parado)
+    if hasattr(b, "set_maneuver_acceleration"):
+        b.set_maneuver_acceleration(args.troca_aceleracao)
+    if hasattr(b, "set_rise_overshoot"):
+        b.set_rise_overshoot(args.subida_freada)
+    b.set_roll_tail(args.inclinacao_cauda)
+    b.set_cliff_free(args.sem_penhascos)
+    b.set_launch_rise(args.arrancada_pulo)
+    if hasattr(b, "set_lateral_start"):
+        b.set_lateral_start(args.largada_lado)
+    if hasattr(b, "set_turn_settle_lateral"):
+        b.set_turn_settle_lateral(args.troca_assentada_lado)
+    if hasattr(b, "set_turn_settle_front"):
+        b.set_turn_settle_front(args.troca_assentada_frente)
+    if hasattr(b, "set_run_turn_time_scale"):
+        b.set_run_turn_time_scale(args.troca_giro_tempo)
+    if hasattr(b, "set_stop_gait_all"):
+        b.set_stop_gait_all(args.parada_passada)
+    if hasattr(b, "set_idle_pose_gate"):
+        b.set_idle_pose_gate(args.idle_pose)
+    if hasattr(b, "set_stop_clips_front"):
+        b.set_stop_clips_front(args.parada_clipes_frente)
+    if hasattr(b, "set_stop_clips_command"):
+        b.set_stop_clips_command(args.parada_clipes_comando)
+    if hasattr(b, "set_stop_gate_floor"):
+        b.set_stop_gate_floor(args.parada_portao)
+    if hasattr(b, "set_free_stop"):
+        b.set_free_stop(args.parada_livre)
+    if hasattr(b, "set_stop_posture"):
+        b.set_stop_posture(args.parada_postura)
+    if hasattr(b, "set_upper_rigor"):
+        b.set_upper_rigor(args.rigor_superior)
+    if hasattr(b, "set_unreal_starts"):
+        b.set_unreal_starts(args.arrancada_unreal)
+    if hasattr(b, "set_unreal_start_scale"):
+        b.set_unreal_start_scale(args.arrancada_unreal_escala)
+    if hasattr(b, "set_live_launch"):
+        b.set_live_launch(args.largada_viva)
+    if hasattr(b, "set_launch_step_reward"):
+        b.set_launch_step_reward(args.largada_passo)
+    if hasattr(b, "set_launch_in_place_penalty"):
+        b.set_launch_in_place_penalty(args.largada_no_lugar)
+    if hasattr(b, "set_launch_calm_arms"):
+        b.set_launch_calm_arms(args.largada_bracos_calmos)
+    if hasattr(b, "set_spine_velocity_feedforward"):
+        b.set_spine_velocity_feedforward(args.coluna_sem_velocidade)
+    if hasattr(b, "set_base_posture"):
+        b.set_base_posture(args.postura_base)
+    if hasattr(b, "set_motor_tone"):
+        b.set_motor_tone(args.tonus)
+    if hasattr(b, "set_posture_tail"):
+        b.set_posture_tail(args.postura_cauda)
+    if hasattr(b, "set_spine_tone"):
+        b.set_spine_tone(args.tonus_coluna)
+    if hasattr(b, "set_jam_cost"):
+        b.set_jam_cost(args.custo_batente)
+    if hasattr(b, "set_foot_slip_cost"):
+        b.set_foot_slip_cost(args.pes_firmes)
+    if hasattr(b, "set_idle_world_track"):
+        b.set_idle_world_track(args.parado_fixo)
+    if hasattr(b, "set_motor_gravity"):
+        b.set_motor_gravity(args.gravidade_motores)
+    if hasattr(b, "set_idle_return"):
+        b.set_idle_return(args.volta_pose)
+    if hasattr(b, "set_stop_clips_base"):
+        b.set_stop_clips_base(args.parada_clipes_base)
+    if hasattr(b, "set_stop_entry"):
+        b.set_stop_entry(*args.parada_entrada)
+    if hasattr(b, "set_stop_front_variants") and args.parada_variantes:
+        b.set_stop_front_variants(True, -1)
+        if hasattr(b, "set_stop_front_variant_mask"):
+            b.set_stop_front_variant_mask(args.parada_variantes_mascara)
+    if hasattr(b, "set_free_troca"):
+        b.set_free_troca(args.troca_livre)
+    if hasattr(b, "set_free_stand_gate"):
+        b.set_free_stand_gate(args.parada_pose)
+    if hasattr(b, "set_command_chest_gate"):
+        b.set_command_chest_gate(args.peito_comando)
+    if hasattr(b, "set_free_idle"):
+        b.set_free_idle(args.parado_livre)
+    if hasattr(b, "set_pose_boost"):
+        b.set_pose_boost(args.pose_reforco)
+    if hasattr(b, "set_free_push"):
+        b.set_free_push(args.empurrao_livre)
+    if hasattr(b, "set_free_idle_match"):
+        b.set_free_idle_match(args.parado_semelhanca)
+    if hasattr(b, "set_free_step_height"):
+        b.set_free_step_height(args.passo_baixo)
+    if hasattr(b, "set_idle_bent_end"):
+        b.set_idle_bent_end(args.parado_dobrado_encerra)
+    if hasattr(b, "set_upper_imitation"):
+        b.set_upper_imitation(args.imitacao_tronco)
+    if hasattr(b, "set_idle_wide"):
+        b.set_idle_wide(args.parado_largo)
+    if hasattr(b, "set_mirror_cycles"):
+        b.set_mirror_cycles(args.simetria_ciclos)
+    if hasattr(b, "set_turn_settle_back"):
+        b.set_turn_settle_back(args.troca_assentada_costas)
+    if hasattr(b, "set_troca_fixed_chest"):
+        b.set_troca_fixed_chest(args.troca_peito_fixo)
+    if args.penhascos_partes is not None:
+        b.set_cliff_parts(*(part in args.penhascos_partes for part in ("curvas", "pe", "antebraco", "pulo")))
+    b.set_troca_practice(args.troca_pratica, [0.0] * 8)
+    b.set_foot_cross(args.pegada_cruzada)
+    b.set_idle_reanchor(args.estab_ancora)
+    b.set_front_lean(*np.radians(args.trote_frente_inclinar))
+    b.set_run_lean(math.radians(args.corrida_inclinar[0]), args.corrida_inclinar[1])
+    b.set_run_back_lean(math.radians(args.corrida_costas_inclinar[0]), args.corrida_costas_inclinar[1])
+    b.set_get_up_tracking(args.levantar_clipe)
+    b.set_sprint(args.sprint_velocidade, math.radians(args.sprint_inclinar[0]), args.sprint_inclinar[1])
+    b.set_upper_hand(args.mao_tronco)
+    b.set_body_hand(args.mao_corpo)
+    if args.equilibrio:
+        # (04/11 15h, os passos: o gerador no idle, quem segura o empurrao de pe, a chegada do levantar e o equilibrio
+        # parado - no treino a fatia dos comecos de pe, na avaliacao 8 todos -, no nivel do curriculo.)
+        b.set_balance_steps(True, args.empurrao_idle)
+        b.set_get_up_arrival(args.chegada_premio, args.voo_multa, args.subida_equilibrio, args.entrega_calma)
+        b.set_idle_threat_reach(args.idle_alcance_ameaca)
+        b.set_balance_drill(args.equilibrio_fatia if training else 0.0,
+                            1.0 if args.fogo >= 0 and training else counters["equilibrio_nivel"])
+        b.set_avoid_on_idle(args.evitar_idle)
+    b.set_accel_lean(math.radians(args.troca_inclinar))
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    aplicar_receita(parser, args)
 
     from matter_rl.system import cpu_temperature, require_watchdog
     require_watchdog()
@@ -2446,7 +2676,6 @@ def main() -> int:
               **({"scenery": tuple(args.ambientes)} if any(args.ambientes) else {}),
               **({"avoid_scenery_fraction": args.evitar_ambientes} if args.evitar_ambientes > 0 else {}),
               **({"get_up_guide": True, "get_up_seconds": args.levantar_segundos} if args.levantar_guiado else {}))
-    VELOCITY_ACTIONS[0] = bool(args.acao_velocidade)
     batch = get_up_batch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
                                  seed=args.semente, clip_start_fraction=args.comeco_clipe,
                                  standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,
@@ -3532,214 +3761,6 @@ def main() -> int:
         info["v2"]["ajuda_manobra"] = counters["ajuda_manobra"]
         (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
 
-    def configure(b, training: bool) -> None:
-        """Os ajustes do treino num lote (o do treino; 04/11 15h: tambem a avaliacao do equilibrio parado)."""
-        b.set_tracking_reward(args.recompensa_rastreio)
-        b.set_phase_sync(args.sincronizar_fase)
-        b.set_imitation_loosen(args.imitacao_folga if training else 1.0)
-        b.set_facing_gate(args.peito_vista if training else 0.0)
-        if args.rumo_suave > 0:
-            b.set_course_smoothing(args.rumo_suave)
-        if args.rumo_cauda_lado > 0:
-            b.set_course_tail_lateral(args.rumo_cauda_lado)
-        if args.rumo_limite > 0:
-            b.set_course_angle_limit(math.radians(args.rumo_limite) if training else 0.0)
-        if args.sem_potencial_loco:
-            b.set_locomotion_shaping(False)
-        if args.nota_velocidade > 0:
-            b.set_speed_gate(args.nota_velocidade)
-        if args.joelho_dentro > 0:
-            b.set_knee_inward(args.joelho_dentro)
-        if args.velocidade_teto > 0:
-            b.set_speed_ceiling(args.velocidade_teto)
-        if args.idle_altura > 0:
-            b.set_idle_height(args.idle_altura)
-        if args.parada_corpo:
-            b.set_stop_wait_body(True)
-        if args.diagonal_peito > 0:
-            b.set_diagonal_chest(args.diagonal_peito if training else 0.0)
-        b.set_arm_clip_reach(args.bracos_clipe)
-        b.set_gait_cycles(args.passos_ciclos)
-        b.set_head_clip_reach(args.cabeca_clipe)
-        b.set_rise_flight(args.levantar_voo if training else 0.0)
-        b.set_lateral_leg_strict(args.lateral_pernas_rigor if training else 1.0)
-        b.set_slow_limits([float(x) for x in counters["lento"]] if training and args.lento > 0 else [0.0, 0.0, 0.0])
-        if training:
-            b.set_maneuvers(args.manobras, -1)
-        b.set_idle_imitation(args.imitacao_parado)
-        if hasattr(b, "set_free_velocity_feedforward"):
-            b.set_free_velocity_feedforward(args.velocidade_propria)
-        if args.levantar_velocidade is not None:
-            b.set_recovery_velocity(True)
-        if args.soltar_livres:
-            b.set_teacher_free_drills([DRILL_KEYS.index(k) for k in args.soltar_livres])
-        if args.manobras_pesos:
-            b.set_maneuver_weights(list(args.manobras_pesos))
-        if args.comando > 0:
-            b.set_command(args.comando if training else 0.0, int(counters["comando_fase"]), args.comando_segundos)
-        if args.parada > 0:
-            b.set_final_stop(args.parada if training else 0.0, *args.parada_janela, args.parada_freio, False)
-            if args.parada_clipes:
-                b.set_stop_clips(True)
-        if args.estrela > 0:
-            # (08/11: a estrela so no treino - a fatia; nas avaliacoes, so as dela.)
-            b.set_star(args.estrela if training else 0.0, [float(x) for x in counters["estrela_pesos"]],
-                       [int(x) for x in counters["estrela_fases"]], args.estrela_segundos)
-        if args.fogo >= 0 and training:
-            hit, hold = fire_bands(counters["fogo_nivel"])
-            b.set_fire(args.fogo_fatia, hit, hold, FIRE_HOLD_SECONDS, FIRE_HOLD_FRACTION)
-            b.set_fire_groups(fire_group_bands(counters["fogo_niveis"]))
-            b.set_push_variety(args.fogo_pontos)
-            b.set_push_imitation_relief(args.fogo_alivio)
-        if args.rumo_percurso > 0:
-            b.set_course_shaping(args.rumo_percurso)
-        if args.amortecimento_livre > 0 and hasattr(b, "set_free_damping_scale"):
-            b.set_free_damping_scale(args.amortecimento_livre)
-        if args.soltar_teste_velocidade and hasattr(b, "set_self_teacher_velocity_mode"):
-            b.set_self_teacher_velocity_mode(args.soltar_teste_velocidade)
-        b.set_idle(args.idle_pos_levantar, args.parado_locomocao, args.idle_alcance)
-        b.set_idle_handoff(args.idle_entrega, args.idle_entrega_alcance)
-        b.set_rise_handoff(args.entrega_subindo)
-        b.set_recovery_natural(args.naturalidade)
-        b.set_lateral_hand_push(not args.trote_lateral_sem_puxao)
-        b.set_lateral_run_leg_reach(args.corrida_lateral_pernas)
-        b.set_gait_speeds(gait_speeds(args.velocidade_trote), gait_speeds(args.velocidade_corrida))
-        b.set_back_start_lean(-np.radians(args.largada_costas))
-        b.set_course_limit(args.curva_fora)
-        b.set_curve_lean(args.curva_inclinar)
-        b.set_foot_width(args.pisada_largura)
-        b.set_run_turn_brake(args.troca_freio)
-        b.set_run_turn_align(args.troca_pe)
-        b.set_turn_settle(args.troca_assentada)
-        b.set_turn_launch(args.troca_arrancada)
-        b.set_run_launch_ease(*(args.corrida_largada or (0.0, 0.0, 0.0)))
-        b.set_course_tail(args.rumo_cauda)
-        if training and hasattr(b, "set_speed_range"):
-            b.set_speed_range(args.faixa_velocidade)
-        if hasattr(b, "set_idle_quiet"):
-            b.set_idle_quiet(args.quietude_parado)
-        if hasattr(b, "set_maneuver_acceleration"):
-            b.set_maneuver_acceleration(args.troca_aceleracao)
-        if hasattr(b, "set_rise_overshoot"):
-            b.set_rise_overshoot(args.subida_freada)
-        b.set_roll_tail(args.inclinacao_cauda)
-        b.set_cliff_free(args.sem_penhascos)
-        b.set_launch_rise(args.arrancada_pulo)
-        if hasattr(b, "set_lateral_start"):
-            b.set_lateral_start(args.largada_lado)
-        if hasattr(b, "set_turn_settle_lateral"):
-            b.set_turn_settle_lateral(args.troca_assentada_lado)
-        if hasattr(b, "set_turn_settle_front"):
-            b.set_turn_settle_front(args.troca_assentada_frente)
-        if hasattr(b, "set_run_turn_time_scale"):
-            b.set_run_turn_time_scale(args.troca_giro_tempo)
-        if hasattr(b, "set_stop_gait_all"):
-            b.set_stop_gait_all(args.parada_passada)
-        if hasattr(b, "set_idle_pose_gate"):
-            b.set_idle_pose_gate(args.idle_pose)
-        if hasattr(b, "set_stop_clips_front"):
-            b.set_stop_clips_front(args.parada_clipes_frente)
-        if hasattr(b, "set_stop_clips_command"):
-            b.set_stop_clips_command(args.parada_clipes_comando)
-        if hasattr(b, "set_stop_gate_floor"):
-            b.set_stop_gate_floor(args.parada_portao)
-        if hasattr(b, "set_free_stop"):
-            b.set_free_stop(args.parada_livre)
-        if hasattr(b, "set_stop_posture"):
-            b.set_stop_posture(args.parada_postura)
-        if hasattr(b, "set_upper_rigor"):
-            b.set_upper_rigor(args.rigor_superior)
-        if hasattr(b, "set_unreal_starts"):
-            b.set_unreal_starts(args.arrancada_unreal)
-        if hasattr(b, "set_unreal_start_scale"):
-            b.set_unreal_start_scale(args.arrancada_unreal_escala)
-        if hasattr(b, "set_live_launch"):
-            b.set_live_launch(args.largada_viva)
-        if hasattr(b, "set_launch_step_reward"):
-            b.set_launch_step_reward(args.largada_passo)
-        if hasattr(b, "set_launch_in_place_penalty"):
-            b.set_launch_in_place_penalty(args.largada_no_lugar)
-        if hasattr(b, "set_launch_calm_arms"):
-            b.set_launch_calm_arms(args.largada_bracos_calmos)
-        if hasattr(b, "set_spine_velocity_feedforward"):
-            b.set_spine_velocity_feedforward(args.coluna_sem_velocidade)
-        if hasattr(b, "set_base_posture"):
-            b.set_base_posture(args.postura_base)
-        if hasattr(b, "set_motor_tone"):
-            b.set_motor_tone(args.tonus)
-        if hasattr(b, "set_posture_tail"):
-            b.set_posture_tail(args.postura_cauda)
-        if hasattr(b, "set_spine_tone"):
-            b.set_spine_tone(args.tonus_coluna)
-        if hasattr(b, "set_jam_cost"):
-            b.set_jam_cost(args.custo_batente)
-        if hasattr(b, "set_foot_slip_cost"):
-            b.set_foot_slip_cost(args.pes_firmes)
-        if hasattr(b, "set_idle_world_track"):
-            b.set_idle_world_track(args.parado_fixo)
-        if hasattr(b, "set_motor_gravity"):
-            b.set_motor_gravity(args.gravidade_motores)
-        if hasattr(b, "set_idle_return"):
-            b.set_idle_return(args.volta_pose)
-        if hasattr(b, "set_stop_clips_base"):
-            b.set_stop_clips_base(args.parada_clipes_base)
-        if hasattr(b, "set_stop_entry"):
-            b.set_stop_entry(*args.parada_entrada)
-        if hasattr(b, "set_stop_front_variants") and args.parada_variantes:
-            b.set_stop_front_variants(True, -1)
-            if hasattr(b, "set_stop_front_variant_mask"):
-                b.set_stop_front_variant_mask(args.parada_variantes_mascara)
-        if hasattr(b, "set_free_troca"):
-            b.set_free_troca(args.troca_livre)
-        if hasattr(b, "set_free_stand_gate"):
-            b.set_free_stand_gate(args.parada_pose)
-        if hasattr(b, "set_command_chest_gate"):
-            b.set_command_chest_gate(args.peito_comando)
-        if hasattr(b, "set_free_idle"):
-            b.set_free_idle(args.parado_livre)
-        if hasattr(b, "set_pose_boost"):
-            b.set_pose_boost(args.pose_reforco)
-        if hasattr(b, "set_free_push"):
-            b.set_free_push(args.empurrao_livre)
-        if hasattr(b, "set_free_idle_match"):
-            b.set_free_idle_match(args.parado_semelhanca)
-        if hasattr(b, "set_free_step_height"):
-            b.set_free_step_height(args.passo_baixo)
-        if hasattr(b, "set_idle_bent_end"):
-            b.set_idle_bent_end(args.parado_dobrado_encerra)
-        if hasattr(b, "set_upper_imitation"):
-            b.set_upper_imitation(args.imitacao_tronco)
-        if hasattr(b, "set_idle_wide"):
-            b.set_idle_wide(args.parado_largo)
-        if hasattr(b, "set_mirror_cycles"):
-            b.set_mirror_cycles(args.simetria_ciclos)
-        if hasattr(b, "set_turn_settle_back"):
-            b.set_turn_settle_back(args.troca_assentada_costas)
-        if hasattr(b, "set_troca_fixed_chest"):
-            b.set_troca_fixed_chest(args.troca_peito_fixo)
-        if args.penhascos_partes is not None:
-            b.set_cliff_parts(*(part in args.penhascos_partes for part in ("curvas", "pe", "antebraco", "pulo")))
-        b.set_troca_practice(args.troca_pratica, [0.0] * 8)
-        b.set_foot_cross(args.pegada_cruzada)
-        b.set_idle_reanchor(args.estab_ancora)
-        b.set_front_lean(*np.radians(args.trote_frente_inclinar))
-        b.set_run_lean(math.radians(args.corrida_inclinar[0]), args.corrida_inclinar[1])
-        b.set_run_back_lean(math.radians(args.corrida_costas_inclinar[0]), args.corrida_costas_inclinar[1])
-        b.set_get_up_tracking(args.levantar_clipe)
-        b.set_sprint(args.sprint_velocidade, math.radians(args.sprint_inclinar[0]), args.sprint_inclinar[1])
-        b.set_upper_hand(args.mao_tronco)
-        b.set_body_hand(args.mao_corpo)
-        if args.equilibrio:
-            # (04/11 15h, os passos: o gerador no idle, quem segura o empurrao de pe, a chegada do levantar e o equilibrio
-            # parado - no treino a fatia dos comecos de pe, na avaliacao 8 todos -, no nivel do curriculo.)
-            b.set_balance_steps(True, args.empurrao_idle)
-            b.set_get_up_arrival(args.chegada_premio, args.voo_multa, args.subida_equilibrio, args.entrega_calma)
-            b.set_idle_threat_reach(args.idle_alcance_ameaca)
-            b.set_balance_drill(args.equilibrio_fatia if training else 0.0,
-                                1.0 if args.fogo >= 0 and training else counters["equilibrio_nivel"])
-            b.set_avoid_on_idle(args.evitar_idle)
-        b.set_accel_lean(math.radians(args.troca_inclinar))
-
     # (08/11) A estrela e a fase de fogo: as fases, os pesos e o nivel do comeco (uma vez; depois os do treino).
     counters.setdefault("comando_fase", int(args.comando_fase))
     counters.setdefault("comando_desde", counters["atualizacao"])
@@ -3793,14 +3814,14 @@ def main() -> int:
         counters.setdefault("equilibrio_desde", counters["atualizacao"])
         evaluations["equilibrio_"] = get_up_batch(str(REPO / "assets"), environments=16, threads=eval_threads, seed=556,
                                                   evaluation=True, evaluation_kind=8, **v2)
-        configure(evaluations["equilibrio_"], False)
+        configurar(evaluations["equilibrio_"], args, counters, False)
         info = json.loads((run / "run.json").read_text())
         info["v2"]["equilibrio_nivel"] = counters["equilibrio_nivel"]
         (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
         print(f"equilibrio: gerador de passos no idle, empurrao de pe com {'o idle' if args.empurrao_idle else 'a recuperacao'}, "
               f"chegada {args.chegada_premio}, voo {args.voo_multa}, fatia {args.equilibrio_fatia} no nivel "
               f"{counters['equilibrio_nivel']}", flush=True)
-    configure(batch, True)
+    configurar(batch, args, counters, True)
     for e in evaluations.values():
         e.set_phase_sync(args.sincronizar_fase)
         e.set_arm_clip_reach(args.bracos_clipe)
@@ -3891,11 +3912,11 @@ def main() -> int:
             # cada um valia 12,5-25% e a linha saltava; agora 24 por rumo e 12 por manobra.)
             rumos = get_up_batch(str(REPO / "assets"), environments=192, threads=eval_threads, seed=700 + band, evaluation=True,
                                  evaluation_kind=4, evaluation_band=band, **plain_v2)
-            configure(rumos, False)
+            configurar(rumos, args, counters, False)
             capacity_batches.append(("rumos", rumos))
             moves = get_up_batch(str(REPO / "assets"), environments=84, threads=eval_threads, seed=710 + band, evaluation=True,
                                  evaluation_kind=4, evaluation_band=band, **plain_v2)
-            configure(moves, False)
+            configurar(moves, args, counters, False)
             moves.set_maneuvers(0.0, 0)
             capacity_batches.append(("manobras", moves))
         if args.parada > 0:
@@ -3903,14 +3924,14 @@ def main() -> int:
             for band in (1, 2):
                 stop_batch = get_up_batch(str(REPO / "assets"), environments=24, threads=eval_threads, seed=770 + band,
                                           evaluation=True, evaluation_kind=4, evaluation_band=band, **plain_v2)
-                configure(stop_batch, False)
+                configurar(stop_batch, args, counters, False)
                 stop_batch.set_final_stop(0.0, *args.parada_janela, args.parada_freio, True)
                 capacity_batches.append(("parada", stop_batch))
         if args.comando > 0:
             # (08/11 14h40: o comando na fase 3 - a regua fixa do jogo -, 24 episodios.)
             cmd = get_up_batch(str(REPO / "assets"), environments=24, threads=eval_threads, seed=760, evaluation=True,
                                evaluation_kind=4, evaluation_band=1, **plain_v2)
-            configure(cmd, False)
+            configurar(cmd, args, counters, False)
             cmd.set_maneuvers(0.0, 12)
             cmd.set_command(0.0, 3, args.comando_segundos)
             capacity_batches.append(("comando", cmd))
@@ -3919,7 +3940,7 @@ def main() -> int:
             for band in (1, 2):
                 star = get_up_batch(str(REPO / "assets"), environments=36, threads=eval_threads, seed=730 + band,
                                     evaluation=True, evaluation_kind=4, evaluation_band=band, **plain_v2)
-                configure(star, False)
+                configurar(star, args, counters, False)
                 star.set_maneuvers(0.0, 11)
                 star.set_star(0.0, [1.0] * 6, [4] * 6, args.estrela_segundos)
                 capacity_batches.append(("estrela", star))
@@ -3932,20 +3953,20 @@ def main() -> int:
             for band in (1, 2):
                 fire = get_up_batch(str(REPO / "assets"), environments=48, threads=eval_threads, seed=740 + band,
                                     evaluation=True, evaluation_kind=4, evaluation_band=band, **fire_v2)
-                configure(fire, False)
+                configurar(fire, args, counters, False)
                 fire.set_fire(1.0, fire_hit, fire_hold, FIRE_HOLD_SECONDS, FIRE_HOLD_FRACTION)
                 capacity_batches.append(("fogo", fire))
             if args.equilibrio:
                 still = get_up_batch(str(REPO / "assets"), environments=16, threads=eval_threads, seed=750, evaluation=True,
                                      evaluation_kind=8, **v2)
-                configure(still, False)
+                configurar(still, args, counters, False)
                 still.set_balance_drill(0.0, 1.0)
                 still.set_fire(1.0, fire_hit, fire_hold, FIRE_HOLD_SECONDS, FIRE_HOLD_FRACTION)
                 capacity_batches.append(("fogo", still))
         if GETUP_CLIP[0]:
             rise = get_up_batch(str(REPO / "assets"), environments=16, threads=eval_threads, seed=720, evaluation=True,
                                 evaluation_kind=0, **v2)
-            configure(rise, False)
+            configurar(rise, args, counters, False)
             capacity_batches.append(("levantar", rise))
         print(f"capacidade em forca fixa a cada {args.capacidade_minutos:g} min: {len(capacity_batches)} lotes", flush=True)
 
