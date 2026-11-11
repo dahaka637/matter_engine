@@ -271,9 +271,9 @@ struct TrackingGetUpAmpSettings3D {
     // (11/11 09h50, ele: "o treino do giro parado esta errado: deveria fazer giros fixos de tipo 60, 90, 180, 360 graus, em
     // velocidades variadas, inversao de giro, as vezes gira, espera e ai gira de novo; e recompensar ele melhor por manter a coluna
     // toda reta") turnVariety: cada giro e 60, 90, 180 ou 360 graus, na velocidade do clipe x 0,6-1,4, o lado sorteado de novo, e
-    // 30% das vezes antes dele uma pausa de 0,5-2 s no idle alerta. turnSpineReward: no giro, o bonus da coluna reta - o eixo de
-    // cima da pelve contra o do peito alto, 1/(1+(angulo/8 graus)^2) - vezes isto, somado a nota; 09h55, ele: "no parado tambem" -
-    // no parado ela entra no bonus da nota com este peso.
+    // 30% das vezes antes dele uma pausa de 0,5-2 s no idle alerta. turnSpineReward: no giro, o bonus da coluna alinhada - a cadeia
+    // Pelvis-Abdomen-Chest-UpperChest-Neck, cada junta 1/(1+(angulo/5 graus)^2), a media (spineAlignment) - vezes isto, somado a
+    // nota; 09h55, ele: "no parado tambem" - no parado ela entra no bonus da nota com este peso.
     bool turnVariety = false;
     float turnSpineReward = 0.0f;
     // (Ele: "Parado - penaliza micromovimentos, penaliza fora da pose") Com idleUnified, no parado: a nota

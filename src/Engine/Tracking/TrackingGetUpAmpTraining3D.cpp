@@ -6515,6 +6515,35 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         return best;
     }
+    // (11/11 10h05, ele: "o correto e a pelvis com abdomen com peito com upperchest e neck... o alinhamento de todos") O alinhamento
+    // da coluna inteira: o eixo de cima de cada elo da cadeia Pelvis-Abdomen-Chest-UpperChest-Neck contra o do seguinte; cada junta
+    // 1/(1+(angulo/5 graus)^2), a media das quatro (1 toda reta).
+    mutable std::array<std::size_t, 5> spineChain {};
+    mutable bool spineChainReady = false;
+    float spineAlignment(const World& w) const {
+        if (!spineChainReady) {
+            static constexpr const char* Chain[5] { "Pelvis", "Abdomen", "Chest", "UpperChest", "Neck" };
+            for (std::size_t k = 0; k < 5; ++k) {
+                spineChain[k] = profile->links.size();
+                for (std::size_t i = 0; i < profile->links.size(); ++i)
+                    if (profile->links[i].id == Chain[k]) spineChain[k] = i;
+            }
+            spineChainReady = true;
+        }
+        const auto upOf = [&](std::size_t i) {
+            return (w.body->links[i].orientation * profile->links[i].modelOrientation.conjugate()).normalized().rotate({ 0.0f, 0.0f, 1.0f });
+        };
+        float sum = 0.0f;
+        int count = 0;
+        for (std::size_t k = 0; k + 1 < 5; ++k) {
+            const std::size_t a = spineChain[k], b = spineChain[k + 1];
+            if (a >= w.body->links.size() || b >= w.body->links.size()) continue;
+            const float angle = std::acos(std::clamp(dot(upOf(a), upOf(b)), -1.0f, 1.0f)) * 180.0f / Pi;
+            sum += 1.0f / (1.0f + (angle / 5.0f) * (angle / 5.0f));
+            ++count;
+        }
+        return count > 0 ? sum / static_cast<float>(count) : 1.0f;
+    }
     float freeStopScore(World& w, Vec3 velocity) {
         const Vec3 root = w.body->links[rootLink].position;
         w.smoothVelocity = w.smoothVelocity + (Vec3 { velocity.x, velocity.y, 0.0f } - w.smoothVelocity)
@@ -7251,12 +7280,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
                            : posture->standingReward(now, w.body->links, settled);
         if (settings.turnSpineReward > 0.0f && w.startKind == 7 && w.locomotionControl && upperChestLink < w.body->links.size()) {
             // (settings.turnSpineReward - ver o .hpp: a coluna toda reta no giro, o eixo de cima da pelve contra o do peito alto.)
-            const auto upOf = [&](std::size_t i) {
-                return (w.body->links[i].orientation * profile->links[i].modelOrientation.conjugate()).normalized().rotate({ 0.0f, 0.0f, 1.0f });
-            };
-            const float bend = std::acos(std::clamp(dot(upOf(rootLink), upOf(upperChestLink)), -1.0f, 1.0f)) * 180.0f / Pi;
-            const float x = bend / 8.0f;
-            state += settings.turnSpineReward / (1.0f + x * x);
+            state += settings.turnSpineReward * spineAlignment(w);
         }
         // O premio do passo (com o pedido de deslocamento, de pe): cada pe que pousa depois de um tempo no ar.
         if (settings.stepReward > 0.0f) {
@@ -7501,15 +7525,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
                                 // (11/11 09h55, ele: "no parado tambem, precisa recompensar por manter a coluna toda ALINHADA": a coluna
                                 // alinhada - o eixo de cima da pelve contra o do peito alto, 1/(1+(angulo/8 graus)^2) - entra no bonus com o
                                 // peso turnSpineReward, como no giro.)
-                                float aligned = 0.0f;
-                                if (settings.turnSpineReward > 0.0f && upperChestLink < w.body->links.size()) {
-                                    const auto upOf = [&](std::size_t i) {
-                                        return (w.body->links[i].orientation * profile->links[i].modelOrientation.conjugate()).normalized()
-                                            .rotate({ 0.0f, 0.0f, 1.0f });
-                                    };
-                                    const float bend = std::acos(std::clamp(dot(upOf(rootLink), upOf(upperChestLink)), -1.0f, 1.0f)) * 180.0f / Pi;
-                                    aligned = 1.0f / (1.0f + (bend / 8.0f) * (bend / 8.0f));
-                                }
+                                const float aligned = settings.turnSpineReward > 0.0f ? spineAlignment(w) : 0.0f;
                                 const float bonus = settings.idleRewardPose * close + settings.idleRewardStill * still + settings.turnSpineReward * aligned;
                                 idleScore = std::max(0.0f, 0.5f + 0.5f * bonus
                                     / std::max(1.0e-3f, settings.idleRewardPose + settings.idleRewardStill + settings.turnSpineReward)
