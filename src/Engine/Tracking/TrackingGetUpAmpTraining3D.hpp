@@ -269,6 +269,16 @@ struct TrackingGetUpAmpSettings3D {
     // base 8 cm, os giros 12 graus, a inclinacao 8 graus, a altura 3 cm; cada uma ate 3), de 0 a 1. Nunca negativa: cair nao compensa.
     float idleMotionCost = 0.0f;
     float idlePoseCost = 0.0f;
+    // (11/11 08h58, ele: "no exercicio do parado vamos refatorar as recompensas / punicoes: recompensar ele o quao mais proximo da
+    // pose alvo maior a recompensa; quanto menos movimentos maior recompensa; e punir deslizar pes") Com idleRewardPose > 0 (e
+    // idleUnified), a nota do parado e: idleRewardPose x proximidade + idleRewardStill x quietude - idleSlideCost x deslize, com a
+    // proximidade 0,5 forma (cada junta, 1/(1+(erro/0,15 rad)^2)) + 0,5 lugar (base, giros, inclinacao e altura, cada um
+    // 1/(1+(d/largura)^2)) - sobe sempre que ele chega mais perto, sem saturar -; a quietude 1/(1 + movimento/0,25) (o giro medio
+    // dos elos ao quadrado mais 10 x a velocidade do centro de massa ao quadrado); o deslize, a soma da velocidade no chao (m/s) dos
+    // pes apoiados, ate 0,5. Mais o custo pequeno dos passos do gerador.
+    float idleRewardPose = 0.0f;
+    float idleRewardStill = 0.0f;
+    float idleSlideCost = 0.0f;
     // (10/11 04h, ele: "desde agora precisamos cobrar a coluna correta, cabeca, bracos com mais rigor durante as locomocoes e
     // parado") A regua da imitacao da coluna, da cabeca e dos bracos vezes isto (andando, no giro e nas trocas); 1: sem.
     float upperRigor = 1.0f;
@@ -1086,6 +1096,7 @@ public:
     void setIdleUnified(bool on);
     void setStopToIdle(bool on);
     void setIdleCosts(float motion, float pose);
+    void setIdleReward(float pose, float still, float slide);
     void setUpperRigor(float factor);
     void setUnrealStarts(bool on);
     void setUnrealStartScale(float scale);

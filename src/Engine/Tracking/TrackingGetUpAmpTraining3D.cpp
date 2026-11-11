@@ -7421,6 +7421,24 @@ struct TrackingGetUpAmpTraining3D::Impl {
                                 idleScore = std::max(0.0f, 0.3f + 0.7f * idleScore - settings.idleMotionCost * moving
                                     - settings.idlePoseCost * distance);
                             }
+                            if (settings.idleRewardPose > 0.0f) {
+                                // (settings.idleRewardPose/idleRewardStill/idleSlideCost - ver o .hpp.)
+                                const float close = 0.5f * shape + 0.5f * place;
+                                double spin2 = 0.0;
+                                for (const PhysicsBodyState3D& link : w.body->links) spin2 += link.angularVelocity.lengthSquared();
+                                spin2 /= static_cast<double>(std::max<std::size_t>(1, w.body->links.size()));
+                                const float motion = static_cast<float>(spin2) + 10.0f * (v.x * v.x + v.y * v.y + v.z * v.z);
+                                const float still = 1.0f / (1.0f + motion / 0.25f);
+                                float slide = 0.0f;
+                                for (const std::uint32_t f : footLinks) {
+                                    const bool down = std::any_of(w.body->contacts.begin(), w.body->contacts.end(),
+                                        [&](const RagdollContactPoint3D& c) { return c.linkIndex == f; });
+                                    if (down) slide += std::hypot(w.body->links[f].linearVelocity.x, w.body->links[f].linearVelocity.y);
+                                }
+                                idleScore = settings.idleRewardPose * close + settings.idleRewardStill * still
+                                    - settings.idleSlideCost * std::min(0.5f, slide);
+                                match = close;
+                            }
                             state = idleScore - (w.stepsOn && w.steps.recoveryStarted() ? 0.05f : 0.0f)
                                 - (w.stepsOn && w.steps.settleStarted() ? 0.02f : 0.0f);
                         }
@@ -8536,6 +8554,11 @@ void TrackingGetUpAmpTraining3D::setFreeStop(bool on) { m_impl->settings.freeSto
 void TrackingGetUpAmpTraining3D::setStopPosture(float gate) { m_impl->settings.stopPosture = std::clamp(gate, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setIdleUnified(bool on) { m_impl->settings.idleUnified = on; }
 void TrackingGetUpAmpTraining3D::setStopToIdle(bool on) { m_impl->settings.stopToIdle = on; }
+void TrackingGetUpAmpTraining3D::setIdleReward(float pose, float still, float slide) {
+    m_impl->settings.idleRewardPose = std::clamp(pose, 0.0f, 2.0f);
+    m_impl->settings.idleRewardStill = std::clamp(still, 0.0f, 2.0f);
+    m_impl->settings.idleSlideCost = std::clamp(slide, 0.0f, 5.0f);
+}
 void TrackingGetUpAmpTraining3D::setIdleCosts(float motion, float pose) {
     m_impl->settings.idleMotionCost = std::clamp(motion, 0.0f, 1.0f);
     m_impl->settings.idlePoseCost = std::clamp(pose, 0.0f, 1.0f);

@@ -2,7 +2,7 @@
  "receita": "IDLE-DIRETO",
  "treino_original": "rl_final_clipe",
  "build_original": "build-rl-n17",
- "descricao": "campeao r72370 + ele 11/11: sem freio, a locomocao para direto no idle alerta; o parado penaliza micromovimentos e estar fora da pose; 11/11 08h5x, ele: o parado so pelo alert_idle (sem o estilo da Unreal no parado) e o trote a 4 m/s nos 8 rumos",
+ "descricao": "campeao r72370 + ele 11/11: sem freio, a locomocao para direto no idle alerta; o parado penaliza micromovimentos e estar fora da pose; 11/11 08h5x, ele: o parado so pelo alert_idle (sem o estilo da Unreal no parado) e o trote a 4 m/s nos 8 rumos; 08h58, ele: o parado recompensa a proximidade da pose e a quietude e pune o pe deslizando (--parado-recompensa 0.6 0.4 1.0)",
  "capturada": "2026-11-10 16h45, do ExecStart do servico",
  "argumentos": [
   "--simetria",
@@ -327,10 +327,10 @@
   "--juiz-andando",
   "--parado-unico",
   "--parada-direto-idle",
-  "--parado-micro",
-  "0.3",
-  "--parado-fora-pose",
-  "0.4"
+  "--parado-recompensa",
+  "0.6",
+  "0.4",
+  "1.0"
  ],
  "campeao": "~/.local/share/matter-engine/rl/campeoes/r72370_sem_alivio_1111.pt"
 }
