@@ -368,6 +368,10 @@ struct TrackingGetUpAmpSettings3D {
     // (10/11 01h30) O parado dobrado encerra como a queda, sozinho (sem o resto do poseBoost): parado, abaixo de 0,5 m/s e fora dos
     // 2 s depois de um empurrao, o peito alto a mais de 34 graus do idle por 0,5 s. Sem ele o parado voltou a dobrar na cintura.
     bool idleBentEnd = false;
+    // (11/11, E5-4) A linha final do episodio com o feedback do passo final: o begin() do recomeco roda dentro do step e
+    // zerava o locomotionFeedback antes de o Python le-lo - a nota (o teto do custo), o portao do estilo e as medias rastreio_*
+    // contavam um zero. Ligado, o feedback do passo final volta depois do begin() (o proximo decide o zera de novo).
+    bool finalRow = false;
     // (10/11 01h45) O parado visto como o parado da parada livre: no parado da cabeca da locomocao, sem o relogio do clipe do idle
     // na observacao e com a vista contra o peito de verdade (antes fixa em "de frente"). A mesma rede fica de pe depois de uma
     // parada livre e se dobra na cintura no exercicio parado - o teste de que o contexto liga o modo dobrado.
@@ -1095,6 +1099,7 @@ public:
     void setFreeIdleMatch(float weight);
     void setFreeStepHeight(float meters);
     void setIdleBentEnd(bool on);
+    void setFinalRow(bool on);
     void setIdleLikeStop(bool on);
     // shortcut: sem efeito desde a limpeza de 10/11; so o Workbench (TrackingViewer3D.cpp) ainda chama. Sair junto com ele.
     void setUpperImitation(bool) {}

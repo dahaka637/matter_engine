@@ -616,6 +616,7 @@ NB_MODULE(matter_tracking_native, m) {
         .def("set_free_idle_match", &TrackingGetUpAmpTraining3D::setFreeIdleMatch, "weight"_a)
         .def("set_free_step_height", &TrackingGetUpAmpTraining3D::setFreeStepHeight, "meters"_a)
         .def("set_idle_bent_end", &TrackingGetUpAmpTraining3D::setIdleBentEnd, "on"_a)
+        .def("set_final_row", &TrackingGetUpAmpTraining3D::setFinalRow, "on"_a)
         .def("set_idle_like_stop", &TrackingGetUpAmpTraining3D::setIdleLikeStop, "on"_a)
         .def("set_idle_wide", &TrackingGetUpAmpTraining3D::setIdleWide, "on"_a)
         .def("set_mirror_cycles", &TrackingGetUpAmpTraining3D::setMirrorCycles, "on"_a)

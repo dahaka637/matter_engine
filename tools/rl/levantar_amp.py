@@ -1797,6 +1797,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(10/11 01h40) o peso da tarefa nas linhas do parado com a cabeca da locomocao (o exercicio parado e o do "
                              "equilibrio); com --peso-estilo-parado. Sem: os da recuperacao (o juiz preferia o corpo dobrado)")
     parser.add_argument("--peso-estilo-parado", type=float, default=None)
+    parser.add_argument("--linha-final", action="store_true",
+                        help="(11/11, E5-4) a linha final de cada episodio com o feedback do passo final (a nota, o teto do custo, o "
+                             "portao do estilo e as medias rastreio_*); sem: o feedback zerado do mundo recomecado, como antes")
     parser.add_argument("--parado-dobrado-encerra", action="store_true",
                         help="(10/11 01h30) parado, o peito alto a mais de 34 graus do idle por 0,5 s (fora do empurrao) encerra como a queda")
     parser.add_argument("--parado-semelhanca", type=float, default=0.0,
@@ -2358,6 +2361,7 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_free_step_height(args.passo_baixo)
     if hasattr(b, "set_idle_bent_end"):
         b.set_idle_bent_end(args.parado_dobrado_encerra)
+    b.set_final_row(args.linha_final)
     if hasattr(b, "set_idle_wide"):
         b.set_idle_wide(args.parado_largo)
     if hasattr(b, "set_mirror_cycles"):

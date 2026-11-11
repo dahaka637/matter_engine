@@ -7833,7 +7833,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 std::lock_guard lock(episodeMutex);
                 episodes.push_back(episode);
             }
+            const auto finalFeedback = w.locomotionFeedback;
             begin(w);
+            if (settings.finalRow) w.locomotionFeedback = finalFeedback;
         }
         observe(w);
     }
@@ -8536,6 +8538,7 @@ void TrackingGetUpAmpTraining3D::setFreePush(bool on) { m_impl->settings.freePus
 void TrackingGetUpAmpTraining3D::setFreeIdleMatch(float weight) { m_impl->settings.freeIdleMatch = std::clamp(weight, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setFreeStepHeight(float meters) { m_impl->settings.freeStepHeight = std::max(0.0f, meters); }
 void TrackingGetUpAmpTraining3D::setIdleBentEnd(bool on) { m_impl->settings.idleBentEnd = on; }
+void TrackingGetUpAmpTraining3D::setFinalRow(bool on) { m_impl->settings.finalRow = on; }
 void TrackingGetUpAmpTraining3D::setIdleLikeStop(bool on) { m_impl->settings.idleLikeStop = on; }
 void TrackingGetUpAmpTraining3D::setIdleWide(bool on) { m_impl->settings.idleWide = on; }
 void TrackingGetUpAmpTraining3D::setMirrorCycles(bool on) { m_impl->settings.mirrorCycles = on; }
