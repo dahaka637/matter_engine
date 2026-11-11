@@ -1242,42 +1242,6 @@ def dynamic_assist(rows: np.ndarray, level: float, state: dict, seconds: float, 
     return None, perf
 
 
-def assist_step(level: float) -> float:
-    """O degrau da forca auxiliar: 0,1 acima de 0,25; 0,05 ate 0,1; 0,025 abaixo."""
-    return 0.1 if level > 0.25 + 1e-6 else 0.05 if level > 0.1 + 1e-6 else 0.025
-
-
-def assist_decision(held: np.ndarray, level: float, since: int, wait: int, ceiling: float, score: float, args,
-                    need_turn: bool = True, key_column: int = 2, keys=tuple(range(8))):
-    """O portao da forca auxiliar (04/11): os episodios de rumo (6) e giro (7) do degrau. Desce um degrau com todos os 8
-    rumos sem cair >= --ajuda-sem-cair e na velocidade >= --ajuda-vel da pedida, o giro sem cair >= --ajuda-giro e a
-    nota >= --ajuda-nota, depois de --ajuda-intervalo (+ a espera de um recuo) atualizacoes; recua um degrau (ate o
-    teto) com o pior rumo ou o giro abaixo de --ajuda-recuo depois de --ajuda-recuo-apos. Devolve (novo nivel ou None,
-    as medidas)."""
-    # (Falha: caiu, ou o episodio acabou antes do fim - o corpo virado alem do rumo do clipe tambem encerra, e essa coluna
-    # 13 nao conta: o giro sem forca dava "100% sem cair" com episodios de 1,1 s.)
-    failed = lambda rows: (rows[:, 13] > 0.5) | (rows[:, 4] < args.locomocao_segundos - 0.05)  # noqa: E731
-    per = {}
-    for h in keys:
-        sel = held[(held[:, 1] == 6) & (held[:, key_column] == h)] if len(held) else held
-        if len(sel) >= 10:
-            per[h] = (float(1.0 - failed(sel).mean()), float((sel[:, 12] / np.maximum(sel[:, 10], 0.1)).mean()))
-    turn = held[held[:, 1] == 7] if len(held) else held
-    worst_up = min((v[0] for v in per.values()), default=None)
-    worst_speed = min((v[1] for v in per.values()), default=None)
-    turn_up = float(1.0 - failed(turn).mean()) if len(turn) >= 10 else (None if need_turn else 1.0)
-    info = {"ajuda_pior_sem_cair": worst_up, "ajuda_pior_vel": worst_speed, "ajuda_giro_sem_cair": turn_up,
-            "ajuda_episodios": int(len(held)), "ajuda_rumos": {str(h): [round(a, 3), round(b, 3)] for h, (a, b) in per.items()}}
-    if len(per) < len(keys) or turn_up is None:
-        return None, info
-    if (level > 0 and since >= args.ajuda_intervalo + wait and worst_up >= args.ajuda_sem_cair
-            and worst_speed >= args.ajuda_vel and turn_up >= args.ajuda_giro and score >= args.ajuda_nota):
-        return round(max(0.0, level - assist_step(level)), 4), info
-    if since >= args.ajuda_recuo_apos and level < ceiling - 1e-6 and (worst_up < args.ajuda_recuo or turn_up < args.ajuda_recuo):
-        return round(min(ceiling, level + assist_step(level + 1e-3)), 4), info
-    return None, info
-
-
 def summarize(rows: np.ndarray, prefix: str) -> dict:
     """As medidas de um conjunto de episodios (as colunas de finished_episodes)."""
     out: dict = {}
@@ -1608,26 +1572,9 @@ def build_parser() -> argparse.ArgumentParser:
     # (31/10 22h35, ele: so esta rede daqui em diante, com os basicos do B21 - os rumos e o giro parado suave -, o
     # autoequilibrio o principal: "se locomover resistindo a impactos e adversidades".)
     parser.add_argument("--habilidades-separadas", action="store_true", help="atores/críticos separados dentro da mesma política")
-    # (04/11 00h, a ordem dele: "forcar a forca auxiliar em 100% para os exercicios de locomocao, assim ele sera obrigado
-    # a aprender" - a mao de fora na pelve, no rastreio; desce --ajuda-passo so com o dominio medido desde a ultima
-    # mudanca: --ajuda-nota de nota do rastreio e --ajuda-sem-cair nos rumos e no giro, em --ajuda-intervalo atualizacoes.)
-    parser.add_argument("--ajuda-locomocao", type=float, default=0.0, help="a forca auxiliar inicial da locomocao (0-1)")
-    # (04/11 00h50, o plano das recompensas: o portao de 00h12 descia a cada 60 atualizacoes - 2,6 min - com a media de
-    # todos os rumos, e o clipe nos motores passava sozinho: 1,0 -> 0,1 em 25 min. Agora: no minimo --ajuda-intervalo
-    # atualizacoes no degrau, os episodios so depois de --ajuda-aquecer, e o PIOR rumo e o giro decidem; o degrau afina
-    # perto do zero (0,1 acima de 0,25; 0,05 ate 0,1; 0,025 abaixo); e o recuo: o pior rumo abaixo de --ajuda-recuo depois
-    # de --ajuda-recuo-apos atualizacoes volta um degrau.)
-    parser.add_argument("--ajuda-forcar", type=float, default=-1.0,
-                        help="poe a forca neste valor uma vez (o mesmo valor de novo nao repete ao retomar)")
-    parser.add_argument("--ajuda-corrida", type=float, default=-1.0,
-                        help="a forca auxiliar inicial da corrida (04/11; o teto do recuo dela); < 0: a mesma do trote")
     # (04/11, ele: "adaptar os treinos de TROCAS de direcoes e curvas que possuiamos no b21": a fatia dos episodios de rumo
     # com manobra - as trocas de peito fixo, a troca livre e as curvas, no trote e na corrida - e a forca delas.)
     parser.add_argument("--manobras", type=float, default=0.0)
-    parser.add_argument("--ajuda-manobra", type=float, default=-1.0,
-                        help="a forca auxiliar inicial das manobras (o teto do recuo delas); < 0: a do rumo")
-    parser.add_argument("--ajuda-corrida-forcar", type=float, default=-1.0, help="como --ajuda-forcar, para a corrida")
-    parser.add_argument("--ajuda-manobra-forcar", type=float, default=-1.0, help="como --ajuda-forcar, para as manobras")
     # (04/11 03h45: a forca auxiliar por exercicio, dinamica - dynamic_assist; o valor inicial de todos, uma vez.)
     parser.add_argument("--ajuda-dinamica", type=float, default=-1.0,
                         help="liga a forca por exercicio, comecando todos neste valor (uma vez por valor); < 0 desligada")
@@ -1690,14 +1637,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="a mao nao puxa no plano no trote de lado (04/11 12h: o pe da frente nao apoiava)")
     parser.add_argument("--idle-entrega-alcance", type=float, default=-1.0,
                         help="o alcance da correcao durante a entrega (fracao; < 0: o do idle)")
-    parser.add_argument("--ajuda-nota", type=float, default=0.65)
-    parser.add_argument("--ajuda-sem-cair", type=float, default=0.9)
-    parser.add_argument("--ajuda-vel", type=float, default=0.8, help="a velocidade no rumo sobre a pedida, no pior rumo")
-    parser.add_argument("--ajuda-giro", type=float, default=0.85)
-    parser.add_argument("--ajuda-intervalo", type=int, default=150)
-    parser.add_argument("--ajuda-aquecer", type=int, default=30)
-    parser.add_argument("--ajuda-recuo", type=float, default=0.6)
-    parser.add_argument("--ajuda-recuo-apos", type=int, default=100)
     # (08/11, ele: "6 exercicios novos, da estrela de oito pontas... garanta bem a boa estruturacao das fases de aprendizado...
     # inicialmente vamos deslocar uma % dos treinos a estrela".)
     parser.add_argument("--estrela", type=float, default=0.0,
@@ -2541,8 +2480,8 @@ def main() -> int:
                   "levantar_clipe": args.levantar_clipe,
                   "estilo_chao": args.estilo_chao, "chao_altura": args.chao_altura, "rolar_clipe": args.rolar_clipe,
                   "musculo": args.musculo,
-                  "ajuda_locomocao": args.ajuda_locomocao, "sincronizar_fase": args.sincronizar_fase, "imitacao_folga": args.imitacao_folga, "peito_vista": args.peito_vista, "bracos_clipe": args.bracos_clipe, "estrela": args.estrela, "estrela_segundos": args.estrela_segundos, "comando": args.comando, "comando_segundos": args.comando_segundos, "parada": args.parada, "parada_clipes": args.parada_clipes, "passos_ciclos": args.passos_ciclos, "levantar_voo": args.levantar_voo, "lateral_pernas_rigor": args.lateral_pernas_rigor, "lento": args.lento, "cabeca_clipe": args.cabeca_clipe, "fogo_fatia": args.fogo_fatia if args.fogo >= 0 else 0.0, "fogo_pontos": args.fogo_pontos, "fogo_alvo": args.fogo_alvo, "diagonal_peito": args.diagonal_peito, "rumo_suave": args.rumo_suave, "rumo_limite": args.rumo_limite, "sem_potencial_loco": args.sem_potencial_loco, "nota_velocidade": args.nota_velocidade, "estilo_velocidade": args.estilo_velocidade, "joelho_dentro": args.joelho_dentro, "idle_altura": args.idle_altura, "parada_corpo": args.parada_corpo, "lento_faixa": args.lento_faixa,
-                  "ajuda_corrida": -1.0, "manobras": args.manobras, "ajuda_manobra": -1.0,
+                  "sincronizar_fase": args.sincronizar_fase, "imitacao_folga": args.imitacao_folga, "peito_vista": args.peito_vista, "bracos_clipe": args.bracos_clipe, "estrela": args.estrela, "estrela_segundos": args.estrela_segundos, "comando": args.comando, "comando_segundos": args.comando_segundos, "parada": args.parada, "parada_clipes": args.parada_clipes, "passos_ciclos": args.passos_ciclos, "levantar_voo": args.levantar_voo, "lateral_pernas_rigor": args.lateral_pernas_rigor, "lento": args.lento, "cabeca_clipe": args.cabeca_clipe, "fogo_fatia": args.fogo_fatia if args.fogo >= 0 else 0.0, "fogo_pontos": args.fogo_pontos, "fogo_alvo": args.fogo_alvo, "diagonal_peito": args.diagonal_peito, "rumo_suave": args.rumo_suave, "rumo_limite": args.rumo_limite, "sem_potencial_loco": args.sem_potencial_loco, "nota_velocidade": args.nota_velocidade, "estilo_velocidade": args.estilo_velocidade, "joelho_dentro": args.joelho_dentro, "idle_altura": args.idle_altura, "parada_corpo": args.parada_corpo, "lento_faixa": args.lento_faixa,
+                  "manobras": args.manobras,
                   "comeco_clipe": args.comeco_clipe, "comeco_de_pe": args.comeco_de_pe,
                   "imitacao_parado": args.imitacao_parado, "idle_pos_levantar": args.idle_pos_levantar,
                   "parado_locomocao": args.parado_locomocao, "idle_alcance": args.idle_alcance, "mao_tronco": args.mao_tronco,
@@ -3437,30 +3376,6 @@ def main() -> int:
                         "taxa_loco": actor_opt.param_groups[-1]["lr"]} if model.split else {})})
         return out
 
-    def set_assist(value: float) -> None:
-        """A forca auxiliar da locomocao no treino (as avaliacoes ficam sem ela: a regua) e no run.json do laboratorio."""
-        counters["ajuda"] = round(max(0.0, min(1.0, value)), 4)
-        batch.set_locomotion_assist(counters["ajuda"])
-        info = json.loads((run / "run.json").read_text())
-        info["v2"]["ajuda_locomocao"] = counters["ajuda"]
-        (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
-
-    def set_run_assist(value: float) -> None:
-        """A forca auxiliar da corrida no treino e no run.json do laboratorio."""
-        counters["ajuda_corrida"] = round(max(0.0, min(1.0, value)), 4)
-        batch.set_run_assist(counters["ajuda_corrida"])
-        info = json.loads((run / "run.json").read_text())
-        info["v2"]["ajuda_corrida"] = counters["ajuda_corrida"]
-        (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
-
-    def set_maneuver_assist(value: float) -> None:
-        """A forca auxiliar das manobras no treino e no run.json do laboratorio."""
-        counters["ajuda_manobra"] = round(max(0.0, min(1.0, value)), 4)
-        batch.set_maneuver_assist(counters["ajuda_manobra"])
-        info = json.loads((run / "run.json").read_text())
-        info["v2"]["ajuda_manobra"] = counters["ajuda_manobra"]
-        (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
-
     # (08/11) A estrela e a fase de fogo: as fases, os pesos e o nivel do comeco (uma vez; depois os do treino).
     counters.setdefault("comando_fase", int(args.comando_fase))
     counters.setdefault("comando_desde", counters["atualizacao"])
@@ -3556,39 +3471,6 @@ def main() -> int:
             last.bias[rows] = 0.0
         counters["cabeca_clipe"] = args.cabeca_clipe
         print(f"cabeca no clipe (alcance {args.cabeca_clipe}): {len(head)} eixos, saidas zeradas", flush=True)
-    if args.manobras > 0 and ("ajuda_manobra" in counters or args.ajuda_manobra >= 0):
-        if "ajuda_manobra" not in counters:
-            counters["ajuda_manobra_teto"] = args.ajuda_manobra
-            counters["ajuda_manobra_desde"] = counters["atualizacao"]
-        set_maneuver_assist(counters.get("ajuda_manobra", args.ajuda_manobra))
-        if args.ajuda_manobra_forcar >= 0 and counters.get("ajuda_manobra_forcada") != args.ajuda_manobra_forcar:
-            counters["ajuda_manobra_forcada"] = counters["ajuda_manobra_teto"] = args.ajuda_manobra_forcar
-            set_maneuver_assist(args.ajuda_manobra_forcar)
-            counters["ajuda_manobra_desde"] = counters["atualizacao"]
-        print(f"manobras: {args.manobras} dos rumos, forca auxiliar {counters['ajuda_manobra']}", flush=True)
-    if "ajuda_corrida" in counters or (args.ajuda_corrida >= 0 and args.corrida > 0):
-        if "ajuda_corrida" not in counters:
-            counters["ajuda_corrida_teto"] = args.ajuda_corrida
-            counters["ajuda_corrida_desde"] = counters["atualizacao"]
-        set_run_assist(counters.get("ajuda_corrida", args.ajuda_corrida))
-        if args.ajuda_corrida_forcar >= 0 and counters.get("ajuda_corrida_forcada") != args.ajuda_corrida_forcar:
-            counters["ajuda_corrida_forcada"] = counters["ajuda_corrida_teto"] = args.ajuda_corrida_forcar
-            set_run_assist(args.ajuda_corrida_forcar)
-            counters["ajuda_corrida_desde"] = counters["atualizacao"]
-        print(f"forca auxiliar da corrida: {counters['ajuda_corrida']}", flush=True)
-    if args.ajuda_locomocao > 0 or "ajuda" in counters:
-        set_assist(counters.get("ajuda", args.ajuda_locomocao))
-        counters.setdefault("ajuda_desde", counters["atualizacao"])
-    if args.ajuda_forcar >= 0 and counters.get("ajuda_forcada") != args.ajuda_forcar:
-        counters["ajuda_forcada"] = args.ajuda_forcar
-        counters["ajuda_teto"] = args.ajuda_forcar
-        set_assist(args.ajuda_forcar)
-        counters["ajuda_desde"] = counters["atualizacao"]
-    if "ajuda" in counters:
-        print(f"forca auxiliar da locomocao: {counters['ajuda']}", flush=True)
-    assist_rows: list = []
-    run_rows: list = []
-    move_rows: list = []
     balance_rows: list = []
     drill_rows: dict = {k: [] for k in DRILL_KEYS}
 
@@ -3753,9 +3635,6 @@ def main() -> int:
         if "ajuda_exercicios" in counters:
             counters["ajuda_exercicios"] = {k: 0.0 for k in DRILL_KEYS}
             set_drill_assist()
-        for setter, key in ((set_assist, "ajuda"), (set_run_assist, "ajuda_corrida"), (set_maneuver_assist, "ajuda_manobra")):
-            if key in counters:
-                setter(0.0)
         print("sem mao: toda forca auxiliar em zero", flush=True)
     # (O teto da semelhanca de cada exercicio, medido por teto_semelhanca.py; sem ele, a regua relativa a melhor marca.)
     ceilings = json.loads((run / "teto_semelhanca.json").read_text()) if (run / "teto_semelhanca.json").exists() else {}
@@ -3871,15 +3750,6 @@ def main() -> int:
                 key = drill_key(r)
                 if key in counters["ajuda_estado"] and counters["atualizacao"] - counters["ajuda_estado"][key]["desde"] >= 4:
                     drill_rows[key].append(r)
-        if len(episodes) and "ajuda" in counters \
-                and counters["atualizacao"] - counters["ajuda_desde"] >= args.ajuda_aquecer:
-            assist_rows.extend(r for r in episodes.tolist() if r[1] == 7 or (r[1] == 6 and r[25] != 2 and r[26] <= 0))
-        if len(episodes) and "ajuda_corrida" in counters \
-                and counters["atualizacao"] - counters["ajuda_corrida_desde"] >= args.ajuda_aquecer:
-            run_rows.extend(r for r in episodes.tolist() if r[1] == 6 and r[25] == 2 and r[26] <= 0)
-        if len(episodes) and "ajuda_manobra" in counters \
-                and counters["atualizacao"] - counters["ajuda_manobra_desde"] >= args.ajuda_aquecer:
-            move_rows.extend(r for r in episodes.tolist() if r[1] == 6 and 0 < r[26] < 8)
         if len(episodes) and args.comando > 0:
             command_rows.extend(r for r in episodes.tolist() if len(r) > 44 and r[1] == 6 and r[26] == 12 and r[38] <= 0
                                 and counters["atualizacao"] - counters["comando_desde"] >= 4)
@@ -4176,60 +4046,6 @@ def main() -> int:
                            exigencias=exigencias)
                 if "troca_pesos" in counters:
                     row["troca_pesos"] = counters["troca_pesos"]
-            if "ajuda" in counters and "ajuda_exercicios" not in counters:
-                # (O portao da forca, pelo PIOR: cada rumo - sem cair e a velocidade no rumo sobre a pedida - e o giro.)
-                held = np.array(assist_rows) if assist_rows else np.zeros((0, 32))
-                level = counters["ajuda"]
-                since = counters["atualizacao"] - counters["ajuda_desde"]
-                score = last.get("rastreio_nota", 0.0)
-                target, info = assist_decision(held, level, since, counters.get("ajuda_espera", 0),
-                                               counters.get("ajuda_teto", 1.0), score, args)
-                row.update(ajuda=level, **info)
-                if target is not None:
-                    print(f"forca auxiliar{' RECUO' if target > level else ''}: {level} -> {target:.3f} ({info}, nota "
-                          f"{score:.3f}, atualizacao {counters['atualizacao']})", flush=True)
-                    set_assist(target)
-                    counters["ajuda_desde"] = counters["atualizacao"]
-                    # (Depois do recuo, o dobro do tempo no degrau antes de tentar descer de novo.)
-                    counters["ajuda_espera"] = args.ajuda_intervalo if target > level else 0
-                    assist_rows = []
-                assist_rows = assist_rows[-6000:]
-            if "ajuda_corrida" in counters and "ajuda_exercicios" not in counters:
-                # (O portao da corrida: os 8 rumos dela, sem o giro.)
-                held = np.array(run_rows) if run_rows else np.zeros((0, 32))
-                level = counters["ajuda_corrida"]
-                since = counters["atualizacao"] - counters["ajuda_corrida_desde"]
-                target, info = assist_decision(held, level, since, counters.get("ajuda_corrida_espera", 0),
-                                               counters.get("ajuda_corrida_teto", 1.0), last.get("rastreio_nota", 0.0), args,
-                                               need_turn=False)
-                info.pop("ajuda_giro_sem_cair", None)
-                row.update(ajuda_corrida=level, **{k.replace("ajuda_", "ajuda_corrida_", 1): v for k, v in info.items()})
-                if target is not None:
-                    print(f"forca auxiliar da corrida{' RECUO' if target > level else ''}: {level} -> {target:.3f} ({info}, "
-                          f"atualizacao {counters['atualizacao']})", flush=True)
-                    set_run_assist(target)
-                    counters["ajuda_corrida_desde"] = counters["atualizacao"]
-                    counters["ajuda_corrida_espera"] = args.ajuda_intervalo if target > level else 0
-                    run_rows = []
-                run_rows = run_rows[-6000:]
-            if "ajuda_manobra" in counters and "ajuda_exercicios" not in counters:
-                # (O portao das manobras: cada uma das 7 - a coluna 26 -, sem o giro.)
-                held = np.array(move_rows) if move_rows else np.zeros((0, 32))
-                level = counters["ajuda_manobra"]
-                since = counters["atualizacao"] - counters["ajuda_manobra_desde"]
-                target, info = assist_decision(held, level, since, counters.get("ajuda_manobra_espera", 0),
-                                               counters.get("ajuda_manobra_teto", 1.0), last.get("rastreio_nota", 0.0), args,
-                                               need_turn=False, key_column=26, keys=tuple(range(1, 8)))
-                info.pop("ajuda_giro_sem_cair", None)
-                row.update(ajuda_manobra=level, **{k.replace("ajuda_", "ajuda_manobra_", 1): v for k, v in info.items()})
-                if target is not None:
-                    print(f"forca auxiliar das manobras{' RECUO' if target > level else ''}: {level} -> {target:.3f} ({info}, "
-                          f"atualizacao {counters['atualizacao']})", flush=True)
-                    set_maneuver_assist(target)
-                    counters["ajuda_manobra_desde"] = counters["atualizacao"]
-                    counters["ajuda_manobra_espera"] = args.ajuda_intervalo if target > level else 0
-                    move_rows = []
-                move_rows = move_rows[-6000:]
             log.write(json.dumps(finite_json(row)) + "\n")
             log.flush()
             print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()), flush=True)
