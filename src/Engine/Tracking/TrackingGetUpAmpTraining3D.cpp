@@ -5635,6 +5635,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // tocado na proporcao trackScale; cada ciclo soma o giro do clipe ao rumo (o giro parado encadeado) -; no levantar
     // guiado, sem ciclo e acelerado, preso no fim.
     std::pair<float, float> trackSample(const World& w, float ahead) const {
+        // (11/11, settings.idleStatic: o idle alerta parado no quadro 0 - ver o .hpp.)
+        if (settings.idleStatic && (w.trackClip == standingIndex || w.trackClip == standingMirrorIndex)) return { 0.0f, w.trackYaw };
         const TrackingClipReference3D& reference = *references[w.trackClip];
         const float duration = std::max(1.0e-3f, reference.durationSeconds());
         if (w.getUpGuided)
@@ -8697,6 +8699,7 @@ void TrackingGetUpAmpTraining3D::setIdleUnified(bool on) { m_impl->settings.idle
 void TrackingGetUpAmpTraining3D::setStopToIdle(bool on) { m_impl->settings.stopToIdle = on; }
 void TrackingGetUpAmpTraining3D::setIdleAfterStop(bool on) { m_impl->settings.idleAfterStop = on; }
 void TrackingGetUpAmpTraining3D::setStillCost(float weight) { m_impl->settings.stillCost = std::clamp(weight, 0.0f, 1.0f); }
+void TrackingGetUpAmpTraining3D::setIdleStatic(bool on) { m_impl->settings.idleStatic = on; }
 void TrackingGetUpAmpTraining3D::setTurnVariety(bool on, float spineReward) {
     m_impl->settings.turnVariety = on;
     m_impl->settings.turnSpineReward = std::clamp(spineReward, 0.0f, 2.0f);

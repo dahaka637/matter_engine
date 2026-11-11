@@ -496,6 +496,7 @@ struct TrackingViewer3D::Impl {
                 getUp->setIdleAfterStop(cyclesRun["v2"].value("idle_depois_freada", false));
                 getUp->setTurnVariety(cyclesRun["v2"].value("giro_variado", false), cyclesRun["v2"].value("giro_coluna", 0.0f));
                 getUp->setStillCost(cyclesRun["v2"].value("quieto_custos", 0.0f));
+                getUp->setIdleStatic(cyclesRun["v2"].value("parado_estatico", false));
                 // (11/11 10h45, ele: "a coluna ta torta no parado": a coluna sem o canal livre de velocidade, como no treino.)
                 getUp->setSpineVelocityFeedforward(cyclesRun["v2"].value("coluna_sem_velocidade", false));
                 getUp->setIdleUnified(cyclesRun["v2"].value("parado_unico", false));

@@ -282,6 +282,10 @@ struct TrackingGetUpAmpSettings3D {
     // 0,2 m/s) - vezes isto, comendo da nota sem nunca deixa-la negativa; no giro parado, o tronco e a pelve tombando (o giro em
     // volta do vertical e livre) e o pe escorregando no chao. 0: sem.
     float stillCost = 0.0f;
+    // (11/11 11h30, ele: "no clipe do parado, vamos remover os movimentos do clipe, deixa-lo 100% estatico... nosso foco e o RL se
+    // embasar nele 100% estatico; e eu devo ver como esta exatamente pelo clipe do exercicio") idleStatic: o idle alerta (e o espelho)
+    // seguido no quadro 0, fixo - a nota, os alvos dos motores, os passos e a vista do laboratorio. false: o clipe tocando.
+    bool idleStatic = false;
     float turnSpineReward = 0.0f;
     // (Ele: "Parado - penaliza micromovimentos, penaliza fora da pose") Com idleUnified, no parado: a nota
     // max(0, 0,3 + 0,7 pose x firmeza - idleMotionCost M - idlePoseCost D), com M = 1 - exp(-movimento/0,25) (o giro medio dos elos
@@ -1118,6 +1122,7 @@ public:
     void setIdleAfterStop(bool on);
     void setTurnVariety(bool on, float spineReward);
     void setStillCost(float weight);
+    void setIdleStatic(bool on);
     void setIdleCosts(float motion, float pose);
     void setIdleReward(float pose, float still, float slide);
     void setUpperRigor(float factor);
