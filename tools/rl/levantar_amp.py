@@ -1797,6 +1797,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(10/11 01h40) o peso da tarefa nas linhas do parado com a cabeca da locomocao (o exercicio parado e o do "
                              "equilibrio); com --peso-estilo-parado. Sem: os da recuperacao (o juiz preferia o corpo dobrado)")
     parser.add_argument("--peso-estilo-parado", type=float, default=None)
+    parser.add_argument("--linha-final-so", choices=("custo", "estilo"), default=None,
+                        help="(11/11, sonda da E5-4, morre na decisao) com --linha-final: so o teto do custo ou so o portao do estilo")
     parser.add_argument("--linha-final", action="store_true",
                         help="(11/11, E5-4) a linha final de cada episodio com o feedback do passo final (a nota, o teto do custo, o "
                              "portao do estilo e as medias rastreio_*); sem: o feedback zerado do mundo recomecado, como antes")
@@ -3678,6 +3680,12 @@ def main() -> int:
                     final = torch.as_tensor(batch.final_observations(), device=device)
                     roll["boot"][t] = trunc * collector.value(collector.norm(final))
                 roll["done"][t] = torch.maximum(torch.as_tensor(term, device=device).float(), trunc)
+                if args.linha_final_so:
+                    # (11/11, sonda E5-4) nas linhas de termino, desfaz a metade da correcao fora do teste: "custo" deixa o
+                    # portao do estilo sem agir (portao_velocidade 0); "estilo" deixa o teto do custo em 0 (nota 0), como antes.
+                    ended = roll["done"][t] > .5
+                    col = TRACKING_TERMS.index("portao_velocidade") if args.linha_final_so == "custo" else 0
+                    roll["feedback"][t, :, col] = torch.where(ended, torch.zeros_like(ended, dtype=torch.float32), roll["feedback"][t, :, col])
                 next_obs = torch.as_tensor(batch.observations(), device=device)
                 if model.split:
                     # Do not bootstrap the locomotion critic from recovery's unrelated positive values.
