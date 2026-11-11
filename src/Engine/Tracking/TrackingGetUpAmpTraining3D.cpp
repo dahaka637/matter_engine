@@ -7498,8 +7498,21 @@ struct TrackingGetUpAmpTraining3D::Impl {
                                 // (11/11 09h45, ele: "a recompensa por ficar na pose nunca pode ser maior que o objetivo de nao cair"):
                                 // de pe vale a base 0,5; a pose e a quietude sao o bonus ate 0,5 por cima; o deslize come so do
                                 // bonus e da base, e a nota nunca fica negativa - cair (que encerra) nunca compensa.
-                                const float bonus = settings.idleRewardPose * close + settings.idleRewardStill * still;
-                                idleScore = std::max(0.0f, 0.5f + 0.5f * bonus / std::max(1.0e-3f, settings.idleRewardPose + settings.idleRewardStill)
+                                // (11/11 09h55, ele: "no parado tambem, precisa recompensar por manter a coluna toda ALINHADA": a coluna
+                                // alinhada - o eixo de cima da pelve contra o do peito alto, 1/(1+(angulo/8 graus)^2) - entra no bonus com o
+                                // peso turnSpineReward, como no giro.)
+                                float aligned = 0.0f;
+                                if (settings.turnSpineReward > 0.0f && upperChestLink < w.body->links.size()) {
+                                    const auto upOf = [&](std::size_t i) {
+                                        return (w.body->links[i].orientation * profile->links[i].modelOrientation.conjugate()).normalized()
+                                            .rotate({ 0.0f, 0.0f, 1.0f });
+                                    };
+                                    const float bend = std::acos(std::clamp(dot(upOf(rootLink), upOf(upperChestLink)), -1.0f, 1.0f)) * 180.0f / Pi;
+                                    aligned = 1.0f / (1.0f + (bend / 8.0f) * (bend / 8.0f));
+                                }
+                                const float bonus = settings.idleRewardPose * close + settings.idleRewardStill * still + settings.turnSpineReward * aligned;
+                                idleScore = std::max(0.0f, 0.5f + 0.5f * bonus
+                                    / std::max(1.0e-3f, settings.idleRewardPose + settings.idleRewardStill + settings.turnSpineReward)
                                     - 0.5f * settings.idleSlideCost * std::min(1.0f, slide));
                                 match = close;
                             }
