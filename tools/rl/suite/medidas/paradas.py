@@ -58,8 +58,14 @@ def series(cap) -> dict:
     fb, fr = cap.corpo.astype(float), cap.ref.astype(float)
     bb, br = ossos(fb, links), ossos(fr, links)
     up = qrot(bb[..., IDX["UpperChest"], :], np.array([0.0, 0.0, 1.0]))
-    return {"base": np.linalg.norm(base(fb, bb) - base(fr, br), axis=-1).mean(-1) * 100.0,
-            "pelve": np.abs(wrap(giro(bb, "Pelvis") - giro(br, "Pelvis"))),
+    # (11/11, SUITE_V2: o idle alerta e o espelho dele valem igual - o treino aceita o mais perto, e os dois tem o peito na vista
+    # com a pelve a +-22 graus (diario 43). O espelho da referencia: os pes trocados com o lado negado, no quadro da pelve, e a
+    # pelve refletida no rumo do peito dela. Vale o mais perto dos dois.)
+    bc, br_base = base(fb, bb), base(fr, br)
+    espelho = br_base[..., ::-1, :] * np.array([1.0, -1.0])
+    pc, pr, cr = giro(bb, "Pelvis"), giro(br, "Pelvis"), giro(br, "UpperChest")
+    return {"base": np.minimum(np.linalg.norm(bc - br_base, axis=-1).mean(-1), np.linalg.norm(bc - espelho, axis=-1).mean(-1)) * 100.0,
+            "pelve": np.minimum(np.abs(wrap(pc - pr)), np.abs(wrap(pc - (2.0 * cr - pr)))),
             "peito": np.abs(wrap(giro(bb, "UpperChest") - giro(br, "UpperChest"))),
             "inclinacao": np.degrees(np.arccos(np.clip(up[..., 2], -1.0, 1.0))),
             "xy": fb[..., IDX["Pelvis"], :2]}

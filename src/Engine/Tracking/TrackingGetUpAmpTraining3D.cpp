@@ -6442,7 +6442,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
             return measureTrackingBasePosture3D(*profile, w.body->links, w.baseFrame.links, rootLink, upperChestLink, feet);
         };
         // (Parado no idle, o clipe que ele segue; freando, o normal ou o espelho - o que estiver mais perto.)
-        if (idleHeld(w) && !w.stopping && w.trackClip < references.size()) return measure(w.trackClip);
+        // (11/11, E5-10: depois do parkStop (stopPhase 2) tambem o que ele segue - o escolhido ali. Antes, o atrator seguia
+        // escolhendo o mais perto a cada decisao e o rastreio o do parkStop: dois alvos, e o corpo assentava torcido entre eles,
+        // a pelve no espelho e o peito 30-50 graus fora da vista, a coluna 12 graus de lado - medido na E5-9.)
+        if (((idleHeld(w) && !w.stopping) || (w.stopping && w.stopPhase == 2)) && w.trackClip < references.size())
+            return measure(w.trackClip);
         TrackingBasePosture3D best = measure(standingIndex);
         if (standingMirrorIndex < references.size() && standingMirrorIndex != standingIndex) {
             const TrackingBasePosture3D mirror = measure(standingMirrorIndex);

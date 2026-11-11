@@ -58,7 +58,12 @@ def medir(caps: dict) -> list[Medida]:
         body, clip = postura(cap.corpo), postura(cap.ref)
         grupos = [g] + (["retos_frente"] if nome in ("reto_trote_0", "reto_corrida_0") else [])
         for traco, titulo, unidade, piso, margem in TRACOS:
-            v = por_mundo(body[traco] - clip[traco], m)
+            d = body[traco] - clip[traco]
+            if g == "paradas" and traco == "coluna_lado":
+                # (11/11, SUITE_V2: depois de frear vale o idle alerta ou o espelho dele, o mais perto - no espelho o lado troca.)
+                e = body[traco] + clip[traco]
+                d = np.where(np.abs(e) < np.abs(d), e, d)
+            v = por_mundo(d, m)
             for gg in grupos:
                 if gg == "retos_frente" and traco != "coluna_lado":
                     continue
