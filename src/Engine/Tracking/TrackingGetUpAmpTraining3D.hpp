@@ -246,6 +246,11 @@ struct TrackingGetUpAmpSettings3D {
     // 1 - G + G x pose, pose = o peito alto e a cabeca contra os do idle (folgas 5,7 e 8,6 graus), do comeco ao fim da parada. Sem
     // ela o tronco ia livre ate 20 graus e a cabeca da locomocao - a mesma do trote e da corrida - dobrou em tudo (diario 42). 0: sem.
     float stopPosture = 0.0f;
+    // (11/11 03h29, ele: "ao frear fica todo molengo e nunca volta a pose do idle alerta"; "a pose deve ser cobrada sempre, mas
+    // sem prejudicar o auto-equilibrio". Medido no codigo: parado, a nota da parada livre e 0,70 + 0,30*stand - 70% so por ter
+    // parado, a pose do idle 6%.) E5-7: conforme ele para (near), a nota passa a ser a pose do idle alerta na regua estrita
+    // (o DeepMimic inteiro, a coluna junta a junta inclusive): (1 - k*near)*nota + k*near*face*(0,25 + 0,75*semelhanca). 0: sem.
+    float stopIdlePose = 0.0f;
     // (10/11 04h, ele: "desde agora precisamos cobrar a coluna correta, cabeca, bracos com mais rigor durante as locomocoes e
     // parado") A regua da imitacao da coluna, da cabeca e dos bracos vezes isto (andando, no giro e nas trocas); 1: sem.
     float upperRigor = 1.0f;
@@ -1059,6 +1064,7 @@ public:
     void setStopGateFloor(float floor);
     void setFreeStop(bool on);
     void setStopPosture(float gate);
+    void setStopIdlePose(float weight);
     void setUpperRigor(float factor);
     void setUnrealStarts(bool on);
     void setUnrealStartScale(float scale);

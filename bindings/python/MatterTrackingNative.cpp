@@ -586,6 +586,7 @@ NB_MODULE(matter_tracking_native, m) {
         .def("set_stop_gate_floor", &TrackingGetUpAmpTraining3D::setStopGateFloor, "floor"_a)
         .def("set_free_stop", &TrackingGetUpAmpTraining3D::setFreeStop, "on"_a)
         .def("set_stop_posture", &TrackingGetUpAmpTraining3D::setStopPosture, "gate"_a)
+        .def("set_stop_idle_pose", &TrackingGetUpAmpTraining3D::setStopIdlePose, "weight"_a)
         .def("set_upper_rigor", &TrackingGetUpAmpTraining3D::setUpperRigor, "factor"_a)
         .def("set_unreal_starts", &TrackingGetUpAmpTraining3D::setUnrealStarts, "on"_a)
         .def("set_unreal_start_scale", &TrackingGetUpAmpTraining3D::setUnrealStartScale, "scale"_a)

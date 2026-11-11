@@ -6506,6 +6506,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
             const float attract = 0.85f * basePosture(w).attraction() + 0.15f * quiet;
             score = face * (0.10f + 0.30f * progress + 0.10f * upright + 0.50f * near * attract);
         }
+        if (settings.stopIdlePose > 0.0f) {
+            // (settings.stopIdlePose, E5-7 - ver o .hpp.)
+            const float k = settings.stopIdlePose * near;
+            score = (1.0f - k) * score + k * face * (0.25f + 0.75f * match);
+        }
         float headTilt = 0.0f;
         if (settings.stopPosture > 0.0f && upperChestLink < w.body->links.size()) {
             // (settings.stopPosture) Frear ereto: o peito alto e a cabeca contra os do idle, na nota inteira e desde a ordem.
@@ -8468,6 +8473,7 @@ void TrackingGetUpAmpTraining3D::setStopClipsCommand(bool on) { m_impl->settings
 void TrackingGetUpAmpTraining3D::setStopGateFloor(float floor) { m_impl->settings.stopGateFloor = std::clamp(floor, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setFreeStop(bool on) { m_impl->settings.freeStop = on; }
 void TrackingGetUpAmpTraining3D::setStopPosture(float gate) { m_impl->settings.stopPosture = std::clamp(gate, 0.0f, 1.0f); }
+void TrackingGetUpAmpTraining3D::setStopIdlePose(float weight) { m_impl->settings.stopIdlePose = std::clamp(weight, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setUpperRigor(float factor) { m_impl->settings.upperRigor = std::clamp(factor, 1.0f, 8.0f); }
 void TrackingGetUpAmpTraining3D::setStopClipsBase(bool on) { m_impl->settings.stopClipsBase = on; }
 void TrackingGetUpAmpTraining3D::setStopEntry(float blendSeconds, float windowSeconds) {
