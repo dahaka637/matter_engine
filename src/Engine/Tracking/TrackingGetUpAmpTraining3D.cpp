@@ -557,6 +557,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float faceYaw = 0.0f;
         float turnRate = 0.0f;
         float turnLeft = 0.0f;
+        float turnPauseUntil = -1.0f;
         double faceErrorSum = 0.0;
         std::uint32_t faceErrorSamples = 0;
         // A rl_final: a faixa do passo de agora e a do comeco, e a proxima troca do pedido (s; < 0: sem troca).
@@ -3717,11 +3718,25 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.moveYaw = w.faceYaw;
         nextTurn(w);
     }
-    void nextTurn(World& w) {
+    void nextTurn(World& w, bool allowPause = true) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
         // (Na avaliacao, metade para cada lado pelo indice e a semente: o laboratorio, um mundo, alterna pela semente.)
-        const bool left = settings.evaluation ? (w.index + static_cast<std::uint32_t>(settings.seed)) % 2u == 0u : u(w.rng) < 0.5f;
+        bool left = settings.evaluation ? (w.index + static_cast<std::uint32_t>(settings.seed)) % 2u == 0u : u(w.rng) < 0.5f;
+        if (settings.turnVariety) left = u(w.rng) < 0.5f;
         const std::size_t clip = turnIndices[left ? 0 : 1];
+        if (settings.turnVariety && allowPause && w.time > 0.0f && standingIndex < references.size() && u(w.rng) < 0.3f) {
+            // (settings.turnVariety: a pausa - o idle alerta no rumo de agora, 0,5-2 s; dai o proximo giro.)
+            w.turnPauseUntil = w.time + 0.5f + 1.5f * u(w.rng);
+            w.trackClip = standingIndex;
+            w.trackScale = 1.0f;
+            w.trackStart = -w.time;
+            w.rampFrom = -1.0f;
+            w.trackYaw = w.faceYaw;
+            w.turnRate = 0.0f;
+            w.turnLeft = 0.0f;
+            return;
+        }
+        w.turnPauseUntil = -1.0f;
         if (clip < references.size()) {
             // (No comeco, a pelve do quadro na do corpo: o parado em alerta tem a pelve ~22 graus virada.)
             if (w.time <= 0.0f) {
@@ -3731,10 +3746,17 @@ struct TrackingGetUpAmpTraining3D::Impl {
             }
             const float cycle = std::abs(references[clip]->clip().turnCycleRadians);
             const float clipRate = cycle / std::max(1.0e-3f, references[clip]->durationSeconds());
-            const float scale = settings.evaluation ? 1.0f : 0.7f + 0.45f * u(w.rng);
+            float scale = settings.evaluation ? 1.0f : 0.7f + 0.45f * u(w.rng);
             w.turnRate = left ? clipRate * scale : -clipRate * scale;
             w.turnLeft = settings.evaluation ? 1.0e9f
                                              : cycle * static_cast<float>(std::uniform_int_distribution<int>(1, 8)(w.rng));
+            if (settings.turnVariety) {
+                // (settings.turnVariety: o giro fixo de 60, 90, 180 ou 360 graus, na velocidade do clipe x 0,6-1,4.)
+                static constexpr float Amounts[4] { 60.0f, 90.0f, 180.0f, 360.0f };
+                scale = 0.6f + 0.8f * u(w.rng);
+                w.turnRate = left ? clipRate * scale : -clipRate * scale;
+                w.turnLeft = Amounts[std::uniform_int_distribution<int>(0, 3)(w.rng)] * Pi / 180.0f;
+            }
             w.trackClip = clip;
             w.trackScale = scale;
             w.trackStart = -w.time * scale;
@@ -3779,6 +3801,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
     }
     void advanceTurn(World& w) {
         if (w.startKind != 7) return;
+        // (settings.turnVariety: na pausa o rumo fica; acabada, o proximo giro - sem outra pausa logo em seguida.)
+        if (w.turnPauseUntil >= 0.0f) {
+            if (w.time < w.turnPauseUntil) return;
+            nextTurn(w, false);
+            return;
+        }
         // (O giro com o clipe: o alvo e o peito do clipe a cada decisao - o clipe gira em passos, e o alvo que girava liso ficava
         // fora dele; agora os dois apontam sempre para o mesmo lado. O que falta girar desconta o quanto o peito girou.)
         if (w.trackClip < references.size() && (w.trackClip == turnIndices[0] || w.trackClip == turnIndices[1])) {
@@ -7221,6 +7249,15 @@ struct TrackingGetUpAmpTraining3D::Impl {
             : w.commandSpeed > 0.0f ? moveReward(w, now)
             : w.locomotion ? 0.7f * posture->standingReward(now, w.body->links, settled) + (now.standing ? 0.3f * facing(w) : 0.0f)
                            : posture->standingReward(now, w.body->links, settled);
+        if (settings.turnSpineReward > 0.0f && w.startKind == 7 && w.locomotionControl && upperChestLink < w.body->links.size()) {
+            // (settings.turnSpineReward - ver o .hpp: a coluna toda reta no giro, o eixo de cima da pelve contra o do peito alto.)
+            const auto upOf = [&](std::size_t i) {
+                return (w.body->links[i].orientation * profile->links[i].modelOrientation.conjugate()).normalized().rotate({ 0.0f, 0.0f, 1.0f });
+            };
+            const float bend = std::acos(std::clamp(dot(upOf(rootLink), upOf(upperChestLink)), -1.0f, 1.0f)) * 180.0f / Pi;
+            const float x = bend / 8.0f;
+            state += settings.turnSpineReward / (1.0f + x * x);
+        }
         // O premio do passo (com o pedido de deslocamento, de pe): cada pe que pousa depois de um tempo no ar.
         if (settings.stepReward > 0.0f) {
             float steps = 0.0f;
@@ -8582,6 +8619,10 @@ void TrackingGetUpAmpTraining3D::setStopPosture(float gate) { m_impl->settings.s
 void TrackingGetUpAmpTraining3D::setIdleUnified(bool on) { m_impl->settings.idleUnified = on; }
 void TrackingGetUpAmpTraining3D::setStopToIdle(bool on) { m_impl->settings.stopToIdle = on; }
 void TrackingGetUpAmpTraining3D::setIdleAfterStop(bool on) { m_impl->settings.idleAfterStop = on; }
+void TrackingGetUpAmpTraining3D::setTurnVariety(bool on, float spineReward) {
+    m_impl->settings.turnVariety = on;
+    m_impl->settings.turnSpineReward = std::clamp(spineReward, 0.0f, 2.0f);
+}
 void TrackingGetUpAmpTraining3D::setIdleReward(float pose, float still, float slide) {
     m_impl->settings.idleRewardPose = std::clamp(pose, 0.0f, 2.0f);
     m_impl->settings.idleRewardStill = std::clamp(still, 0.0f, 2.0f);

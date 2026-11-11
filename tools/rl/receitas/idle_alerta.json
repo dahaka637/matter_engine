@@ -2,7 +2,7 @@
  "receita": "IDLE-ALERTA",
  "treino_original": "rl_final_clipe",
  "build_original": "build-rl-n17",
- "descricao": "campeao r72370 (a freada como ele sabia) + freado, o idle alerta (parkStop) com a nota do parado dele: perto da pose, quieto, sem pe deslizando; o parado so pelo alert_idle; trote 4 m/s nos 8 rumos",
+ "descricao": "campeao r72370 (a freada como ele sabia) + freado, o idle alerta (parkStop) com a nota do parado dele: perto da pose, quieto, sem pe deslizando; o parado so pelo alert_idle; trote 4 m/s nos 8 rumos; 09h50, ele: o giro em giros fixos de 60/90/180/360 graus, velocidades variadas, inversao e pausas, com o bonus da coluna reta (--giro-variado --giro-coluna 0.3)",
  "capturada": "2026-11-10 16h45, do ExecStart do servico",
  "argumentos": [
   "--simetria",
@@ -330,7 +330,10 @@
   "0.6",
   "0.4",
   "1.0",
-  "--idle-depois-freada"
+  "--idle-depois-freada",
+  "--giro-variado",
+  "--giro-coluna",
+  "0.3"
  ],
  "campeao": "~/.local/share/matter-engine/rl/campeoes/r72370_sem_alivio_1111.pt"
 }

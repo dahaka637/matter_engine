@@ -268,6 +268,13 @@ struct TrackingGetUpAmpSettings3D {
     // como era (a parada livre, com os clipes de frente) e, freado - abaixo de FreeStopSettleSpeed -, ele entra no idle alerta
     // (parkStop), com a nota do parado. false: como antes.
     bool idleAfterStop = false;
+    // (11/11 09h50, ele: "o treino do giro parado esta errado: deveria fazer giros fixos de tipo 60, 90, 180, 360 graus, em
+    // velocidades variadas, inversao de giro, as vezes gira, espera e ai gira de novo; e recompensar ele melhor por manter a coluna
+    // toda reta") turnVariety: cada giro e 60, 90, 180 ou 360 graus, na velocidade do clipe x 0,6-1,4, o lado sorteado de novo, e
+    // 30% das vezes antes dele uma pausa de 0,5-2 s no idle alerta. turnSpineReward: no giro, o bonus da coluna reta - o eixo de
+    // cima da pelve contra o do peito alto, 1/(1+(angulo/8 graus)^2) - vezes isto, somado a nota.
+    bool turnVariety = false;
+    float turnSpineReward = 0.0f;
     // (Ele: "Parado - penaliza micromovimentos, penaliza fora da pose") Com idleUnified, no parado: a nota
     // max(0, 0,3 + 0,7 pose x firmeza - idleMotionCost M - idlePoseCost D), com M = 1 - exp(-movimento/0,25) (o giro medio dos elos
     // ao quadrado, rad2/s2, mais 10 x a velocidade do centro de massa ao quadrado) e D a distancia a pose (as juntas em 0,15 rad, a
@@ -1101,6 +1108,7 @@ public:
     void setIdleUnified(bool on);
     void setStopToIdle(bool on);
     void setIdleAfterStop(bool on);
+    void setTurnVariety(bool on, float spineReward);
     void setIdleCosts(float motion, float pose);
     void setIdleReward(float pose, float still, float slide);
     void setUpperRigor(float factor);
