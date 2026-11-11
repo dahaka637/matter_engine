@@ -311,8 +311,6 @@
   "0.3",
   "--postura-cauda",
   "0.3",
-  "--ajuda-dinamica",
-  "1.0",
   "--estilo-loco-proprio",
   "--acao-velocidade",
   "--levantar-velocidade",
@@ -334,7 +332,6 @@
   "0.16",
   "0.08",
   "0.12",
-  "0.12",
-  "--sem-mao"
+  "0.12"
  ]
 }

@@ -1575,9 +1575,6 @@ def build_parser() -> argparse.ArgumentParser:
     # (04/11, ele: "adaptar os treinos de TROCAS de direcoes e curvas que possuiamos no b21": a fatia dos episodios de rumo
     # com manobra - as trocas de peito fixo, a troca livre e as curvas, no trote e na corrida - e a forca delas.)
     parser.add_argument("--manobras", type=float, default=0.0)
-    # (04/11 03h45: a forca auxiliar por exercicio, dinamica - dynamic_assist; o valor inicial de todos, uma vez.)
-    parser.add_argument("--ajuda-dinamica", type=float, default=-1.0,
-                        help="liga a forca por exercicio, comecando todos neste valor (uma vez por valor); < 0 desligada")
     parser.add_argument("--imitacao-parado", type=float, default=0.0,
                         help="o peso da imitacao do IDLE ALERTA no parado, regua estrita (04/11 04h10); 0: como antes")
     # (04/11 04h55, ele: o parado em alerta e o pos-levantar na pose do IDLE ALERTA: o idle vira a referencia ao ficar de
@@ -1765,17 +1762,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="de costas, freia ate 1,5 m/s antes da meia-volta (05/11 22h40)")
     parser.add_argument("--troca-arrancada", action="store_true",
                         help="na media e na forte, a saida da meia-volta pela arrancada agachada (05/11 23h20)")
-    parser.add_argument("--descida", type=float, nargs=3, default=None, metavar=("PASSO", "PISO_DE_PE", "PISO_VEL"),
-                        help="a forca de cada exercicio desce PASSO a cada linha do log enquanto o ate o fim (de pe) >= PISO_DE_PE e "
-                             "a velocidade >= PISO_VEL do pedido; abaixo, para (nao sobe); o portao so mede (06/11 03h35, ele)")
-    parser.add_argument("--descida-forcas-de", default=None,
-                        help="o checkpoint de onde a --descida tira as forcas do comeco (uma vez por descida)")
-    parser.add_argument("--descida-adaptativa", action="store_true",
-                        help="a --descida com os criterios de 07/11: de pe >= 50%%, velocidade >= 70%% do teto do clipe, rumo <= 15 "
-                             "graus; com folga desce 1%%, no limite 0,1%%; 30 linhas abaixo de 40%% de pe sobe 2%%")
-    parser.add_argument("--rampa-forca", type=float, nargs=2, default=None, metavar=("INICIO", "HORAS"),
-                        help="a forca de TODOS os exercicios em INICIO e descendo em linha reta ate 0 em HORAS de treino rodando "
-                             "(pausas nao contam); depois fica em 0, sem o portao subir (06/11 02h25, ele)")
     parser.add_argument("--troca-peito-fixo", action="store_true",
                         help="saindo de costas ou de lado, a media e a forte de peito fixo, sem a meia-volta (06/11 13h05)")
     parser.add_argument("--troca-assentada-costas", type=float, default=0.0,
@@ -2118,7 +2104,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="o peso do estilo com a pelve abaixo de --chao-altura (a tarefa fica 1 - isto): o virar-se no chao")
     parser.add_argument("--chao-altura", type=float, default=0.6, help="a altura da pelve (m) abaixo da qual vale --estilo-chao")
     parser.add_argument("--so-clipe", default="", help="nos rumos, so os passos deste clipe (o imitador de um clipe)")
-    parser.add_argument("--sem-mao", action="store_true", help="(06/11) toda forca auxiliar em zero; o portao so mede")
     parser.add_argument("--acao-velocidade", action="store_true",
                         help="(06/11 17h40, liberdade total nos motores) a rede da tambem a velocidade-alvo de cada eixo; a "
                              "professora copiada inteira, com a velocidade do clipe")
@@ -2492,7 +2477,7 @@ def main() -> int:
                   "velocidades_trote": gait_speeds(args.velocidade_trote),
                   "velocidades_corrida": gait_speeds(args.velocidade_corrida),
                   "largada_costas": args.largada_costas, "curva_fora": args.curva_fora, "curva_inclinar": args.curva_inclinar, "pisada_largura": args.pisada_largura,
-                  "troca_freio": args.troca_freio, "troca_pe": args.troca_pe, "troca_assentada": args.troca_assentada, "troca_arrancada": args.troca_arrancada, "troca_pratica": args.troca_pratica, "corrida_largada": args.corrida_largada, "rumo_cauda": args.rumo_cauda, "inclinacao_cauda": args.inclinacao_cauda, "sem_penhascos": args.sem_penhascos, "penhascos_partes": args.penhascos_partes, "arrancada_pulo": args.arrancada_pulo, "largada_lado": args.largada_lado, "troca_assentada_lado": args.troca_assentada_lado, "troca_assentada_frente": args.troca_assentada_frente, "troca_giro_tempo": args.troca_giro_tempo, "parada_passada": args.parada_passada, "idle_pose": args.idle_pose, "parada_clipes_frente": args.parada_clipes_frente, "parada_clipes_comando": args.parada_clipes_comando, "parada_portao": args.parada_portao, "parada_livre": args.parada_livre, "parada_postura": args.parada_postura, "rigor_superior": args.rigor_superior, "arrancada_unreal": args.arrancada_unreal, "arrancada_unreal_escala": args.arrancada_unreal_escala, "largada_viva": args.largada_viva, "largada_passo": args.largada_passo, "largada_no_lugar": args.largada_no_lugar, "largada_bracos_calmos": args.largada_bracos_calmos, "coluna_sem_velocidade": args.coluna_sem_velocidade, "ruido_parado": args.ruido_parado, "tonus": args.tonus, "postura_cauda": args.postura_cauda, "tonus_coluna": args.tonus_coluna, "custo_batente": args.custo_batente, "pes_firmes": args.pes_firmes, "parado_fixo": args.parado_fixo, "gravidade_motores": args.gravidade_motores, "volta_pose": args.volta_pose, "postura_base": args.postura_base, "largada_clipe": args.largada_clipe, "largada_mao": args.largada_mao, "parada_clipes_base": args.parada_clipes_base, "parada_variantes": args.parada_variantes, "parada_variantes_mascara": args.parada_variantes_mascara, "parada_entrada": args.parada_entrada, "troca_livre": args.troca_livre, "parada_pose": args.parada_pose, "parado_livre": args.parado_livre, "pose_reforco": args.pose_reforco, "empurrao_livre": args.empurrao_livre, "parado_semelhanca": args.parado_semelhanca, "passo_baixo": args.passo_baixo, "parado_dobrado_encerra": args.parado_dobrado_encerra, "parado_largo": args.parado_largo, "simetria_ciclos": args.simetria_ciclos, "peso_tarefa_parado": args.peso_tarefa_parado, "peso_estilo_parado": args.peso_estilo_parado, "troca_assentada_costas": args.troca_assentada_costas, "troca_peito_fixo": args.troca_peito_fixo, "capacidade_minutos": args.capacidade_minutos, "rampa_forca": args.rampa_forca, "descida": args.descida, "descida_forcas_de": args.descida_forcas_de, "pegada_cruzada": args.pegada_cruzada, "estab_ancora": args.estab_ancora,
+                  "troca_freio": args.troca_freio, "troca_pe": args.troca_pe, "troca_assentada": args.troca_assentada, "troca_arrancada": args.troca_arrancada, "troca_pratica": args.troca_pratica, "corrida_largada": args.corrida_largada, "rumo_cauda": args.rumo_cauda, "inclinacao_cauda": args.inclinacao_cauda, "sem_penhascos": args.sem_penhascos, "penhascos_partes": args.penhascos_partes, "arrancada_pulo": args.arrancada_pulo, "largada_lado": args.largada_lado, "troca_assentada_lado": args.troca_assentada_lado, "troca_assentada_frente": args.troca_assentada_frente, "troca_giro_tempo": args.troca_giro_tempo, "parada_passada": args.parada_passada, "idle_pose": args.idle_pose, "parada_clipes_frente": args.parada_clipes_frente, "parada_clipes_comando": args.parada_clipes_comando, "parada_portao": args.parada_portao, "parada_livre": args.parada_livre, "parada_postura": args.parada_postura, "rigor_superior": args.rigor_superior, "arrancada_unreal": args.arrancada_unreal, "arrancada_unreal_escala": args.arrancada_unreal_escala, "largada_viva": args.largada_viva, "largada_passo": args.largada_passo, "largada_no_lugar": args.largada_no_lugar, "largada_bracos_calmos": args.largada_bracos_calmos, "coluna_sem_velocidade": args.coluna_sem_velocidade, "ruido_parado": args.ruido_parado, "tonus": args.tonus, "postura_cauda": args.postura_cauda, "tonus_coluna": args.tonus_coluna, "custo_batente": args.custo_batente, "pes_firmes": args.pes_firmes, "parado_fixo": args.parado_fixo, "gravidade_motores": args.gravidade_motores, "volta_pose": args.volta_pose, "postura_base": args.postura_base, "largada_clipe": args.largada_clipe, "largada_mao": args.largada_mao, "parada_clipes_base": args.parada_clipes_base, "parada_variantes": args.parada_variantes, "parada_variantes_mascara": args.parada_variantes_mascara, "parada_entrada": args.parada_entrada, "troca_livre": args.troca_livre, "parada_pose": args.parada_pose, "parado_livre": args.parado_livre, "pose_reforco": args.pose_reforco, "empurrao_livre": args.empurrao_livre, "parado_semelhanca": args.parado_semelhanca, "passo_baixo": args.passo_baixo, "parado_dobrado_encerra": args.parado_dobrado_encerra, "parado_largo": args.parado_largo, "simetria_ciclos": args.simetria_ciclos, "peso_tarefa_parado": args.peso_tarefa_parado, "peso_estilo_parado": args.peso_estilo_parado, "troca_assentada_costas": args.troca_assentada_costas, "troca_peito_fixo": args.troca_peito_fixo, "capacidade_minutos": args.capacidade_minutos, "pegada_cruzada": args.pegada_cruzada, "estab_ancora": args.estab_ancora,
                   "trote_frente_inclinar": list(args.trote_frente_inclinar),
                   "corrida_inclinar": list(args.corrida_inclinar),
                   "corrida_costas_inclinar": list(args.corrida_costas_inclinar),
@@ -3599,43 +3584,13 @@ def main() -> int:
             out[tag] = res
         return out
 
-    ramp_clock = None
-    if args.ajuda_dinamica >= 0:
-        # (Os exercicios novos entram em 100%.)
-        for key in DRILL_KEYS:
-            if "ajuda_exercicios" in counters and key not in counters["ajuda_exercicios"]:
-                counters["ajuda_exercicios"][key] = 1.0
-                counters["ajuda_estado"][key] = {"desde": counters["atualizacao"]}
-        if counters.get("ajuda_dinamica_forcada") != args.ajuda_dinamica:
-            counters["ajuda_dinamica_forcada"] = args.ajuda_dinamica
-            counters["ajuda_exercicios"] = {k: args.ajuda_dinamica for k in DRILL_KEYS}
-            counters["ajuda_estado"] = {k: {"desde": counters["atualizacao"]} for k in DRILL_KEYS}
-        if args.rampa_forca and counters.get("rampa", {}).get("parametros") != list(args.rampa_forca):
-            # (06/11 02h25, ele: "Defina todas as forcas auxiliares para 50% e ... diminuir GRADATIVAMENTE ate chegar a 0% em
-            # 1 hora de treino. E a nossa RL vai ter que se adaptar e aprender": todos no comeco da rampa, uma vez por rampa.)
-            counters["rampa"] = {"parametros": list(args.rampa_forca), "decorrido": 0.0, "desde": counters["atualizacao"]}
-            counters["ajuda_exercicios"] = {k: float(args.rampa_forca[0]) for k in DRILL_KEYS}
-        if args.descida and (counters.get("descida", {}).get("parametros") != list(args.descida)
-                             or counters.get("descida", {}).get("forcas_de") != args.descida_forcas_de):
-            # (06/11 03h35, ele: "botar a forca auxiliar nos valores que conheciamos estaveis de antes e a forca vai reduzindo
-            # gradativamente de 0,1% em 0,1%... so para de descer quando a taxa de ficar em pe ficar inferior a 50%... e a meta
-            # de velocidade acima de 50% do solicitado": as forcas de antes da rampa, uma vez por descida.)
-            if args.descida_forcas_de:
-                # (Um checkpoint - as forcas dos contadores dele - ou um .json {exercicio: forca}; 03h55, ele: "aumente a forca
-                # auxiliar de todos ~10-20% do que estava antes em numeros redondos" - forcas_descida_limpa_0611.json.)
-                before = json.loads(Path(args.descida_forcas_de).read_text()) if args.descida_forcas_de.endswith(".json") else \
-                    torch.load(args.descida_forcas_de, map_location="cpu", weights_only=False)["counters"]["ajuda_exercicios"]
-                counters["ajuda_exercicios"] = {k: float(before.get(k, counters["ajuda_exercicios"].get(k, 1.0))) for k in DRILL_KEYS}
-            counters["descida"] = {"parametros": list(args.descida), "forcas_de": args.descida_forcas_de,
-                                   "desde": counters["atualizacao"]}
-        set_drill_assist()
-        print(f"forca auxiliar por exercicio (dinamica): {counters['ajuda_exercicios']}", flush=True)
-    if args.sem_mao:
-        # (06/11, ele: "sem clipe e sem mao": toda forca auxiliar em zero, de uma vez; o portao segue medindo o dominio.)
-        if "ajuda_exercicios" in counters:
-            counters["ajuda_exercicios"] = {k: 0.0 for k in DRILL_KEYS}
-            set_drill_assist()
-        print("sem mao: toda forca auxiliar em zero", flush=True)
+    # (A forca por exercicio fica em zero - treino sem forca auxiliar; o --sem-mao de 06/11 virou o padrao na limpeza c3b) e o
+    # portao segue medindo o dominio e as exigencias de cada exercicio; os exercicios novos entram com o estado de agora.)
+    counters["ajuda_exercicios"] = {k: 0.0 for k in DRILL_KEYS}
+    states = counters.setdefault("ajuda_estado", {})
+    for key in DRILL_KEYS:
+        states.setdefault(key, {"desde": counters["atualizacao"]})
+    set_drill_assist()
     # (O teto da semelhanca de cada exercicio, medido por teto_semelhanca.py; sem ele, a regua relativa a melhor marca.)
     ceilings = json.loads((run / "teto_semelhanca.json").read_text()) if (run / "teto_semelhanca.json").exists() else {}
     speed_ceilings = json.loads((run / "teto_velocidade.json").read_text()) if (run / "teto_velocidade.json").exists() else {}
@@ -3952,86 +3907,17 @@ def main() -> int:
             row.update(summarize(recent[recent[:, 1] == 8] if len(recent) else recent, "quedas_loco_"))
             row["cenarios"] = summarize_scenery(recent)
             if "ajuda_exercicios" in counters:
-                # (A forca dinamica, exercicio por exercicio, a cada linha do log.)
-                levels, states, dominio, changes = counters["ajuda_exercicios"], counters["ajuda_estado"], {}, []
-                # (A rampa ou a descida mandam na forca: o portao so mede.)
-                assist_frozen = bool((args.rampa_forca and "rampa" in counters) or (args.descida and "descida" in counters)
-                                     or args.sem_mao)
+                # (O portao, exercicio por exercicio, a cada linha do log: so mede - a forca fica em zero.)
+                levels, states, dominio = counters["ajuda_exercicios"], counters["ajuda_estado"], {}
                 for key in DRILL_KEYS:
                     held = np.array(drill_rows[key][-60:]) if drill_rows[key] else np.zeros((0, 42))
-                    target, perf = dynamic_assist(held, float(levels[key]), states[key], args.locomocao_segundos,
+                    _, perf = dynamic_assist(held, float(levels[key]), states[key], args.locomocao_segundos,
                                                   ceiling=(1.0 if key in ("lev_parado", "lev_levantar") else ceilings.get(key)), key=key,
                                                   speed_ceiling=speed_ceilings.get(key),
                                                   stability_ceiling=stability_ceilings.get(key))
                     if perf is not None:
                         dominio[key] = {k: round(v, 3) for k, v in perf.items()}
-                    if target is not None and abs(target - levels[key]) > 1e-6 and not assist_frozen:
-                        changes.append(f"{key} {levels[key]:.3f}->{target:.3f}")
-                        levels[key] = target
-                        states[key]["desde"] = counters["atualizacao"]
-                        drill_rows[key] = []
                     drill_rows[key] = drill_rows[key][-60:]
-                if args.rampa_forca and "rampa" in counters:
-                    # (A rampa manda: o portao so mede - dominio -, a forca e a da rampa pelo tempo de treino rodando.)
-                    ramp = counters["rampa"]
-                    now = time.monotonic()
-                    # (O tempo desde a linha anterior deste processo; o primeiro de cada processo e o 0 e pausas nao contam.)
-                    ramp["decorrido"] += min(now - ramp_clock, 300.0) if ramp_clock is not None else 0.0
-                    ramp_clock = now
-                    start, hours = ramp["parametros"]
-                    target = round(max(0.0, start * (1.0 - ramp["decorrido"] / (3600.0 * hours))), 4)
-                    changes = [k for k in DRILL_KEYS if abs(float(levels[k]) - target) > 1e-6]
-                    for k in changes:
-                        levels[k] = target
-                    if changes:
-                        print(f"rampa da forca (atualizacao {counters['atualizacao']}, {ramp['decorrido'] / 60:.1f} min): {target:.4f}",
-                              flush=True)
-                    row["rampa"] = {"nivel": target, "minutos": round(ramp["decorrido"] / 60.0, 2)}
-                if args.descida and "descida" in counters:
-                    # (A descida: o exercicio de pe >= o piso e na velocidade >= o piso desce um passo; senao para onde esta.)
-                    step, floor_up, floor_speed = args.descida
-                    held_back, rising = [], []
-                    falls = counters["descida"].setdefault("falhas", {})
-                    for k in DRILL_KEYS:
-                        d = dominio.get(k)
-                        # (O levantar fica fora: a mao nele e o levantar guiado, que a cabeca livre substituiu.)
-                        if d is not None and args.descida_adaptativa and k != "lev_levantar":
-                            # (07/11 05h, ele me deu a direcao: "a rede precisa atender o juiz, seguir o rumo, ter estabilidade,
-                            # nao cair, atender a velocidade... 70% no minimo da velocidade alvo e 50% de nao cair". A velocidade
-                            # e a media do episodio com a arrancada: 70% do que o proprio clipe faz nessa medida (o teto). O juiz
-                            # fica fora do criterio: ele aprende junto e a nota cai com o movimento melhorando. 30 linhas abaixo de
-                            # 40% de pe sobe 2% - a regra que so descia deixou os exercicios no penhasco em 06/11.)
-                            ceiling = float(speed_ceilings.get(k) or 1.0)
-                            straight = not course_drill(k) or d.get("desvio", 0.0) <= 15.0
-                            level = float(levels[k])
-                            if d["fim"] >= 0.5 and d["vel"] >= 0.7 * ceiling and straight:
-                                falls[k] = 0
-                                if level > 0.0:
-                                    wide = d["fim"] >= 0.7 and d["vel"] >= 0.85 * ceiling
-                                    levels[k] = round(max(0.0, level - (0.01 if wide else 0.001)), 4)
-                                    changes.append(k)
-                                continue
-                            falls[k] = falls.get(k, 0) + 1 if d["fim"] < 0.4 else 0
-                            if falls[k] >= 30:
-                                falls[k] = 0
-                                levels[k] = round(min(1.0, level + 0.02), 4)
-                                changes.append(k)
-                                rising.append(k)
-                            elif level > 0.0:
-                                held_back.append(k)
-                            continue
-                        if d is None or float(levels[k]) <= 0.0:
-                            continue
-                        if d["fim"] >= floor_up and d["vel"] >= floor_speed:
-                            levels[k] = round(max(0.0, float(levels[k]) - step), 4)
-                            changes.append(k)
-                        else:
-                            held_back.append(k)
-                    row["descida"] = {"descendo": len(changes) - len(rising), "parados": held_back, "subindo": rising}
-                if changes:
-                    set_drill_assist()
-                    if not assist_frozen:
-                        print(f"forca dinamica (atualizacao {counters['atualizacao']}): " + ", ".join(changes), flush=True)
                 exigencias = {k: drill_requirements(float(levels[k]), k, 1.0 if k in ("lev_parado", "lev_levantar") else ceilings.get(k),
                                                     speed_ceilings.get(k), stability_ceilings.get(k))
                               for k in DRILL_KEYS}
