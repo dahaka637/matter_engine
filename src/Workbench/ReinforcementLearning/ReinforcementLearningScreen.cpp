@@ -1943,8 +1943,8 @@ void ReinforcementLearningScreen::drawToolbar() {
             sequencing->setClipSequence(on);
             m_dirty = true;
         }
-        tooltip("Os clipes da Unreal de cada exercício tocando em sequência (partida, ciclo, virada da troca, curva, parada), "
-                "sem física e sem a rede. Desmarcado: a rede, como no treino.");
+        tooltip("A pose alvo que o treino segue a cada momento (o clipe de referência do exercício: a passada, o idle alerta "
+                "depois de parar, o parado), no lugar do corpo da rede. Desmarcado: a rede, como no treino.");
         if (!sequencing->kinematicError().empty()) ImGui::TextColored(WarningText, "%s", sequencing->kinematicError().c_str());
         ImGui::SameLine();
         // (08/11 18h05, ele: "um checkbox ao lado do Clipes do exercicio, chamado empurroes".)

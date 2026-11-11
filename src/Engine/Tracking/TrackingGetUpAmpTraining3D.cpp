@@ -9208,6 +9208,16 @@ void TrackingGetUpAmpTraining3D::sceneryBodies(std::size_t world, std::vector<co
             if (const RagdollState3D* other = w.scene->ragdollStateView(extra); other != nullptr) out.push_back(other);
 }
 
+bool TrackingGetUpAmpTraining3D::referencePose(std::size_t world, std::vector<PhysicsBodyState3D>& out) const {
+    const Impl& impl = *m_impl;
+    Impl::World& w = const_cast<Impl::World&>(impl.worlds.at(world));
+    if (!impl.clipTracked(w)) return false;
+    TrackingClipFrame3D frame;
+    impl.referenceFrame(w, 0.0f, true, frame);
+    out = frame.links;
+    return out.size() == w.body->links.size();
+}
+
 std::string TrackingGetUpAmpTraining3D::referenceLines(std::size_t world) const {
     const Impl& impl = *m_impl;
     Impl::World& w = const_cast<Impl::World&>(impl.worlds.at(world));

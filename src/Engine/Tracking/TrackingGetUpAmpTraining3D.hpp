@@ -1281,6 +1281,9 @@ public:
     // clipe, o instante dele, a forca auxiliar, quem dirige (1 a cabeca da locomocao), o pedido (m/s) e o rumo dele (rad).
     // Vazio sem clipe seguido.
     [[nodiscard]] std::string referenceLines(std::size_t world) const;
+    // (11/11, ele: "o clipes do exercicio deveria mostrar o que o treino segue") A pose alvo que o treino segue agora no mundo (o
+    // quadro de referencia posto no corpo, o mesmo da nota); false sem clipe seguido.
+    [[nodiscard]] bool referencePose(std::size_t world, std::vector<PhysicsBodyState3D>& out) const;
     [[nodiscard]] TrackingGetUpAmpWorldView3D worldView(std::size_t world) const;
     // O cenario do mundo em arame (no mundo): as arestas das caixas (a rampa cortada em 2,5 m em volta do meio).
     void scenerySegments(std::size_t world, std::vector<std::pair<Vec3, Vec3>>& out) const;

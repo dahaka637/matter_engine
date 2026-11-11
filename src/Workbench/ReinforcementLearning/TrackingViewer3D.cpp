@@ -577,12 +577,14 @@ struct TrackingViewer3D::Impl {
         // (So nos exercicios em que o cinematico age: os rumos e manobras, o parado e o giro - as avaliacoes 3 a 6.)
         if (kinematic && getUpKind >= 3 && getUpKind <= 6) applyKinematic();
         // (07/11, ele: "falta essa visao cinematica para os exercicios de levantar": de costas, de brucos e correndo tambem.)
-        else if (sequence && ((getUpKind >= 3 && getUpKind <= 6) || getUpKind == 1 || getUpKind == 9 || getUpKind == 10)) applySequence();
+        // (11/11, ele: "o clipes do exercicio deveria mostrar o que o treino segue... foda-se se e ou nao Unreal": a vista
+        // mostra a pose alvo do treino - em view() -, nao mais a sequencia de clipes da Unreal do juiz; a rede segue agindo.)
     }
     // (07/11, ele: "vamos fazer os clipes tipo nos faziamos antes, sem Motion Matching... ligar as trocas adequadamente" e
     // "so ver no laboratorio") A sequencia de clipes da Unreal de cada exercicio, por regra, sem fisica - ligada por padrao.
     // (07/11, ele: "agora o clipes do exercicio desativado por default".)
     bool sequence = false;
+    mutable RagdollState3D referenceBody;
     // (08/11 18h05, ele: "um checkbox ao lado do Clipes do exercicio, chamado empurroes, para eu visualizar os treinos com
     // empurroes"): marcada, os empurroes do treino - o nivel de cada grupo, os pontos variados - em todo episodio.
     bool pushes = false;
@@ -1267,6 +1269,11 @@ BodyWorldView3D TrackingViewer3D::view() const {
         const RagdollState3D& body = impl.getUp->body(0);
         BodyWorldView3D view;
         view.state = &body;
+        // (11/11) Clipes do exercicio: a pose alvo que o treino segue, no lugar do corpo da rede.
+        if (impl.sequence) {
+            impl.referenceBody = body;
+            if (impl.getUp->referencePose(0, impl.referenceBody.links)) view.state = &impl.referenceBody;
+        }
         view.steps = impl.steps;
         const Vec3 velocity = rlBodyCenterOfMassVelocity3D(impl.getUp->profile(), body.links);
         view.velocity = { velocity.x, velocity.y, 0.0f };
