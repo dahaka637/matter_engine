@@ -39,13 +39,23 @@ float TrackingBasePosture3D::attraction() const {
     return 1.0f / (1.0f + d * d);
 }
 
+// (11/11, E5-12) O rumo pelo eixo lateral do osso, projetado no chao: nao muda com a inclinacao para a frente nem para o lado. O
+// trackingBodyYaw3D soma a frente e o "cima" - feito para o corpo deitado -, e no peito o "cima" segue a coluna: inclinar a
+// coluna de lado mudava o giro medido, e o atrator pagava para entortar a coluna (a E5-9 e a E5-10 assentavam com a coluna 12
+// graus de lado e o peito 28-49 graus fora). E o eixo da suite (paradas.giro).
+static float lateralYaw(const RagdollLinkDefinition3D& link, const PhysicsBodyState3D& state) {
+    const Quaternion r = (state.orientation * link.modelOrientation.conjugate()).normalized();
+    const Vec3 lateral = r.rotate({ 0.0f, 1.0f, 0.0f });
+    return std::abs(lateral.x) + std::abs(lateral.y) > 1e-6f ? std::atan2(lateral.y, lateral.x) - 0.5f * 3.14159265358979f : 0.0f;
+}
+
 TrackingBasePosture3D measureTrackingBasePosture3D(const RagdollProfile3D& profile, std::span<const PhysicsBodyState3D> body,
     std::span<const PhysicsBodyState3D> idle, std::uint32_t pelvis, std::uint32_t chest, std::array<std::uint32_t, 2> feet) {
     TrackingBasePosture3D out;
     const std::size_t n = std::min(body.size(), idle.size());
     if (pelvis >= n || chest >= n || feet[0] >= n || feet[1] >= n) return out;
-    const float bh = trackingBodyYaw3D(profile.links[pelvis], body[pelvis]);
-    const float ih = trackingBodyYaw3D(profile.links[pelvis], idle[pelvis]);
+    const float bh = lateralYaw(profile.links[pelvis], body[pelvis]);
+    const float ih = lateralYaw(profile.links[pelvis], idle[pelvis]);
     float base = 0.0f;
     for (const std::uint32_t f : feet) {
         const auto a = local(body[f].position - body[pelvis].position, bh);
@@ -54,7 +64,7 @@ TrackingBasePosture3D measureTrackingBasePosture3D(const RagdollProfile3D& profi
     }
     out.baseMeters = 0.5f * base;
     out.pelvisYaw = std::abs(wrap(bh - ih));
-    out.chestYaw = std::abs(wrap(trackingBodyYaw3D(profile.links[chest], body[chest]) - trackingBodyYaw3D(profile.links[chest], idle[chest])));
+    out.chestYaw = std::abs(wrap(lateralYaw(profile.links[chest], body[chest]) - lateralYaw(profile.links[chest], idle[chest])));
     out.chestTilt = std::acos(std::clamp(dot(up(profile.links[chest], body[chest]), up(profile.links[chest], idle[chest])), -1.0f, 1.0f));
     out.drop = idle[pelvis].position.z - body[pelvis].position.z;
     return out;
