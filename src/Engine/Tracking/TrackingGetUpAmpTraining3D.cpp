@@ -6542,7 +6542,19 @@ struct TrackingGetUpAmpTraining3D::Impl {
             sum += 1.0f / (1.0f + (angle / 5.0f) * (angle / 5.0f));
             ++count;
         }
-        return count > 0 ? sum / static_cast<float>(count) : 1.0f;
+        const float segments = count > 0 ? sum / static_cast<float>(count) : 1.0f;
+        // (11/11 11h20, ele: "precisa ficar RETA em relacao ao mundo tambem": a linha da pelve ao pescoco contra a vertical do mundo -
+        // cada grau alem da inclinacao da mesma linha no quadro seguido custa, 1/(1+(excesso/5 graus)^2). Metade da medida.)
+        const std::size_t pelvis = spineChain[0], neck = spineChain[4];
+        if (pelvis >= w.body->links.size() || neck >= w.body->links.size() || pelvis >= reference.links.size() || neck >= reference.links.size())
+            return segments;
+        const auto tiltOf = [](Vec3 line) {
+            const float n = std::max(1.0e-4f, line.length());
+            return std::acos(std::clamp(line.z / n, -1.0f, 1.0f)) * 180.0f / Pi;
+        };
+        const float excess = std::max(0.0f, tiltOf(w.body->links[neck].position - w.body->links[pelvis].position)
+            - tiltOf(reference.links[neck].position - reference.links[pelvis].position));
+        return 0.5f * segments + 0.5f / (1.0f + (excess / 5.0f) * (excess / 5.0f));
     }
     float freeStopScore(World& w, Vec3 velocity) {
         const Vec3 root = w.body->links[rootLink].position;
