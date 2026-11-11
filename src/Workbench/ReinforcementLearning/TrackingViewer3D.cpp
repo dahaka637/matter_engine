@@ -495,6 +495,7 @@ struct TrackingViewer3D::Impl {
                 getUp->setStopToIdle(cyclesRun["v2"].value("parada_direto_idle", false));
                 getUp->setIdleAfterStop(cyclesRun["v2"].value("idle_depois_freada", false));
                 getUp->setTurnVariety(cyclesRun["v2"].value("giro_variado", false), cyclesRun["v2"].value("giro_coluna", 0.0f));
+                getUp->setStillCost(cyclesRun["v2"].value("quieto_custos", 0.0f));
                 getUp->setIdleUnified(cyclesRun["v2"].value("parado_unico", false));
                 if (cyclesRun["v2"].contains("parado_recompensa") && cyclesRun["v2"]["parado_recompensa"].is_array()
                     && cyclesRun["v2"]["parado_recompensa"].size() == 3) {

@@ -275,6 +275,13 @@ struct TrackingGetUpAmpSettings3D {
     // Pelvis-Abdomen-Chest-UpperChest-Neck, cada junta 1/(1+(angulo/5 graus)^2), a media (spineAlignment) - vezes isto, somado a
     // nota; 09h55, ele: "no parado tambem" - no parado ela entra no bonus da nota com este peso.
     bool turnVariety = false;
+    // (11/11 10h30, ele: "faca... em definitivo... o que for necessario... isso vale para o girar parado tambem"; a receita do parado
+    // que ja ficou imovel, o RL v1 de 12/10 - os pes parados no milimetro, 0,5 cm de oscilacao, o tronco a 3 graus/s -: custos de
+    // quietude densos e sem saturar.) stillCost: no parado (com a nota de idleRewardPose) os custos - o giro do tronco e da pelve
+    // min(w2, 4)/4, cada pe apoiado escorregando ou girando (v + 0,1 giro vertical, ate 0,2 m/s) e o centro de massa andando (ate
+    // 0,2 m/s) - vezes isto, comendo da nota sem nunca deixa-la negativa; no giro parado, o tronco e a pelve tombando (o giro em
+    // volta do vertical e livre) e o pe escorregando no chao. 0: sem.
+    float stillCost = 0.0f;
     float turnSpineReward = 0.0f;
     // (Ele: "Parado - penaliza micromovimentos, penaliza fora da pose") Com idleUnified, no parado: a nota
     // max(0, 0,3 + 0,7 pose x firmeza - idleMotionCost M - idlePoseCost D), com M = 1 - exp(-movimento/0,25) (o giro medio dos elos
@@ -1110,6 +1117,7 @@ public:
     void setStopToIdle(bool on);
     void setIdleAfterStop(bool on);
     void setTurnVariety(bool on, float spineReward);
+    void setStillCost(float weight);
     void setIdleCosts(float motion, float pose);
     void setIdleReward(float pose, float still, float slide);
     void setUpperRigor(float factor);

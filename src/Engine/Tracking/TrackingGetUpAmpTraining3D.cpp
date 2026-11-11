@@ -7278,6 +7278,21 @@ struct TrackingGetUpAmpTraining3D::Impl {
             : w.commandSpeed > 0.0f ? moveReward(w, now)
             : w.locomotion ? 0.7f * posture->standingReward(now, w.body->links, settled) + (now.standing ? 0.3f * facing(w) : 0.0f)
                            : posture->standingReward(now, w.body->links, settled);
+        if (settings.stillCost > 0.0f && w.startKind == 7 && w.locomotionControl && upperChestLink < w.body->links.size()) {
+            // (settings.stillCost no giro parado: o tronco e a pelve tombando - o giro em volta do vertical e livre - e o pe escorregando.)
+            const auto tilting = [&](std::size_t i) {
+                const Vec3 a = w.body->links[i].angularVelocity;
+                return a.x * a.x + a.y * a.y;
+            };
+            const float tilt = std::min(4.0f, tilting(upperChestLink) + tilting(rootLink)) / 4.0f;
+            float slip = 0.0f;
+            for (const std::uint32_t f : footLinks) {
+                const bool down = std::any_of(w.body->contacts.begin(), w.body->contacts.end(),
+                    [&](const RagdollContactPoint3D& c) { return c.linkIndex == f; });
+                if (down) slip += std::hypot(w.body->links[f].linearVelocity.x, w.body->links[f].linearVelocity.y);
+            }
+            state = std::max(0.0f, state - settings.stillCost * (0.5f * tilt + 0.5f * std::min(1.0f, slip / 0.2f)));
+        }
         if (settings.turnSpineReward > 0.0f && w.startKind == 7 && w.locomotionControl && upperChestLink < w.body->links.size()) {
             // (settings.turnSpineReward - ver o .hpp: a coluna toda reta no giro, o eixo de cima da pelve contra o do peito alto.)
             state += settings.turnSpineReward * spineAlignment(w);
@@ -7527,9 +7542,26 @@ struct TrackingGetUpAmpTraining3D::Impl {
                                 // peso turnSpineReward, como no giro.)
                                 const float aligned = settings.turnSpineReward > 0.0f ? spineAlignment(w) : 0.0f;
                                 const float bonus = settings.idleRewardPose * close + settings.idleRewardStill * still + settings.turnSpineReward * aligned;
+                                float costs = 0.5f * settings.idleSlideCost * std::min(1.0f, slide);
+                                if (settings.stillCost > 0.0f) {
+                                    // (settings.stillCost - ver o .hpp: os custos de quietude do RL v1.)
+                                    const float trunkSpin = std::min(4.0f, w.body->links[upperChestLink].angularVelocity.lengthSquared()
+                                        + w.body->links[rootLink].angularVelocity.lengthSquared()) / 4.0f;
+                                    float slip = 0.0f;
+                                    for (const std::uint32_t f : footLinks) {
+                                        const bool down = std::any_of(w.body->contacts.begin(), w.body->contacts.end(),
+                                            [&](const RagdollContactPoint3D& c) { return c.linkIndex == f; });
+                                        if (down) {
+                                            const PhysicsBodyState3D& foot = w.body->links[f];
+                                            slip += std::hypot(foot.linearVelocity.x, foot.linearVelocity.y) + 0.1f * std::abs(foot.angularVelocity.z);
+                                        }
+                                    }
+                                    const float comCost = std::min(1.0f, std::hypot(v.x, v.y) / 0.2f);
+                                    costs = settings.stillCost * (0.4f * trunkSpin + 0.4f * std::min(1.0f, slip / 0.2f) + 0.2f * comCost);
+                                }
                                 idleScore = std::max(0.0f, 0.5f + 0.5f * bonus
                                     / std::max(1.0e-3f, settings.idleRewardPose + settings.idleRewardStill + settings.turnSpineReward)
-                                    - 0.5f * settings.idleSlideCost * std::min(1.0f, slide));
+                                    - costs);
                                 match = close;
                             }
                             state = idleScore - (w.stepsOn && w.steps.recoveryStarted() ? 0.05f : 0.0f)
@@ -8648,6 +8680,7 @@ void TrackingGetUpAmpTraining3D::setStopPosture(float gate) { m_impl->settings.s
 void TrackingGetUpAmpTraining3D::setIdleUnified(bool on) { m_impl->settings.idleUnified = on; }
 void TrackingGetUpAmpTraining3D::setStopToIdle(bool on) { m_impl->settings.stopToIdle = on; }
 void TrackingGetUpAmpTraining3D::setIdleAfterStop(bool on) { m_impl->settings.idleAfterStop = on; }
+void TrackingGetUpAmpTraining3D::setStillCost(float weight) { m_impl->settings.stillCost = std::clamp(weight, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setTurnVariety(bool on, float spineReward) {
     m_impl->settings.turnVariety = on;
     m_impl->settings.turnSpineReward = std::clamp(spineReward, 0.0f, 2.0f);
