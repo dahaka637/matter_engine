@@ -259,6 +259,16 @@ struct TrackingGetUpAmpSettings3D {
     // dispensavam a pose (depois do empurrao e ao assentar). E o parado de depois de frear conta como parado no treinador
     // (locomoting = 0: os pesos e o juiz do parado). false: como antes.
     bool idleUnified = false;
+    // (11/11 08h40, ele: "nao existe mais freio, agora e locomocao -> pose IDLE alerta, direto... se ele para a locomocao vai para
+    // o idle alerta e pronto") stopToIdle: a ordem de parar (o fim dos retos, a tecla solta no comando) poe o alvo direto no idle
+    // alerta na vista (parkStop / commandIdle) - sem clipe de parada e sem parada livre.
+    bool stopToIdle = false;
+    // (Ele: "Parado - penaliza micromovimentos, penaliza fora da pose") Com idleUnified, no parado: a nota
+    // max(0, 0,3 + 0,7 pose x firmeza - idleMotionCost M - idlePoseCost D), com M = 1 - exp(-movimento/0,25) (o giro medio dos elos
+    // ao quadrado, rad2/s2, mais 10 x a velocidade do centro de massa ao quadrado) e D a distancia a pose (as juntas em 0,15 rad, a
+    // base 8 cm, os giros 12 graus, a inclinacao 8 graus, a altura 3 cm; cada uma ate 3), de 0 a 1. Nunca negativa: cair nao compensa.
+    float idleMotionCost = 0.0f;
+    float idlePoseCost = 0.0f;
     // (10/11 04h, ele: "desde agora precisamos cobrar a coluna correta, cabeca, bracos com mais rigor durante as locomocoes e
     // parado") A regua da imitacao da coluna, da cabeca e dos bracos vezes isto (andando, no giro e nas trocas); 1: sem.
     float upperRigor = 1.0f;
@@ -1074,6 +1084,8 @@ public:
     void setStopPosture(float gate);
     void setStopIdlePose(float weight);
     void setIdleUnified(bool on);
+    void setStopToIdle(bool on);
+    void setIdleCosts(float motion, float pose);
     void setUpperRigor(float factor);
     void setUnrealStarts(bool on);
     void setUnrealStartScale(float scale);
