@@ -6,7 +6,7 @@
       ate 80. Depois as medidas, resultados.json, tabela.md e as figuras. RECEITA: um arquivo ou o nome em tools/rl/receitas.
   .venv/bin/python -m suite comparar --candidatos DIR/capturas/A DIR/capturas/B [...] --saida DIR [--margens margens.json]
       so as medidas e a saida, das capturas ja feitas (o primeiro e a referencia).
-  .venv/bin/python -m suite aa --resultados DIR/resultados.json --saida margens.json
+  .venv/bin/python -m suite aa --resultados PAR1/resultados.json [PAR2/resultados.json ...] --saida margens.json
       o teste A/A (metodologia, secao 5): com os dois bracos iguais medidos (o primeiro e a referencia), a margem de cada medida
       e o maior desvio que o IC95 do delta pareado A/A admite, max(|lo|, |hi|). Delta degenerado (IC [0, 0], ex.: zero quedas
       nos dois) fica com a provisoria. Tambem conta o alarme falso das provisorias (quantas guardas o A/A reprovaria).
@@ -137,11 +137,23 @@ def cmd_comparar(a) -> int:
 
 
 def cmd_aa(a) -> int:
-    d = json.loads(Path(a.resultados).read_text())
+    margens, degeneradas, alarmes, pares = {}, [], [], []
+    for arquivo in a.resultados:
+        _aa_par(json.loads(Path(arquivo).read_text()), margens, degeneradas, alarmes, pares)
+    Path(a.saida).write_text(json.dumps(margens, indent=1, sort_keys=True) + "\n")
+    print(f"A/A {', '.join(pares)}: {len(margens)} margens em {a.saida} (o maior desvio entre os pares); "
+          f"{len(set(degeneradas))} degeneradas em algum par")
+    print(f"alarme falso das provisorias: {len(alarmes)} (somando os pares)")
+    for x in alarmes:
+        print("  " + x)
+    return 0
+
+
+def _aa_par(d: dict, margens: dict, degeneradas: list, alarmes: list, pares: list) -> None:
     nomes = list(d["candidatos"])
     if len(nomes) != 2:
-        raise SystemExit(f"o A/A pede exatamente 2 candidatos, veio {nomes}")
-    margens, degeneradas, alarmes = {}, [], []
+        raise SystemExit(f"cada resultados.json do A/A pede exatamente 2 candidatos, veio {nomes}")
+    pares.append(" x ".join(nomes))
     for mid, r in d["candidatos"][nomes[1]]["medidas"].items():
         c = r.get("contra_referencia")
         if not c:
@@ -154,15 +166,9 @@ def cmd_aa(a) -> int:
             degeneradas.append(mid)
             m = r["margem_provisoria"]
         if m is not None:
-            margens[mid] = round(float(m), 6)
+            margens[mid] = round(max(float(m), margens.get(mid, 0.0)), 6)
         if c["marca"] in ("piorou", "incerto+"):
-            alarmes.append(f"{mid} ({c['marca']}: delta {c['delta_pior']:+.4g}, IC [{lo:+.4g}, {hi:+.4g}], provisoria {c['margem']})")
-    Path(a.saida).write_text(json.dumps(margens, indent=1, sort_keys=True) + "\n")
-    print(f"A/A {nomes[0]} x {nomes[1]}: {len(margens)} margens em {a.saida}; {len(degeneradas)} degeneradas (ficaram com a provisoria)")
-    print(f"alarme falso das provisorias: {len(alarmes)} de {len(margens)} guardas")
-    for x in alarmes:
-        print("  " + x)
-    return 0
+            alarmes.append(f"{nomes[1]}: {mid} ({c['marca']}: delta {c['delta_pior']:+.4g}, IC [{lo:+.4g}, {hi:+.4g}], margem {c['margem']})")
 
 
 def cmd_autoteste(a) -> int:
@@ -221,7 +227,7 @@ def main() -> int:
     k.add_argument("--margens", default=None)
     k.add_argument("--sem-figuras", action="store_true")
     q = sub.add_parser("aa")
-    q.add_argument("--resultados", required=True, help="o resultados.json do medir com os dois bracos iguais")
+    q.add_argument("--resultados", nargs="+", required=True, help="um resultados.json por par de bracos iguais (a margem e o maior desvio)")
     q.add_argument("--saida", required=True, help="o margens.json")
     t = sub.add_parser("autoteste", parents=[comum])
     t.add_argument("--checkpoint", default=PADRAO_PRINCIPAL)
