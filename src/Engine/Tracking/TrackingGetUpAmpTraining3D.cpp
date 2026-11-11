@@ -7343,6 +7343,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
                         match *= tall;
                         state = 0.10f + 0.55f * match * feetHeld + 0.15f * spine + 0.20f * quiet;
                         bool lost = std::sqrt(idleFeet) > IdleFeetLimit || drop > IdlePelvisDrop;
+                        float unifiedBalance = 1.0f;
                         if (settings.balanceSteps && w.stepsOn) {
                             // (04/11 15h, ele: "os passos de recuperacao e estabilizacao... para o auto-equilibrio"; vault
                             // 04_locomocao/plano_passos_de_recuperacao_04_11.md) Com o gerador de passos: a semelhanca contra a
@@ -7371,6 +7372,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
                             const float held = (1.0f - k) * feetHeld + k;
                             // (07/11, com idleQuiet: a quietude 0,15 -> 0,25, de 0,05 do de pe e 0,05 da pose.)
                             const bool quietOn = settings.idleQuiet > 0.0f;
+                            unifiedBalance = balance;
                             state = (quietOn ? 0.05f : 0.10f) + (quietOn ? 0.35f : 0.40f) * stepMatch * held + 0.10f * spine
                                 + (quietOn ? 0.25f : 0.15f) * quiet + 0.15f * balance + 0.10f * stance
                                 - (w.steps.recoveryStarted() ? 0.05f : 0.0f) - (w.steps.settleStarted() ? 0.02f : 0.0f);
@@ -7381,6 +7383,24 @@ struct TrackingGetUpAmpTraining3D::Impl {
                                 w.quietAgainAt = w.time - w.lastPushEnd;
                             lost = stanceError > 0.45f || drop > 2.0f * IdlePelvisDrop;
                             match = stepMatch;
+                        }
+                        if (settings.idleUnified) {
+                            // (11/11, settings.idleUnified - ver o .hpp.) A forma: cada junta contra o idle (com as pernas do passo
+                            // quando o gerador da um), na cauda longa de 0,15 rad; o lugar: o idle alerta na vista (basePosture).
+                            w.jointErrors.resize(trackingParts.size());
+                            contract->jointErrors(w.body->links, w.idleFrame, w.jointErrors);
+                            float shape = 0.0f;
+                            for (const float e : w.jointErrors) shape += 1.0f / (1.0f + e / (0.15f * 0.15f));
+                            shape /= static_cast<float>(std::max<std::size_t>(1, w.jointErrors.size()));
+                            const TrackingBasePosture3D bp = basePosture(w);
+                            const auto tail = [](float x, float width) { const float u = x / width; return 1.0f / (1.0f + u * u); };
+                            const float place = 0.2f * (tail(bp.baseMeters, TrackingBasePosture3D::BaseWidth)
+                                + tail(bp.pelvisYaw, TrackingBasePosture3D::YawWidth) + tail(bp.chestYaw, TrackingBasePosture3D::YawWidth)
+                                + tail(bp.chestTilt, TrackingBasePosture3D::TiltWidth) + tail(bp.drop, 0.03f));
+                            const float steady = 0.5f + 0.5f * unifiedBalance * quiet;
+                            match = shape * place;
+                            state = match * steady - (w.stepsOn && w.steps.recoveryStarted() ? 0.05f : 0.0f)
+                                - (w.stepsOn && w.steps.settleStarted() ? 0.02f : 0.0f);
                         }
                         // (08/11 11h25, o fogo: o passo de recuperacao muda a base do idle, e a pose perdida encerrava o parado
                         // empurrado como queda - 9% dos parados, 65% de sucesso com empurrao contra 100% sem. Durante o empurrao
@@ -7393,7 +7413,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
                         // (10h05: e nao nos IdleSettleSeconds depois que o idle chega de uma parada - medido, as quedas da parada vem
                         // 0,6-1,4 s depois do idle, com o corpo ainda a 1,5-3 m/s; para assentar ele inclina e da passos.)
                         constexpr float IdleSettleSeconds = 2.0f;
-                        if (settings.idlePoseGate > 0.0f && !recovering && w.time >= w.idleSince + IdleSettleSeconds
+                        if (settings.idlePoseGate > 0.0f && !settings.idleUnified && !recovering && w.time >= w.idleSince + IdleSettleSeconds
                             && upperChestLink < w.body->links.size()) {
                             const auto up = [&](const PhysicsBodyState3D& link) {
                                 return (link.orientation * profile->links[upperChestLink].modelOrientation.conjugate()).normalized()
@@ -7412,7 +7432,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
                         }
                         // (10/11 12h, settings.basePosture: a nota do parado poe o idle no rumo do proprio corpo - medido, o corpo ficava
                         // 20-45 graus girado para fora da vista. Metade dela passa a ser o atrator do idle alerta de frente para a vista.)
-                        if (settings.basePosture > 0.0f && w.locomotionControl) {
+                        if (settings.basePosture > 0.0f && w.locomotionControl && !settings.idleUnified) {
                             // (12h15: so a media nao segurava o rumo - o corpo girava 28-47 graus. De frente para a vista e condicao, como
                             // na parada livre: o peito fora da vista alem da folga derruba a nota inteira.)
                             const float attract = basePosture(w).attraction();
@@ -8234,7 +8254,9 @@ void TrackingGetUpAmpTraining3D::protecting(std::span<std::uint8_t> out) const {
 }
 
 void TrackingGetUpAmpTraining3D::locomoting(std::span<std::uint8_t> out) const {
-    for (std::size_t i = 0; i < m_impl->worlds.size() && i < out.size(); ++i) out[i] = m_impl->worlds[i].locomotion ? 1 : 0;
+    // (11/11, settings.idleUnified: o parado de depois de frear conta como parado - os pesos e o juiz do parado no treinador.)
+    for (std::size_t i = 0; i < m_impl->worlds.size() && i < out.size(); ++i)
+        out[i] = m_impl->worlds[i].locomotion && !(m_impl->settings.idleUnified && m_impl->parkedIdle(m_impl->worlds[i])) ? 1 : 0;
 }
 
 void TrackingGetUpAmpTraining3D::locomotionFeedback(std::span<float> out) const {
@@ -8490,6 +8512,7 @@ void TrackingGetUpAmpTraining3D::setStopClipsCommand(bool on) { m_impl->settings
 void TrackingGetUpAmpTraining3D::setStopGateFloor(float floor) { m_impl->settings.stopGateFloor = std::clamp(floor, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setFreeStop(bool on) { m_impl->settings.freeStop = on; }
 void TrackingGetUpAmpTraining3D::setStopPosture(float gate) { m_impl->settings.stopPosture = std::clamp(gate, 0.0f, 1.0f); }
+void TrackingGetUpAmpTraining3D::setIdleUnified(bool on) { m_impl->settings.idleUnified = on; }
 void TrackingGetUpAmpTraining3D::setStopIdlePose(float weight) { m_impl->settings.stopIdlePose = std::clamp(weight, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setUpperRigor(float factor) { m_impl->settings.upperRigor = std::clamp(factor, 1.0f, 8.0f); }
 void TrackingGetUpAmpTraining3D::setStopClipsBase(bool on) { m_impl->settings.stopClipsBase = on; }

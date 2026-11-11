@@ -252,6 +252,13 @@ struct TrackingGetUpAmpSettings3D {
     // (o DeepMimic inteiro, a coluna junta a junta inclusive): (1 - k*near)*nota + k*near*face*(0,25 + 0,75*pose),
     // pose = metade a semelhanca estrita e metade a cauda longa por junta. 0: sem.
     float stopIdlePose = 0.0f;
+    // (11/11, ele: "a pose deve ser cobrada sempre, sem prejudicar o auto-equilibrio"; o plano 04_locomocao/plano_solucoes_11_11.md)
+    // O parado unico: no parado (o exercicio e o de depois de frear, com o parkStop), a nota e pose x firmeza - a pose na regua de
+    // cauda longa que nao satura (a forma, cada junta contra o idle alerta, e o lugar: a base dos pes, o giro da pelve e do peito
+    // para a vista, a inclinacao do peito e a altura), a firmeza 0,5 + 0,5 x equilibrio x quietude -, sem as janelas que
+    // dispensavam a pose (depois do empurrao e ao assentar). E o parado de depois de frear conta como parado no treinador
+    // (locomoting = 0: os pesos e o juiz do parado). false: como antes.
+    bool idleUnified = false;
     // (10/11 04h, ele: "desde agora precisamos cobrar a coluna correta, cabeca, bracos com mais rigor durante as locomocoes e
     // parado") A regua da imitacao da coluna, da cabeca e dos bracos vezes isto (andando, no giro e nas trocas); 1: sem.
     float upperRigor = 1.0f;
@@ -1066,6 +1073,7 @@ public:
     void setFreeStop(bool on);
     void setStopPosture(float gate);
     void setStopIdlePose(float weight);
+    void setIdleUnified(bool on);
     void setUpperRigor(float factor);
     void setUnrealStarts(bool on);
     void setUnrealStartScale(float scale);
