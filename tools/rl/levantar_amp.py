@@ -212,8 +212,11 @@ def configure_idle_noise(model, batch, level: float) -> None:
 def piso_do_desvio(model, batch, args, device="cpu") -> None:
     """O piso do desvio da locomocao (07/11, --ruido-velocidade: nos alvos de velocidade ele cai junto; --piso-posicao nos eixos)."""
     if args.habilidades_separadas and (args.ruido_velocidade != 1.0 or args.piso_posicao > 0):
+        # (11/11, E5-13: com a cabeca de autoridade inteira, o piso dos eixos dela vezes o alcance de antes - o ruido efetivo igual.)
+        head = lambda n: args.cabeca_autoridade and any(t in n.split(".")[0] for t in ("Neck", "Head"))
         model.loco_log_floor = torch.tensor([LOG_STD_MIN + math.log(args.ruido_velocidade) if n.startswith("vel.")
-                                             else math.log(args.piso_posicao) if args.piso_posicao > 0 and not n.startswith("passo.")
+                                             else math.log(args.piso_posicao * (args.cabeca_clipe if head(n) else 1.0))
+                                             if args.piso_posicao > 0 and not n.startswith("passo.")
                                              else LOG_STD_MIN for n in batch.action_names()], device=device)
 
 
@@ -1019,7 +1022,7 @@ def run_tracking_settings(b, v2: dict) -> None:
     if hasattr(b, "set_gait_cycles"):
         b.set_gait_cycles(bool(v2.get("passos_ciclos", False)))
     if hasattr(b, "set_head_clip_reach"):
-        b.set_head_clip_reach(float(v2.get("cabeca_clipe", -1.0)))
+        b.set_head_clip_reach(1.0 if v2.get("cabeca_autoridade") else float(v2.get("cabeca_clipe", -1.0)))
     b.set_lateral_run_leg_reach(float(v2.get("corrida_lateral_pernas", 1.0)))
     b.set_gait_speeds(gait_speeds(v2.get("velocidades_trote", [0.0])), gait_speeds(v2.get("velocidades_corrida", [0.0])))
     b.set_back_start_lean(-np.radians(float(v2.get("largada_costas", 0.0))))
@@ -1825,6 +1828,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(10/11 01h40) o peso da tarefa nas linhas do parado com a cabeca da locomocao (o exercicio parado e o do "
                              "equilibrio); com --peso-estilo-parado. Sem: os da recuperacao (o juiz preferia o corpo dobrado)")
     parser.add_argument("--peso-estilo-parado", type=float, default=None)
+    parser.add_argument("--cabeca-autoridade", action="store_true",
+                        help="(11/11, E5-13) com --cabeca-clipe R: a correcao da rede no pescoco e na cabeca passa a alcance 1 (autoridade "
+                             "inteira sobre o clipe); na troca as saidas e o desvio da cabeca vezes R - o alvo e o ruido comecam iguais")
     parser.add_argument("--juiz-andando", action="store_true",
                         help="(11/11, E5-8) o juiz da locomocao aprende sem freio so nas linhas andando (o portao da velocidade > 0); "
                              "o parado e a pos-parada ficam com o estilo de uma copia congelada do juiz do ponto de partida, como antes")
@@ -2257,7 +2263,7 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_diagonal_chest(args.diagonal_peito if training else 0.0)
     b.set_arm_clip_reach(args.bracos_clipe)
     b.set_gait_cycles(args.passos_ciclos)
-    b.set_head_clip_reach(args.cabeca_clipe)
+    b.set_head_clip_reach(1.0 if args.cabeca_autoridade else args.cabeca_clipe)
     b.set_rise_flight(args.levantar_voo if training else 0.0)
     b.set_lateral_leg_strict(args.lateral_pernas_rigor if training else 1.0)
     b.set_slow_limits([float(x) for x in counters["lento"]] if training and args.lento > 0 else [0.0, 0.0, 0.0])
@@ -2517,7 +2523,7 @@ def main() -> int:
                   "levantar_clipe": args.levantar_clipe,
                   "estilo_chao": args.estilo_chao, "chao_altura": args.chao_altura, "rolar_clipe": args.rolar_clipe,
                   "musculo": args.musculo,
-                  "sincronizar_fase": args.sincronizar_fase, "imitacao_folga": args.imitacao_folga, "peito_vista": args.peito_vista, "bracos_clipe": args.bracos_clipe, "estrela": args.estrela, "estrela_segundos": args.estrela_segundos, "comando": args.comando, "comando_segundos": args.comando_segundos, "parada": args.parada, "parada_clipes": args.parada_clipes, "passos_ciclos": args.passos_ciclos, "levantar_voo": args.levantar_voo, "lateral_pernas_rigor": args.lateral_pernas_rigor, "lento": args.lento, "cabeca_clipe": args.cabeca_clipe, "fogo_fatia": args.fogo_fatia if args.fogo >= 0 else 0.0, "fogo_pontos": args.fogo_pontos, "fogo_alvo": args.fogo_alvo, "diagonal_peito": args.diagonal_peito, "rumo_suave": args.rumo_suave, "rumo_limite": args.rumo_limite, "sem_potencial_loco": args.sem_potencial_loco, "nota_velocidade": args.nota_velocidade, "estilo_velocidade": args.estilo_velocidade, "joelho_dentro": args.joelho_dentro, "idle_altura": args.idle_altura, "parada_corpo": args.parada_corpo, "lento_faixa": args.lento_faixa,
+                  "sincronizar_fase": args.sincronizar_fase, "imitacao_folga": args.imitacao_folga, "peito_vista": args.peito_vista, "bracos_clipe": args.bracos_clipe, "estrela": args.estrela, "estrela_segundos": args.estrela_segundos, "comando": args.comando, "comando_segundos": args.comando_segundos, "parada": args.parada, "parada_clipes": args.parada_clipes, "passos_ciclos": args.passos_ciclos, "levantar_voo": args.levantar_voo, "lateral_pernas_rigor": args.lateral_pernas_rigor, "lento": args.lento, "cabeca_clipe": args.cabeca_clipe, "cabeca_autoridade": args.cabeca_autoridade, "fogo_fatia": args.fogo_fatia if args.fogo >= 0 else 0.0, "fogo_pontos": args.fogo_pontos, "fogo_alvo": args.fogo_alvo, "diagonal_peito": args.diagonal_peito, "rumo_suave": args.rumo_suave, "rumo_limite": args.rumo_limite, "sem_potencial_loco": args.sem_potencial_loco, "nota_velocidade": args.nota_velocidade, "estilo_velocidade": args.estilo_velocidade, "joelho_dentro": args.joelho_dentro, "idle_altura": args.idle_altura, "parada_corpo": args.parada_corpo, "lento_faixa": args.lento_faixa,
                   "manobras": args.manobras,
                   "comeco_clipe": args.comeco_clipe, "comeco_de_pe": args.comeco_de_pe,
                   "imitacao_parado": args.imitacao_parado, "idle_pos_levantar": args.idle_pos_levantar,
@@ -3494,7 +3500,7 @@ def main() -> int:
         e.set_phase_sync(args.sincronizar_fase)
         e.set_arm_clip_reach(args.bracos_clipe)
         e.set_gait_cycles(args.passos_ciclos)
-        e.set_head_clip_reach(args.cabeca_clipe)
+        e.set_head_clip_reach(1.0 if args.cabeca_autoridade else args.cabeca_clipe)
     if args.bracos_clipe >= 0 and model.split and counters.get("bracos_clipe") != args.bracos_clipe:
         # (08/11: a saida dos bracos passa a ser correcao do clipe - zerada, a rede comeca fazendo os bracos do clipe.)
         names = batch.action_names()
@@ -3524,6 +3530,21 @@ def main() -> int:
             last.bias[rows] = 0.0
         counters["cabeca_clipe"] = args.cabeca_clipe
         print(f"cabeca no clipe (alcance {args.cabeca_clipe}): {len(head)} eixos, saidas zeradas", flush=True)
+    if args.cabeca_autoridade and args.cabeca_clipe > 0 and model.split and not counters.get("cabeca_autoridade"):
+        # (11/11, E5-13) A troca para a autoridade inteira: o alvo e clipe + alcance*(acao - meio); com o alcance 1, as linhas de
+        # saida da cabeca (so as de posicao - a velocidade dela vem do clipe) e o desvio delas vezes o alcance de antes: comeca igual.
+        names = batch.action_names()
+        last = [m for m in model.actor.locomotion if isinstance(m, nn.Linear)][-1]
+        steps = sum(1 for nm in names if nm.startswith("passo."))
+        axes = (last.bias.numel() - steps) // (2 if args.acao_velocidade else 1)
+        head = [k for k, nm in enumerate(names[:axes]) if any(t in nm.split(".")[0] for t in ("Neck", "Head"))]
+        assert head
+        with torch.no_grad():
+            last.weight[head] *= args.cabeca_clipe
+            last.bias[head] *= args.cabeca_clipe
+            model.loco_log_std[head] += math.log(args.cabeca_clipe)
+        counters["cabeca_autoridade"] = True
+        print(f"cabeca com autoridade inteira: {len(head)} eixos, saidas e desvio vezes {args.cabeca_clipe}", flush=True)
     balance_rows: list = []
     drill_rows: dict = {k: [] for k in DRILL_KEYS}
 
