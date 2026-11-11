@@ -3791,13 +3791,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // O rumo pedido do giro, uma decisao adiante.
     // (11/11, ele: "corrija o giro parado... o clipe que ele precisa seguir aponta para uma direcao, mas o alvo esta em outra")
     // O rumo do peito do quadro de referencia posto, pela mesma conta do chestYaw do corpo.
+    // (11h45: o tronco todo, nao o peito - o rumo do tronco do quadro seguido.)
     float referenceChestYaw(World& w) const {
         TrackingClipFrame3D frame;
         referenceFrame(w, 0.0f, true, frame);
-        const std::size_t c = contract->chestLink();
-        if (c >= frame.links.size()) return w.faceYaw;
-        const Vec3 f = (frame.links[c].orientation * profile->links[c].modelOrientation.conjugate()).normalized().rotate({ 1.0f, 0.0f, 0.0f });
-        return std::atan2(f.y, f.x);
+        return frame.links.empty() ? w.faceYaw : trunkYawOf(frame.links);
     }
     void advanceTurn(World& w) {
         if (w.startKind != 7) return;
@@ -5527,7 +5525,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
             // - constante no exercicio: frente 0, direita -90 graus - e a vista em relacao ao peito, para onde virar.)
             // (08/11 15h20: parando - a tecla solta -, o pedido ja e zero na observacao, como no jogo; a referencia freia por dentro.)
             const bool commanded = moving && !w.stopping;
-            const float move = commanded ? wrapAngle(w.moveYaw - w.faceYaw) : 0.0f, face = wrapAngle(w.faceYaw - chestYaw(w));
+            // (11h45, ele: "o tronco todo mira": no giro parado a vista contra o rumo do tronco inteiro, nao o do peito.)
+            const float facedYaw = w.startKind == 7 ? trunkYawOf(w.body->links) : chestYaw(w);
+            const float move = commanded ? wrapAngle(w.moveYaw - w.faceYaw) : 0.0f, face = wrapAngle(w.faceYaw - facedYaw);
             c[0] = std::cos(move);
             c[1] = std::sin(move);
             c[2] = commanded ? 1.0f : 0.0f;
@@ -6523,16 +6523,49 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // seguido (no parado o idle alerta, no giro o clipe dele); cada um 1/(1+(angulo/5 graus)^2), a media dos cinco.
     mutable std::array<std::size_t, 5> spineChain {};
     mutable bool spineChainReady = false;
-    float spineAlignment(const World& w, const TrackingClipFrame3D& reference) const {
-        if (!spineChainReady) {
-            static constexpr const char* Chain[5] { "Pelvis", "Abdomen", "Chest", "UpperChest", "Neck" };
-            for (std::size_t k = 0; k < 5; ++k) {
-                spineChain[k] = profile->links.size();
-                for (std::size_t i = 0; i < profile->links.size(); ++i)
-                    if (profile->links[i].id == Chain[k]) spineChain[k] = i;
-            }
-            spineChainReady = true;
+    void readySpineChain() const {
+        if (spineChainReady) return;
+        static constexpr const char* Chain[5] { "Pelvis", "Abdomen", "Chest", "UpperChest", "Neck" };
+        for (std::size_t k = 0; k < 5; ++k) {
+            spineChain[k] = profile->links.size();
+            for (std::size_t i = 0; i < profile->links.size(); ++i)
+                if (profile->links[i].id == Chain[k]) spineChain[k] = i;
         }
+        spineChainReady = true;
+    }
+    // (11/11 11h45, ele: "nao pode nunca mais ser 'o peito mira', precisa ser o tronco todo mira, pois o problema dele estar torto e
+    // justamente porque ele tenta deixar so o peito mirando") O rumo de cada elo da cadeia do tronco (a frente dele no plano) e o
+    // rumo do tronco, a media circular dos cinco.
+    float linkHeading(const PhysicsBodyState3D& link, std::size_t i) const {
+        const Vec3 f = (link.orientation * profile->links[i].modelOrientation.conjugate()).normalized().rotate({ 1.0f, 0.0f, 0.0f });
+        return std::atan2(f.y, f.x);
+    }
+    float trunkYawOf(std::span<const PhysicsBodyState3D> links) const {
+        readySpineChain();
+        float sx = 0.0f, sy = 0.0f;
+        for (const std::size_t i : spineChain)
+            if (i < links.size()) {
+                const float h = linkHeading(links[i], i);
+                sx += std::cos(h);
+                sy += std::sin(h);
+            }
+        return std::atan2(sy, sx);
+    }
+    // O tronco inteiro mirando como no quadro seguido: cada elo da cadeia no rumo do mesmo elo do quadro, 1/(1+(erro/10 graus)^2), a media.
+    float trunkAim(const World& w, const TrackingClipFrame3D& reference) const {
+        readySpineChain();
+        float sum = 0.0f;
+        int count = 0;
+        for (const std::size_t i : spineChain)
+            if (i < w.body->links.size() && i < reference.links.size()) {
+                const float e = std::abs(wrapAngle(linkHeading(w.body->links[i], i) - linkHeading(reference.links[i], i))) * 180.0f / Pi;
+                sum += 1.0f / (1.0f + (e / 10.0f) * (e / 10.0f));
+                ++count;
+            }
+        return count > 0 ? sum / static_cast<float>(count) : 1.0f;
+    }
+    float spineAlignment(const World& w, const TrackingClipFrame3D& reference) const {
+        readySpineChain();
         const auto upOf = [&](const PhysicsBodyState3D& link, std::size_t i) {
             return (link.orientation * profile->links[i].modelOrientation.conjugate()).normalized().rotate({ 0.0f, 0.0f, 1.0f });
         };
@@ -7313,6 +7346,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
             if (clipTracked(w)) {
                 referenceFrame(w, 0.0f, true, turnFrame);
                 state += settings.turnSpineReward * spineAlignment(w, turnFrame);
+                // (11h45: o tronco todo mirando, cada elo como no clipe, multiplica a nota do giro - so o peito virado nao basta.)
+                state *= 0.4f + 0.6f * trunkAim(w, turnFrame);
             }
         }
         // O premio do passo (com o pedido de deslocamento, de pe): cada pe que pousa depois de um tempo no ar.
