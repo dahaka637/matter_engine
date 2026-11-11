@@ -1,0 +1,18 @@
+{
+ "firmeza.cabeca.fogo.det": 5.157351,
+ "firmeza.cabeca.fogo.ruido": 9.933773,
+ "firmeza.peito_vaivem.fogo.det": 1.570766,
+ "firmeza.peito_vaivem.fogo.ruido": 1.15779,
+ "firmeza.quedas.fogo.det": 0.234375,
+ "firmeza.quedas.fogo.ruido": 0.125,
+ "firmeza.tronco_mole.fogo.det": 12.646574,
+ "firmeza.tronco_mole.fogo.ruido": 10.333563,
+ "postura.cabeca.fogo.det": 2.392801,
+ "postura.cabeca.fogo.ruido": 2.347978,
+ "postura.coluna_frente.fogo.det": 2.283696,
+ "postura.coluna_frente.fogo.ruido": 2.015939,
+ "postura.coluna_lado.fogo.det": 1.491949,
+ "postura.coluna_lado.fogo.ruido": 1.876785,
+ "postura.pelve.fogo.det": 1.138625,
+ "postura.pelve.fogo.ruido": 0.773228
+}

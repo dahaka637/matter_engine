@@ -886,7 +886,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // parado depois de uma parada na locomocao e o mesmo parado do exercicio de parado: o idle alerta seguido, com o gerador de passos
     // (o passo sugerido e a base na observacao, as pernas do passo na nota) - nao um modo a parte.
     bool parkedIdle(const World& w) const {
-        return (settings.basePosture > 0.0f || settings.stopToIdle) && w.locomotion && w.locomotionControl && w.stopping
+        return (settings.basePosture > 0.0f || settings.stopToIdle || settings.idleAfterStop) && w.locomotion && w.locomotionControl && w.stopping
             && w.stopPhase == 2 && idleTracked(w);
     }
     // O quadro do clipe seguido (sem por no mundo) posto na pelve do corpo: a raiz no plano da pelve (mais `shift`), na altura
@@ -3180,7 +3180,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // (A parada livre: nada a frear na referencia nem idle pelo relogio.)
         if (w.freeStop) {
             // (10/11, settings.basePosture: nos retos, o corpo freado - abaixo de FreeStopSettleSpeed - entra no parado, como no comando.)
-            if (settings.basePosture > 0.0f && !isCommand(w) && std::hypot(w.smoothVelocity.x, w.smoothVelocity.y) < FreeStopSettleSpeed)
+            if ((settings.basePosture > 0.0f || settings.idleAfterStop) && !isCommand(w)
+                && std::hypot(w.smoothVelocity.x, w.smoothVelocity.y) < FreeStopSettleSpeed)
                 parkStop(w);
             return;
         }
@@ -8554,6 +8555,7 @@ void TrackingGetUpAmpTraining3D::setFreeStop(bool on) { m_impl->settings.freeSto
 void TrackingGetUpAmpTraining3D::setStopPosture(float gate) { m_impl->settings.stopPosture = std::clamp(gate, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setIdleUnified(bool on) { m_impl->settings.idleUnified = on; }
 void TrackingGetUpAmpTraining3D::setStopToIdle(bool on) { m_impl->settings.stopToIdle = on; }
+void TrackingGetUpAmpTraining3D::setIdleAfterStop(bool on) { m_impl->settings.idleAfterStop = on; }
 void TrackingGetUpAmpTraining3D::setIdleReward(float pose, float still, float slide) {
     m_impl->settings.idleRewardPose = std::clamp(pose, 0.0f, 2.0f);
     m_impl->settings.idleRewardStill = std::clamp(still, 0.0f, 2.0f);

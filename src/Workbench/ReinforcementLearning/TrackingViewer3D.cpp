@@ -493,6 +493,7 @@ struct TrackingViewer3D::Impl {
                 getUp->setIdleWide(cyclesRun["v2"].value("parado_largo", false));
                 // (11/11: sem freio - a ordem de parar vai direto ao idle alerta -, o parado unico e a nota nova dele, como no treino.)
                 getUp->setStopToIdle(cyclesRun["v2"].value("parada_direto_idle", false));
+                getUp->setIdleAfterStop(cyclesRun["v2"].value("idle_depois_freada", false));
                 getUp->setIdleUnified(cyclesRun["v2"].value("parado_unico", false));
                 if (cyclesRun["v2"].contains("parado_recompensa") && cyclesRun["v2"]["parado_recompensa"].is_array()
                     && cyclesRun["v2"]["parado_recompensa"].size() == 3) {

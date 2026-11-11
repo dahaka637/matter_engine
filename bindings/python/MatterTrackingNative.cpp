@@ -589,6 +589,7 @@ NB_MODULE(matter_tracking_native, m) {
         .def("set_stop_idle_pose", &TrackingGetUpAmpTraining3D::setStopIdlePose, "weight"_a)
         .def("set_idle_unified", &TrackingGetUpAmpTraining3D::setIdleUnified, "on"_a)
         .def("set_stop_to_idle", &TrackingGetUpAmpTraining3D::setStopToIdle, "on"_a)
+        .def("set_idle_after_stop", &TrackingGetUpAmpTraining3D::setIdleAfterStop, "on"_a)
         .def("set_idle_costs", &TrackingGetUpAmpTraining3D::setIdleCosts, "motion"_a, "pose"_a)
         .def("set_idle_reward", &TrackingGetUpAmpTraining3D::setIdleReward, "pose"_a, "still"_a, "slide"_a)
         .def("set_upper_rigor", &TrackingGetUpAmpTraining3D::setUpperRigor, "factor"_a)

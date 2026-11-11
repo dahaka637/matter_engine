@@ -263,6 +263,11 @@ struct TrackingGetUpAmpSettings3D {
     // o idle alerta e pronto") stopToIdle: a ordem de parar (o fim dos retos, a tecla solta no comando) poe o alvo direto no idle
     // alerta na vista (parkStop / commandIdle) - sem clipe de parada e sem parada livre.
     bool stopToIdle = false;
+    // (11/11 09h28, ele: "correndo -> idle alerta, mas fazendo de forma inteligente a recuperacao necessaria para nao cair... ele ja
+    // estava conseguindo frear antes"; o stopToIdle tirou a freada que ele sabia e ele passou a cair.) idleAfterStop: a freada fica
+    // como era (a parada livre, com os clipes de frente) e, freado - abaixo de FreeStopSettleSpeed -, ele entra no idle alerta
+    // (parkStop), com a nota do parado. false: como antes.
+    bool idleAfterStop = false;
     // (Ele: "Parado - penaliza micromovimentos, penaliza fora da pose") Com idleUnified, no parado: a nota
     // max(0, 0,3 + 0,7 pose x firmeza - idleMotionCost M - idlePoseCost D), com M = 1 - exp(-movimento/0,25) (o giro medio dos elos
     // ao quadrado, rad2/s2, mais 10 x a velocidade do centro de massa ao quadrado) e D a distancia a pose (as juntas em 0,15 rad, a
@@ -1095,6 +1100,7 @@ public:
     void setStopIdlePose(float weight);
     void setIdleUnified(bool on);
     void setStopToIdle(bool on);
+    void setIdleAfterStop(bool on);
     void setIdleCosts(float motion, float pose);
     void setIdleReward(float pose, float still, float slide);
     void setUpperRigor(float factor);
