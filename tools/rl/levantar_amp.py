@@ -2887,10 +2887,15 @@ def main() -> int:
     replay_loco = torch.zeros(0, 2 * (2 * amp + mm.context) if mm is not None else 2 * amp, device=device)
     # (11/11, E5-8, --juiz-andando: a E5-5 mostrou que o juiz aprendendo melhora a corrida e estraga o parado - o estilo do parado
     # fica com a copia congelada, a de antes; a normalizacao dela segue como a do juiz congelado do campeao.)
-    # shortcut: a copia nasce do juiz do checkpoint a cada inicio (nao e salva); continuar o treino a refaz do juiz ja treinado.
+    # (A copia vai no checkpoint, "disc_loco_parado": continuar o treino segue com ela, nao com uma copia do juiz ja treinado andando.)
     disc_loco_idle = None
     if args.juiz_andando and disc_loco is not None:
         disc_loco_idle = copy.deepcopy(disc_loco).eval()
+        if state and "disc_loco_parado" in state:
+            disc_loco_idle.load_state_dict(state["disc_loco_parado"])
+            print("juiz andando: o do parado vem do checkpoint (congelado)", flush=True)
+        else:
+            print("juiz andando: o do parado e a copia congelada do juiz do ponto de partida", flush=True)
         disc_loco_idle.requires_grad_(False)
 
     retained = None
@@ -2938,6 +2943,7 @@ def main() -> int:
         tmp = run / "ultimo.tmp"
         torch.save({"model": model.state_dict(), "disc": disc.state_dict(), "actor_opt": actor_opt.state_dict(),
                     **({"disc_loco": disc_loco.state_dict(), "disc_loco_opt": disc_loco_opt.state_dict()} if disc_loco else {}),
+                    **({"disc_loco_parado": disc_loco_idle.state_dict()} if disc_loco_idle is not None else {}),
                     "critic_opt": critic_opt.state_dict(), "disc_opt": disc_opt.state_dict(), "counters": counters,
                     "settings": settings,
                     **({"preservation_anchor": retained.state_dict()} if retained is not None else {})}, tmp)

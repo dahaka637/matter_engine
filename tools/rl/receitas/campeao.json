@@ -2,7 +2,7 @@
  "receita": "campeao",
  "treino_original": "rl_final_clipe",
  "build_original": "build-rl-n17",
- "descricao": "a receita do campeao, limpa passo a passo (comeca igual a principal_1011); toda flag apagada do codigo sai daqui no mesmo commit",
+ "descricao": "campeao r72200 (11/11: E5-8 adotada - o juiz da locomocao aprende so andando, o parado com a copia congelada; sem --juiz-freio)",
  "capturada": "2026-11-10 16h45, do ExecStart do servico",
  "argumentos": [
   "--simetria",
@@ -316,8 +316,6 @@
   "--juiz-unreal",
   "--juiz-ciclos",
   "0.5",
-  "--juiz-freio",
-  "1.0",
   "--levantar-deitado",
   "--manobras-pesos",
   "0.12",
@@ -326,6 +324,8 @@
   "0.16",
   "0.08",
   "0.12",
-  "0.12"
- ]
+  "0.12",
+  "--juiz-andando"
+ ],
+ "campeao": "~/.local/share/matter-engine/rl/campeoes/r72200_juiz_andando_1111.pt"
 }
