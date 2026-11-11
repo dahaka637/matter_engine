@@ -6508,8 +6508,15 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         if (settings.stopIdlePose > 0.0f) {
             // (settings.stopIdlePose, E5-7 - ver o .hpp.)
+            // (O nucleo do DeepMimic satura - longe da pose ele da ~0 e nao puxa de volta, diario 43; metade da pose numa regua de
+            // cauda longa por junta, 1/(1+(erro/0,15 rad)^2), que nunca zera.)
+            w.jointErrors.resize(trackingParts.size());
+            contract->jointErrors(w.body->links, w.idleFrame, w.jointErrors);
+            float tail = 0.0f;
+            for (const float e : w.jointErrors) tail += 1.0f / (1.0f + e / (0.15f * 0.15f));
+            tail /= static_cast<float>(std::max<std::size_t>(1, w.jointErrors.size()));
             const float k = settings.stopIdlePose * near;
-            score = (1.0f - k) * score + k * face * (0.25f + 0.75f * match);
+            score = (1.0f - k) * score + k * face * (0.25f + 0.75f * (0.5f * match + 0.5f * tail));
         }
         float headTilt = 0.0f;
         if (settings.stopPosture > 0.0f && upperChestLink < w.body->links.size()) {

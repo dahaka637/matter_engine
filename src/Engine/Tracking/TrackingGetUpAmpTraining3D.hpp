@@ -249,7 +249,8 @@ struct TrackingGetUpAmpSettings3D {
     // (11/11 03h29, ele: "ao frear fica todo molengo e nunca volta a pose do idle alerta"; "a pose deve ser cobrada sempre, mas
     // sem prejudicar o auto-equilibrio". Medido no codigo: parado, a nota da parada livre e 0,70 + 0,30*stand - 70% so por ter
     // parado, a pose do idle 6%.) E5-7: conforme ele para (near), a nota passa a ser a pose do idle alerta na regua estrita
-    // (o DeepMimic inteiro, a coluna junta a junta inclusive): (1 - k*near)*nota + k*near*face*(0,25 + 0,75*semelhanca). 0: sem.
+    // (o DeepMimic inteiro, a coluna junta a junta inclusive): (1 - k*near)*nota + k*near*face*(0,25 + 0,75*pose),
+    // pose = metade a semelhanca estrita e metade a cauda longa por junta. 0: sem.
     float stopIdlePose = 0.0f;
     // (10/11 04h, ele: "desde agora precisamos cobrar a coluna correta, cabeca, bracos com mais rigor durante as locomocoes e
     // parado") A regua da imitacao da coluna, da cabeca e dos bracos vezes isto (andando, no giro e nas trocas); 1: sem.
