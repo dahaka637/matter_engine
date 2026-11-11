@@ -5435,6 +5435,18 @@ struct TrackingGetUpAmpTraining3D::Impl {
             std::fill(state.begin(), state.end(), 0.0f);
             if (w.stepsOn && w.locomotionControl) w.steps.features(state);
         }
+        if (settings.idleAnchorObservation) {
+            // (11/11, settings.idleAnchorObservation - ver o .hpp.)
+            float* a = &w.observation[w.observation.size() - 3];
+            a[0] = a[1] = 0.0f;
+            if (w.idleAnchored && w.locomotionControl && idleTracked(w)) {
+                const PhysicsBodyState3D& pelvis = w.body->links[rootLink];
+                const float h = pelvisHeading(pelvis), c = std::cos(h), s = std::sin(h);
+                const float dx = w.idleAnchor.x - pelvis.position.x, dy = w.idleAnchor.y - pelvis.position.y;
+                a[0] = std::clamp((c * dx + s * dy) / 0.1f, -3.0f, 3.0f);
+                a[1] = std::clamp((-s * dx + c * dy) / 0.1f, -3.0f, 3.0f);
+            }
+        }
         w.observation.back() = settings.separateSkills && w.locomotionControl ? 1.0f : 0.0f;
         std::fill(w.clipAction.begin(), w.clipAction.end(), 0.0f);
         // (03/11 18h30: tambem na locomocao por AMP - os alvos do clipe da decisao para a imitacao supervisionada do
@@ -8097,6 +8109,8 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
                  "passo.sugerido.frente", "passo.sugerido.lado", "passo.desde_pouso", "passo.base.frente", "passo.base.lado" })
             impl.observationNames.emplace_back(name);
     }
+    if (settings.idleAnchorObservation)
+        for (const char* name : { "parado.ancora.frente", "parado.ancora.lado" }) impl.observationNames.emplace_back(name);
     impl.observationNames.emplace_back("habilidade.locomocao");
     impl.actionNames = impl.contract->actionNames();
     if (settings.stepChannels)
@@ -8148,7 +8162,7 @@ TrackingGetUpAmpTraining3D::~TrackingGetUpAmpTraining3D() {
 std::size_t TrackingGetUpAmpTraining3D::environmentCount() const { return m_impl->worlds.size(); }
 std::size_t TrackingGetUpAmpTraining3D::observationSize() const {
     return m_impl->contract->bodyObservationSize() + CommandSize + GroundObservationSize + PhaseSize + EnvironmentSize
-        + balanceObservationSize() + SkillModeSize;
+        + balanceObservationSize() + (m_impl->settings.idleAnchorObservation ? 2 : 0) + SkillModeSize;
 }
 std::size_t TrackingGetUpAmpTraining3D::balanceObservationSize() const {
     return m_impl->settings.balanceObservation ? TrackingGetUpContract3D::BalanceObservationSize + TrackingBalanceSteps3D::FeatureCount : 0;

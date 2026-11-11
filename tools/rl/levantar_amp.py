@@ -1163,6 +1163,8 @@ def batch_layout(v2: dict) -> dict:
     # (05/11: o levantar pelo clipe - o guiado no tempo do proprio clipe.)
     if v2.get("levantar_clipe"):
         out.update(get_up_guide=True, get_up_seconds=0.0)
+    if v2.get("parado_ancora_obs"):
+        out["idle_anchor_observation"] = True
     return out
 
 
@@ -1464,6 +1466,34 @@ def expand_inputs(state: dict, observations: int) -> dict:
         if observations > v.shape[0]:
             out[key] = torch.cat([v, torch.full((observations - v.shape[0],), fill, dtype=v.dtype, device=v.device)])
     return out
+
+
+def insert_inputs(state: dict, at: int, count: int) -> dict:
+    """Entradas novas no meio (antes da habilidade, a ultima): colunas em zero na primeira camada do ator e do critico (a rede faz
+    o mesmo de antes) e a normalizacao delas neutra."""
+    out = dict(state)
+    for key in (k for k in out if k.endswith(".0.weight") and k.startswith(("actor.", "critic."))):
+        w = out[key]
+        out[key] = torch.cat([w[:, :at], torch.zeros(w.shape[0], count, dtype=w.dtype, device=w.device), w[:, at:]], 1)
+    for key in (k for k in out if k.startswith("norm.") and k.endswith((".mean", ".var"))):
+        v = out[key]
+        mid = torch.full((count,), 0.0 if key.endswith(".mean") else 1.0, dtype=v.dtype, device=v.device)
+        out[key] = torch.cat([v[:at], mid, v[at:]])
+    return out
+
+
+def insert_adam_inputs(optimizer, at: int, count: int) -> int:
+    """Os momentos do Adam das camadas que ganharam entradas: zeros nas colunas novas, o resto mantido."""
+    grown = 0
+    for group in optimizer.param_groups:
+        for p in group["params"]:
+            st = optimizer.state.get(p, {})
+            for k in ("exp_avg", "exp_avg_sq"):
+                m = st.get(k)
+                if m is not None and m.dim() == 2 and m.shape[1] + count == p.shape[1]:
+                    st[k] = torch.cat([m[:, :at], torch.zeros(m.shape[0], count, dtype=m.dtype, device=m.device), m[:, at:]], 1)
+                    grown += 1
+    return grown
 
 
 def warm_start(model: Policy, threads: int, steps: int, device: torch.device) -> dict:
@@ -1793,6 +1823,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(10/11 01h40) o peso da tarefa nas linhas do parado com a cabeca da locomocao (o exercicio parado e o do "
                              "equilibrio); com --peso-estilo-parado. Sem: os da recuperacao (o juiz preferia o corpo dobrado)")
     parser.add_argument("--peso-estilo-parado", type=float, default=None)
+    parser.add_argument("--parado-ancora-obs", action="store_true",
+                        help="(11/11, E5-6) a rede ve a ancora do parado: o ponto onde o parado comecou, na frente e ao lado da pelve "
+                             "(em 10 cm, ate 3), que a nota ja cobra e a entrada nao tinha; as colunas novas em zero (comeca igual)")
     parser.add_argument("--linha-final-so", choices=("custo", "estilo"), default=None,
                         help="(11/11, sonda da E5-4, morre na decisao) com --linha-final: so o teto do custo ou so o portao do estilo")
     parser.add_argument("--linha-final", action="store_true",
@@ -2177,6 +2210,8 @@ def aplicar_receita(parser: argparse.ArgumentParser, args) -> None:
         args.suave_loco = args.suave
     if args.equilibrio:
         BATCH_EXTRA.update(balance_observation=True, step_channels=True)
+    if args.parado_ancora_obs:
+        BATCH_EXTRA.update(idle_anchor_observation=True)
     VELOCITY_ACTIONS[0] = bool(args.acao_velocidade)
 
 
@@ -2489,7 +2524,7 @@ def main() -> int:
                   "corrida_inclinar": list(args.corrida_inclinar),
                   "corrida_costas_inclinar": list(args.corrida_costas_inclinar),
                   "sprint_velocidade": args.sprint_velocidade, "sprint_inclinar": list(args.sprint_inclinar),
-                  "mao_corpo": args.mao_corpo, "equilibrio": args.equilibrio, "equilibrio_fatia": args.equilibrio_fatia,
+                  "mao_corpo": args.mao_corpo, "equilibrio": args.equilibrio, "parado_ancora_obs": args.parado_ancora_obs, "equilibrio_fatia": args.equilibrio_fatia,
                   "empurrao_idle": args.empurrao_idle, "chegada_premio": args.chegada_premio, "voo_multa": args.voo_multa,
                   "subida_equilibrio": args.subida_equilibrio, "entrega_calma": args.entrega_calma,
                   "evitar_idle": args.evitar_idle,
@@ -2713,6 +2748,11 @@ def main() -> int:
         state = torch.load(checkpoint, map_location=device, weights_only=False)
         source_state = state["model"]
         first = "actor.recovery.0.weight" if "actor.recovery.0.weight" in source_state else "actor.0.weight"
+        # (11/11, E5-6: as 2 entradas da ancora do parado antes da habilidade, a ultima; o Adam mantido, com zeros nelas.)
+        anchor_at = source_state[first].shape[1] - 1 if args.parado_ancora_obs and source_state[first].shape[1] == obs_size - 2 else None
+        if anchor_at is not None:
+            source_state = insert_inputs(source_state, anchor_at, 2)
+            print(f"ancora do parado na entrada: 2 colunas novas em zero na posicao {anchor_at}", flush=True)
         grown = source_state[first].shape[1] < obs_size or (args.habilidades_separadas and first == "actor.0.weight")
         # (04/11 15h, os passos: a rede de antes no layout do equilibrio - as entradas antes da habilidade, os canais do passo.)
         old_inputs = source_state[first].shape[1]
@@ -2755,6 +2795,9 @@ def main() -> int:
                     # (Os grupos do Adam mudaram: o ator do zero.)
                     print("adam do ator do zero (grupos novos)", flush=True)
             critic_opt.load_state_dict(state["critic_opt"])
+            if anchor_at is not None:
+                print(f"adam com a ancora: {insert_adam_inputs(actor_opt, anchor_at, 2) + insert_adam_inputs(critic_opt, anchor_at, 2)} "
+                      "momentos com as colunas novas", flush=True)
         if not fresh_judges:
             disc_opt.load_state_dict(state["disc_opt"])
         if disc_loco is not None and "disc_loco" in state and not fresh_judges and not fresh_mm and not fresh_loco:

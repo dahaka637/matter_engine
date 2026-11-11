@@ -433,6 +433,10 @@ struct TrackingGetUpAmpSettings3D {
     // (balanceObservation e stepChannels mudam os tamanhos: so no construtor.)
     bool balanceObservation = false;
     bool stepChannels = false;
+    // (11/11, E5-6: a nota do parado cobra a deriva da ancora - idleAnchor, onde o parado comecou, re-ancorada depois de cada passo
+    // do gerador -, mas a entrada nao a tinha.) idleAnchorObservation: 2 entradas antes da habilidade - a ancora na frente e ao
+    // lado da pelve, em 10 cm (ate 3); zeros fora do parado ancorado da locomocao. Muda o tamanho: so no construtor.
+    bool idleAnchorObservation = false;
     bool balanceSteps = false;
     bool idleThroughPushes = false;
     float balanceDrillFraction = 0.0f;
