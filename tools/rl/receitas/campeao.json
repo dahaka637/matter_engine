@@ -2,7 +2,7 @@
  "receita": "campeao",
  "treino_original": "rl_final_clipe",
  "build_original": "build-rl-n17",
- "descricao": "campeao r72200 (11/11: E5-8 adotada - o juiz da locomocao aprende so andando, o parado com a copia congelada; sem --juiz-freio)",
+ "descricao": "campeao r72370 (11/11: E5-8 + E5-11 adotadas - o juiz da locomocao aprende so andando; a pose cobrada inteira tambem no empurrao)",
  "capturada": "2026-11-10 16h45, do ExecStart do servico",
  "argumentos": [
   "--simetria",
@@ -190,7 +190,6 @@
   "0",
   "--fogo-fatia",
   "0.5",
-  "--fogo-alivio",
   "--fogo-pontos",
   "--fogo-alvo",
   "0.5",
@@ -327,5 +326,5 @@
   "0.12",
   "--juiz-andando"
  ],
- "campeao": "~/.local/share/matter-engine/rl/campeoes/r72200_juiz_andando_1111.pt"
+ "campeao": "~/.local/share/matter-engine/rl/campeoes/r72370_sem_alivio_1111.pt"
 }
