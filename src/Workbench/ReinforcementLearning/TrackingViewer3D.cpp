@@ -491,6 +491,14 @@ struct TrackingViewer3D::Impl {
                 getUp->setIdleBentEnd(cyclesRun["v2"].value("parado_dobrado_encerra", false));
                 getUp->setUpperImitation(cyclesRun["v2"].value("imitacao_tronco", false));
                 getUp->setIdleWide(cyclesRun["v2"].value("parado_largo", false));
+                // (11/11: sem freio - a ordem de parar vai direto ao idle alerta -, o parado unico e a nota nova dele, como no treino.)
+                getUp->setStopToIdle(cyclesRun["v2"].value("parada_direto_idle", false));
+                getUp->setIdleUnified(cyclesRun["v2"].value("parado_unico", false));
+                if (cyclesRun["v2"].contains("parado_recompensa") && cyclesRun["v2"]["parado_recompensa"].is_array()
+                    && cyclesRun["v2"]["parado_recompensa"].size() == 3) {
+                    const nlohmann::json& r = cyclesRun["v2"]["parado_recompensa"];
+                    getUp->setIdleReward(r[0].get<float>(), r[1].get<float>(), r[2].get<float>());
+                }
                 if (pushes) {
                     // (As faixas do fire_bands do levantar_amp.py, no nivel de cada grupo do treino agora.)
                     const nlohmann::json& v = cyclesRun["v2"];
