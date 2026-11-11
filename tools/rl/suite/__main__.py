@@ -6,6 +6,10 @@
       ate 80. Depois as medidas, resultados.json, tabela.md e as figuras. RECEITA: um arquivo ou o nome em tools/rl/receitas.
   .venv/bin/python -m suite comparar --candidatos DIR/capturas/A DIR/capturas/B [...] --saida DIR [--margens margens.json]
       so as medidas e a saida, das capturas ja feitas (o primeiro e a referencia).
+  .venv/bin/python -m suite aa --resultados DIR/resultados.json --saida margens.json
+      o teste A/A (metodologia, secao 5): com os dois bracos iguais medidos (o primeiro e a referencia), a margem de cada medida
+      e o maior desvio que o IC95 do delta pareado A/A admite, max(|lo|, |hi|). Delta degenerado (IC [0, 0], ex.: zero quedas
+      nos dois) fica com a provisoria. Tambem conta o alarme falso das provisorias (quantas guardas o A/A reprovaria).
   .venv/bin/python -m suite autoteste [--checkpoint CK --receita R]
       as medidas em dados sinteticos (suite/testes) e o determinismo: o mesmo cenario duas vezes da arrays identicos.
 """
@@ -132,6 +136,35 @@ def cmd_comparar(a) -> int:
     return 0
 
 
+def cmd_aa(a) -> int:
+    d = json.loads(Path(a.resultados).read_text())
+    nomes = list(d["candidatos"])
+    if len(nomes) != 2:
+        raise SystemExit(f"o A/A pede exatamente 2 candidatos, veio {nomes}")
+    margens, degeneradas, alarmes = {}, [], []
+    for mid, r in d["candidatos"][nomes[1]]["medidas"].items():
+        c = r.get("contra_referencia")
+        if not c:
+            continue
+        lo, hi = c["ic95"]
+        if not (lo == lo and hi == hi):
+            continue
+        m = max(abs(lo), abs(hi))
+        if m == 0.0:
+            degeneradas.append(mid)
+            m = r["margem_provisoria"]
+        if m is not None:
+            margens[mid] = round(float(m), 6)
+        if c["marca"] in ("piorou", "incerto+"):
+            alarmes.append(f"{mid} ({c['marca']}: delta {c['delta_pior']:+.4g}, IC [{lo:+.4g}, {hi:+.4g}], provisoria {c['margem']})")
+    Path(a.saida).write_text(json.dumps(margens, indent=1, sort_keys=True) + "\n")
+    print(f"A/A {nomes[0]} x {nomes[1]}: {len(margens)} margens em {a.saida}; {len(degeneradas)} degeneradas (ficaram com a provisoria)")
+    print(f"alarme falso das provisorias: {len(alarmes)} de {len(margens)} guardas")
+    for x in alarmes:
+        print("  " + x)
+    return 0
+
+
 def cmd_autoteste(a) -> int:
     import unittest
     r = unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.discover(str(Path(__file__).parent / "testes"),
@@ -187,11 +220,14 @@ def main() -> int:
     k.add_argument("--saida", required=True)
     k.add_argument("--margens", default=None)
     k.add_argument("--sem-figuras", action="store_true")
+    q = sub.add_parser("aa")
+    q.add_argument("--resultados", required=True, help="o resultados.json do medir com os dois bracos iguais")
+    q.add_argument("--saida", required=True, help="o margens.json")
     t = sub.add_parser("autoteste", parents=[comum])
     t.add_argument("--checkpoint", default=PADRAO_PRINCIPAL)
     t.add_argument("--receita", default="principal_1011")
     a = ap.parse_args()
-    return {"medir": cmd_medir, "capturar": cmd_capturar, "comparar": cmd_comparar, "autoteste": cmd_autoteste}[a.cmd](a)
+    return {"medir": cmd_medir, "capturar": cmd_capturar, "comparar": cmd_comparar, "autoteste": cmd_autoteste, "aa": cmd_aa}[a.cmd](a)
 
 
 if __name__ == "__main__":
