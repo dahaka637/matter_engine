@@ -96,6 +96,9 @@ def lote(cand: Candidato, cen: C.Cenario, sementes: dict, mundos: int, threads: 
     a forca auxiliar em zero e o que o cenario fixa (a ordem de parar, o equilibrio do parado)."""
     L = _treinador()
     plain = dict(L.montar_v2(cand.args), moving_push_newtons=(0.0, 0.0), moving_push_hold_newtons=(0.0, 0.0))
+    if cen.nome.startswith("parada_longa_"):
+        # (SUITE_V2: a parada longa precisa do episodio da locomocao inteiro - a receita o corta em --locomocao-segundos.)
+        plain["locomotion_seconds"] = cen.segundos
     assets = str(cand.assets)
     if cen.tipo == "parado":
         b = L.get_up_batch(assets, environments=mundos, threads=threads, seed=sementes["lote_parado"], evaluation=True,
@@ -247,7 +250,7 @@ def capturar_todos(cand: Candidato, conjunto: str, saida: Path, mundos: int = C.
                    so: list[str] | None = None, condicoes: tuple = C.CONDICOES, log=print, pausa_quente=None) -> dict:
     """Todos os cenarios e condicoes de um candidato; devolve {tag: segundos}."""
     tempos = {}
-    for cen in C.cenarios():
+    for cen in C.cenarios() + (C.extras() if so else []):
         if so and cen.nome not in so:
             continue
         for cond in cen.condicoes:

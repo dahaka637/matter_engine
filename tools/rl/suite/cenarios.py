@@ -47,8 +47,15 @@ def cenarios() -> list[Cenario]:
     return out
 
 
+def extras() -> list[Cenario]:
+    """(11/11, SUITE_V2) So por --so: as paradas longas, a ordem aos 4 s e 8 s depois dela (no V1, 4 s: nenhum braco assentava,
+    a base no fim a 27-29 cm da do idle - a volta ao idle alerta ficava fora da janela)."""
+    return [Cenario(f"parada_longa_{MARCHAS[f]}_{h}", "parada", 12.0, faixa=f, rumo=h, ordem=4.0)
+            for f, hs in ((1, (0, 2, 4, 6)), (2, (0, 1, 4, 6))) for h in hs]
+
+
 def por_nome() -> dict[str, Cenario]:
-    return {c.nome: c for c in cenarios()}
+    return {c.nome: c for c in cenarios() + extras()}
 
 
 # Os pares espelhados (o rumo da esquerda e o da direita), dentro de cada marcha.
