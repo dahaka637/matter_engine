@@ -111,46 +111,6 @@ struct TrackingViewer3D::Impl {
     std::unique_ptr<TrackingGetUpAmpTraining3D> getUp;
     std::unique_ptr<PolicyRuntime3D> getUpPolicy;
     std::filesystem::file_time_type getUpPolicyWrite {};
-    // (06/11, a locomocao livre - ele: "eu preciso ver o que de fato esta acontecendo": a professora do treino, a locomocao de
-    // antes congelada, com a parcela dela nos motores como no treino (run.json, v2.soltar); desligavel para ver a rede sozinha.)
-    std::unique_ptr<PolicyRuntime3D> teacherPolicy;
-    std::filesystem::file_time_type teacherWrite {};
-    std::vector<float> teacherAction;
-    float teacherShare = 0.0f;
-    bool teacherShown = true;
-    // (18h25: o treino alterna - em cada decisao dirige a professora, na probabilidade da parcela, ou a rede; aqui igual.)
-    bool teacherAlternates = false;
-    std::uint32_t teacherDraw = 1u;
-    void loadTeacher() {
-        teacherShare = 0.0f;
-        if (!getUp) return;
-        std::ifstream file(getUpDirectory / "run.json");
-        const nlohmann::json run = nlohmann::json::parse(file, nullptr, false);
-        if (run.is_discarded() || !run.is_object() || !run.contains("v2") || !run["v2"].is_object()) return;
-        const auto it = run["v2"].find("soltar");
-        if (it == run["v2"].end() || !it->is_object()) return;
-        const std::filesystem::path path = getUpDirectory / it->value("professora", std::string());
-        std::error_code error;
-        const auto write = std::filesystem::last_write_time(path, error);
-        if (error) return;
-        if (!teacherPolicy || write != teacherWrite) {
-            try {
-                auto policy = std::make_unique<PolicyRuntime3D>(path);
-                if (policy->actionSize() > getUp->actionSize()) return;
-                teacherPolicy = std::move(policy);
-                teacherWrite = write;
-            } catch (const std::exception&) {
-                return;
-            }
-        }
-        teacherShare = std::clamp(it->value("parcela", 0.0f), 0.0f, 1.0f);
-        // (21h: os exercicios sem a professora, como no treino.)
-        std::vector<int> free;
-        if (it->contains("livres") && (*it)["livres"].is_array())
-            for (const auto& d : (*it)["livres"]) if (d.is_number_integer()) free.push_back(d.get<int>());
-        getUp->setTeacherFreeDrills(free);
-        teacherAlternates = it->value("alternar", false);
-    }
     std::uint32_t getUpFalls = 0, getUpStood = 0;
     std::filesystem::path assets;
     std::uint64_t seed = 1;
@@ -1178,7 +1138,6 @@ void TrackingViewer3D::setPolicy(const std::filesystem::path& file, std::string&
 }
 
 void TrackingViewer3D::clearPolicy() { m_impl->policy.reset(); }
-void TrackingViewer3D::setTeacherShown(bool shown) { m_impl->teacherShown = shown; }
 void TrackingViewer3D::setKinematicMotionMatching(bool on) {
     Impl& impl = *m_impl;
     if (on == impl.kinematic) return;
@@ -1206,8 +1165,6 @@ bool TrackingViewer3D::pushes() const { return m_impl->pushes; }
 std::string TrackingViewer3D::kinematicClip() const { return m_impl->getUp ? m_impl->getUp->kinematicClip(0) : std::string(); }
 std::size_t TrackingViewer3D::kinematicJumps() const { return m_impl->getUp ? m_impl->getUp->kinematicJumps(0) : 0; }
 const std::string& TrackingViewer3D::kinematicError() const { return m_impl->kinematicError; }
-bool TrackingViewer3D::teacherShown() const { return m_impl->teacherShown; }
-float TrackingViewer3D::teacherShare() const { return m_impl->getUp && m_impl->teacherPolicy ? m_impl->teacherShare : 0.0f; }
 bool TrackingViewer3D::hasPolicy() const {
     return m_impl->getUp ? m_impl->getUpPolicy != nullptr : m_impl->policy != nullptr;
 }
@@ -1223,35 +1180,12 @@ void TrackingViewer3D::step() {
         // A rede nova do treino a cada ~2 s; sem rede, os alvos zerados (o corpo largado).
         if (impl.steps % 60 == 0) {
             impl.loadGetUpPolicy();
-            impl.loadTeacher();
         }
         impl.getUp->observations(impl.getUpObservation);
         if (impl.getUpPolicy)
             impl.getUpPolicy->evaluate(std::span<const float>(impl.getUpObservation).first(impl.getUpPolicy->observationSize()),
                 impl.getUpAction);
         else std::fill(impl.getUpAction.begin(), impl.getUpAction.end(), 0.0f);
-        // (A professora na parcela dela, como no treino: a correcao dela vai ao ambiente, que mistura nos motores; com a
-        // parcela de metade ou mais, os canais do passo sao os dela - levantar_amp.)
-        const float share = impl.teacherShown && impl.teacherPolicy ? impl.teacherShare : 0.0f;
-        if (share > 0.0f && impl.teacherPolicy->observationSize() <= impl.getUpObservation.size()) {
-            // (A professora sem a velocidade na acao: o resto em zero - o ambiente compoe a dela pelo clipe.)
-            impl.teacherAction.assign(impl.getUp->actionSize(), 0.0f);
-            impl.teacherPolicy->evaluate(std::span<const float>(impl.getUpObservation).first(impl.teacherPolicy->observationSize()),
-                std::span<float>(impl.teacherAction).first(impl.teacherPolicy->actionSize()));
-            // (O sorteio de cada decisao, como o do treino com --soltar-alternar: a professora inteira ou a rede inteira.)
-            impl.teacherDraw = impl.teacherDraw * 1664525u + 1013904223u;
-            const float draw = static_cast<float>(impl.teacherDraw >> 8) / 16777216.0f;
-            const float shares[1] { impl.teacherAlternates ? (draw < share ? 1.0f : 0.0f) : share };
-            impl.getUp->setSelfTeacher(impl.teacherAction, shares);
-            const std::size_t axes = impl.getUp->axisCount(), steps = impl.getUp->stepChannelCount();
-            if (shares[0] >= 0.5f && !impl.getUpObservation.empty() && impl.getUpObservation.back() > 0.5f
-                && impl.teacherAction.size() >= axes + steps)
-                std::copy(impl.teacherAction.begin() + static_cast<std::ptrdiff_t>(axes),
-                    impl.teacherAction.begin() + static_cast<std::ptrdiff_t>(axes + steps),
-                    impl.getUpAction.begin() + static_cast<std::ptrdiff_t>(axes));
-        } else {
-            impl.getUp->setSelfTeacher({}, {});
-        }
         impl.getUp->step(impl.getUpAction, impl.rewards, impl.terminated, impl.truncated);
         for (const TrackingGetUpAmpEpisode3D& episode : impl.getUp->takeEpisodes()) {
             ++impl.getUpFalls;

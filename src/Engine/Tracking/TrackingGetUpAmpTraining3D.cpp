@@ -328,10 +328,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
     std::vector<bool> armAxes;
     // (08/11) Os eixos do pescoco e da cabeca (headClipReach).
     std::vector<bool> headAxes;
-    // (06/11, a locomocao livre) A correcao da professora por mundo (rad, como no step do residuo; vazio: sem) e a parcela
-    // dela nos motores de cada mundo (1: ela dirige; 0: a aluna livre).
-    std::vector<float> selfTeacherResidual;
-    std::vector<float> selfTeacherShare;
     // O meio e a metade da faixa de cada eixo da acao (a naturalidade da recuperacao).
     std::vector<float> actionMid, actionHalf;
     static constexpr float RecoveryRoughScale = 0.10f;
@@ -580,12 +576,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // (06/11, freeVelocityFeedforward) O alvo da cabeca da locomocao na decisao anterior (vazio: sem).
         std::vector<float> freeTarget;
         std::vector<float> armClipNow, armClipNext;
-        // (06/11, a locomocao livre) O rotulo da professora nesta decisao: o alvo, a velocidade-alvo, se vale e se ela dirigiu.
-        std::vector<float> selfLabel;
-        std::vector<float> selfLabelVelocity;
-        bool selfLabelValid = false;
-        bool selfTeacherDrives = false;
-        float selfShare = 0.0f;
         RagdollAnimationPose3D balancePose;
         // O rolar pelo clipe: o clipe (max: sem), o tempo dele e quando comecou; e quando pode comecar outro.
         std::size_t rollClip = std::numeric_limits<std::size_t>::max();
@@ -6888,24 +6878,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.threat = std::clamp(1.0f - margin / 0.08f, 0.0f, 3.0f);
             w.threatKnown = true;
         }
-        // (06/11, a locomocao livre: o rotulo da professora - o alvo que a locomocao de antes, o clipe + a correcao dela, mandaria
-        // nesta decisao -, no mesmo instante e com o mesmo calculo do residuo; nos mundos dela, e ele que vai aos motores.)
-        w.selfLabelValid = w.selfTeacherDrives = false;
-        // (06/11 21h, ele: "tire a professora desses exercicios ja que nem ela consegue sem forca auxiliar... deixa-la criar o
-        // proprio movimento": nos exercicios livres dela, nem rotulo nem volante - so a rede, pela recompensa.)
-        const std::size_t drill = drillOf(w);
-        const bool teacherFree = drill < settings.teacherFreeDrills.size() && settings.teacherFreeDrills[drill] != 0;
-        if (!selfTeacherResidual.empty() && !teacherFree && settings.separateSkills && w.locomotionControl && clipTracked(w)
-            && !(w.rollClip < references.size() && !programmed)) {
-            const std::size_t width = contract->actionSize() * (settings.velocityActions ? 2 : 1) + (settings.stepChannels ? 4 : 0);
-            composeResidual(w, std::span<const float>(selfTeacherResidual).subspan(index * width, contract->actionSize()),
-                w.selfLabel, w.selfLabelVelocity);
-            w.selfLabelValid = true;
-            w.selfShare = index < selfTeacherShare.size() ? std::clamp(selfTeacherShare[index], 0.0f, 1.0f) : 0.0f;
-            w.selfTeacherDrives = w.selfShare >= 1.0f;
-        } else {
-            w.selfShare = 0.0f;
-        }
         if (w.rollClip < references.size() && !programmed) {
             references[w.rollClip]->frame(rollTime(w, TicksPerDecision * TickSeconds), {}, 0.0f, w.frame);
             w.blendAction.assign(action.size(), 0.0f);
@@ -6914,26 +6886,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
             for (std::size_t k = 0; k < action.size(); ++k)
                 w.blendAction[k] = (1.0f - s) * w.blendAction[k] + s * (std::isfinite(action[k]) ? action[k] : w.blendAction[k]);
             contract->driveTargets(w.blendAction, w.drives);
-        } else if (w.selfTeacherDrives) {
-            // (06/11, a locomocao livre: a professora no volante, exatamente como no residuo. 17h15, o diagnostico
-            // selfTeacherVelocityMode: 1 os alvos dela com a velocidade-alvo 0 - como a aluna sem clipe -, 2 com a velocidade
-            // dos proprios alvos dela - a da decisao anterior para esta, como --velocidade-propria.)
-            if (settings.selfTeacherVelocityMode == 0) {
-                w.freeTarget.clear();
-                contract->driveTargets(w.selfLabel, w.selfLabelVelocity, w.drives);
-            } else {
-                const float dt = TicksPerDecision * TickSeconds;
-                w.clipVelocity.assign(w.selfLabel.size(), 0.0f);
-                if (settings.selfTeacherVelocityMode == 2 && w.freeTarget.size() == w.selfLabel.size())
-                    for (std::size_t k = 0; k < w.selfLabel.size(); ++k) {
-                        const float d = w.selfLabel[k] - w.freeTarget[k];
-                        w.clipVelocity[k] = std::abs(d) < 1.0f ? d / dt : 0.0f;
-                    }
-                w.freeTarget = w.selfLabel;
-                contract->driveTargets(w.selfLabel, w.clipVelocity, w.drives);
-                if (settings.freeDampingScale > 0.0f)
-                    for (RagdollDriveTarget3D& drive : w.drives) drive.dampingScale = settings.freeDampingScale;
-            }
         } else if (settings.locomotionResidual && settings.separateSkills && w.locomotionControl && clipTracked(w)) {
             composeResidual(w, action, w.blendAction, w.clipVelocity);
             contract->driveTargets(w.blendAction, w.clipVelocity, w.drives);
@@ -6950,10 +6902,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
             for (std::size_t k = 0; k < action.size(); ++k)
                 w.blendAction[k] = (1.0f - s) * w.blendAction[k] + s * (std::isfinite(action[k]) ? action[k] : w.blendAction[k]);
             contract->driveTargets(w.blendAction, w.drives);
-        } else if ((settings.freeVelocityFeedforward || settings.velocityActions || w.selfShare > 0.0f) && settings.separateSkills
+        } else if ((settings.freeVelocityFeedforward || settings.velocityActions) && settings.separateSkills
                    && w.locomotionControl) {
-            // (06/11, a locomocao livre: a velocidade-alvo pelo proprio alvo da rede - ver freeVelocityFeedforward -; e, na
-            // passagem, o alvo e a velocidade misturados com os da professora na parcela dela.)
+            // (06/11, a locomocao livre: a velocidade-alvo pelo proprio alvo da rede - ver freeVelocityFeedforward.)
             const float dt = TicksPerDecision * TickSeconds;
             w.clipVelocity.assign(action.size(), 0.0f);
             if (settings.freeVelocityFeedforward && w.freeTarget.size() == action.size())
@@ -6978,14 +6929,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
             if (settings.spineVelocityFeedforward)
                 for (std::size_t c = 0; c < coupledAxes.size() && c < spineFeed.size(); ++c)
                     if (coupledAxes[c] < w.clipVelocity.size()) w.clipVelocity[coupledAxes[c]] = spineFeedOn ? spineFeed[c] : 0.0f;
-            const float q = w.selfShare;
             // (10/11 07h10, settings.launchClipShare; ele: "nao e melhor tu so tentar literalmente executar o movimento do clipe e
             // reforcar isso em largada? pelo menos ate ele aprender"): na janela da largada, o alvo e a velocidade-alvo de cada junta
             // misturados com os do clipe de largada - launchClipShare x a janela do clipe, o resto da rede; o treino desce a parcela.
             // (07h40: so com um clipe de largada de verdade tocando (starting) - nos rumos da rampa (laterais, costas, trote) o clipe e o
             // proprio ciclo e a ajuda piorava: a lateral 1,35 -> 0,87 m/s a 1 s.)
             const float ql = settings.launchClipShare > 0.0f && w.locomotion && starting(w) ? settings.launchClipShare * launchWeight(w) : 0.0f;
-            if (ql > q) {
+            if (ql > 0.0f) {
                 clipTargets(w, 0.0f, w.launchClipNow);
                 clipTargets(w, dt, w.launchClipNext);
                 w.blendAction.assign(action.size(), 0.0f);
@@ -6994,14 +6944,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
                     const float d = w.launchClipNext[k] - w.launchClipNow[k];
                     w.blendAction[k] = ql * w.launchClipNext[k] + (1.0f - ql) * own;
                     w.clipVelocity[k] = ql * (std::abs(d) < 1.0f ? d / dt : 0.0f) + (1.0f - ql) * w.clipVelocity[k];
-                }
-                contract->driveTargets(w.blendAction, w.clipVelocity, w.drives);
-            } else if (q > 0.0f && w.selfLabel.size() >= action.size() && w.selfLabelVelocity.size() >= action.size()) {
-                w.blendAction.assign(action.size(), 0.0f);
-                for (std::size_t k = 0; k < action.size(); ++k) {
-                    const float own = std::isfinite(action[k]) ? action[k] : w.selfLabel[k];
-                    w.blendAction[k] = q * w.selfLabel[k] + (1.0f - q) * own;
-                    w.clipVelocity[k] = q * w.selfLabelVelocity[k] + (1.0f - q) * w.clipVelocity[k];
                 }
                 contract->driveTargets(w.blendAction, w.clipVelocity, w.drives);
             } else if ((settings.armClipReach >= 0.0f || settings.headClipReach >= 0.0f) && clipTracked(w)) {
@@ -7043,7 +6985,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             } else {
                 contract->driveTargets(action, w.clipVelocity, w.drives);
             }
-            if (settings.freeDampingScale > 0.0f && q <= 0.0f)
+            if (settings.freeDampingScale > 0.0f)
                 for (RagdollDriveTarget3D& drive : w.drives) drive.dampingScale = settings.freeDampingScale;
         } else {
             w.freeTarget.clear();
@@ -8303,38 +8245,6 @@ void TrackingGetUpAmpTraining3D::locomotionTargets(std::span<float> out) const {
         std::copy(m_impl->worlds[i].clipAction.begin(), m_impl->worlds[i].clipAction.end(), out.begin() + i * width);
 }
 
-void TrackingGetUpAmpTraining3D::setSelfTeacher(std::span<const float> actions, std::span<const float> share) {
-    const std::size_t width = actionSize();
-    if (actions.empty()) {
-        m_impl->selfTeacherResidual.clear();
-        m_impl->selfTeacherShare.clear();
-        return;
-    }
-    if (actions.size() != environmentCount() * width || share.size() != environmentCount())
-        throw std::invalid_argument("professora: forma errada");
-    m_impl->selfTeacherResidual.assign(actions.begin(), actions.end());
-    m_impl->selfTeacherShare.assign(share.begin(), share.end());
-}
-
-void TrackingGetUpAmpTraining3D::selfTeacherLabels(std::span<float> out) const {
-    const std::size_t width = actionSize(), axes = m_impl->contract->actionSize(), steps = stepChannelCount();
-    if (out.size() < environmentCount() * (width + 1)) throw std::invalid_argument("rotulos da professora: buffer pequeno");
-    for (std::size_t i = 0; i < environmentCount(); ++i) {
-        float* o = out.data() + i * (width + 1);
-        std::fill(o, o + width + 1, 0.0f);
-        const auto& w = m_impl->worlds[i];
-        if (!w.selfLabelValid || m_impl->selfTeacherResidual.size() < (i + 1) * width) continue;
-        std::copy(w.selfLabel.begin(), w.selfLabel.begin() + static_cast<std::ptrdiff_t>(std::min(axes, w.selfLabel.size())), o);
-        const float* channels = m_impl->selfTeacherResidual.data() + i * width + axes;
-        std::copy(channels, channels + steps, o + axes);
-        // (17h40: a velocidade-alvo dela - a do clipe - depois dos canais, com a rede dando a velocidade.)
-        if (m_impl->settings.velocityActions)
-            for (std::size_t k = 0; k < axes && k < w.selfLabelVelocity.size(); ++k)
-                o[axes + steps + k] = std::clamp(w.selfLabelVelocity[k], -VelocityActionLimit, VelocityActionLimit);
-        o[width] = w.selfTeacherDrives ? 2.0f : 1.0f;
-    }
-}
-
 void TrackingGetUpAmpTraining3D::mirrorInfo(std::span<float> out) const {
     // (Os clipes periodicos com espelho, conferidos no clipe puro em 05/11: os que servem aos dois lados - o espelho e o
     // mesmo clipe meio ciclo depois - e os pares de lado - o espelho e o outro clipe no mesmo instante.)
@@ -8633,14 +8543,8 @@ void TrackingGetUpAmpTraining3D::setIdlePoseGate(float gate) { m_impl->settings.
 void TrackingGetUpAmpTraining3D::setRunTurnTimeScale(float scale) { m_impl->settings.runTurnTimeScale = std::clamp(scale, 0.2f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setRiseStiffness(float scale) { m_impl->settings.riseStiffness = std::clamp(scale, 0.0f, 2.0f); }
 void TrackingGetUpAmpTraining3D::setFreeVelocityFeedforward(bool on) { m_impl->settings.freeVelocityFeedforward = on; }
-void TrackingGetUpAmpTraining3D::setSelfTeacherVelocityMode(int mode) { m_impl->settings.selfTeacherVelocityMode = std::clamp(mode, 0, 2); }
 void TrackingGetUpAmpTraining3D::setFreeDampingScale(float scale) { m_impl->settings.freeDampingScale = std::clamp(scale, 0.0f, 2.0f); }
 void TrackingGetUpAmpTraining3D::setRecoveryVelocity(bool on) { m_impl->settings.recoveryVelocity = on; }
-void TrackingGetUpAmpTraining3D::setTeacherFreeDrills(const std::vector<int>& drills) {
-    m_impl->settings.teacherFreeDrills.assign(m_impl->settings.drillAssist.size(), 0);
-    for (const int d : drills)
-        if (d >= 0 && static_cast<std::size_t>(d) < m_impl->settings.teacherFreeDrills.size()) m_impl->settings.teacherFreeDrills[static_cast<std::size_t>(d)] = 1;
-}
 void TrackingGetUpAmpTraining3D::setVelocityActions(bool on) {
     if (m_impl->settings.velocityActions == on) return;
     m_impl->settings.velocityActions = on;

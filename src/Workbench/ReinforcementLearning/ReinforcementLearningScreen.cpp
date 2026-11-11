@@ -1971,15 +1971,6 @@ void ReinforcementLearningScreen::drawToolbar() {
         if (!matching->kinematicError().empty()) ImGui::TextColored(WarningText, "%s", matching->kinematicError().c_str());
         ImGui::SameLine();
     }
-    // (06/11, a locomocao livre - ele: "eu preciso ver o que de fato esta acontecendo": a professora na parcela dela, como no
-    // treino; desmarcada, a rede sozinha - a da capacidade a 0%.)
-    if (auto* teaching = dynamic_cast<TrackingViewer3D*>(m_locomotion.get()); teaching != nullptr && teaching->teacherShare() > 0.0f) {
-        bool shown = teaching->teacherShown();
-        if (ImGui::Checkbox("Professora", &shown)) teaching->setTeacherShown(shown);
-        tooltip("Marcada: como no treino, a professora (a locomoção de antes, congelada) com a parcela dela nos motores. "
-                "Desmarcada: a rede sozinha, sem clipe e sem professora.");
-        ImGui::SameLine();
-    }
     struct DisplayOption {
         Display display;
         const char* label;
@@ -2122,9 +2113,6 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
         const std::string who = tracking->drivingLocomotion() ? "rede da locomoção · " + tracking->partnerText()
                                                               : "rede do levantar · " + m_policyText;
         label = who + (cut == std::string::npos ? std::string() : label.substr(cut));
-        if (const float share = tracking->teacherShare(); share > 0.0f)
-            label += tracking->teacherShown() ? " · professora em " + decimal(100.0f * share, 0) + "% das decisões (como no treino)"
-                                              : " · rede sozinha";
         if (TrackingViewer3D::sceneryPresetOf(m_viewerDrill) >= 0 || headingDrill(m_viewerDrill)) {
             const auto at = std::find(m_drillIds.begin(), m_drillIds.end(), m_viewerDrill);
             if (at != m_drillIds.end()) label += "\n" + m_drillNames[static_cast<std::size_t>(at - m_drillIds.begin())];

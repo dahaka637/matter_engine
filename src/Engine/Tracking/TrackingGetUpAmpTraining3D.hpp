@@ -207,8 +207,6 @@ struct TrackingGetUpAmpSettings3D {
     // locomocao a velocidade-alvo dos motores e a do proprio alvo da rede - (alvo de agora - o da decisao anterior) / dt -,
     // como o clipe dava a dele; sem clipe nenhum.)
     bool freeVelocityFeedforward = false;
-    // (06/11 17h15, diagnostico) A velocidade-alvo da professora no volante: 0 a do clipe (o residuo), 1 zero, 2 a dos alvos dela.
-    int selfTeacherVelocityMode = 0;
     // (06/11 17h25) A escala do amortecimento dos motores da cabeca da locomocao sem clipe (0: a do rastreio, 0,5).
     float freeDampingScale = 0.0f;
     // (06/11 17h40, ele: "liberdade total nos motores") A rede da locomocao livre da tambem a velocidade-alvo de cada eixo:
@@ -217,8 +215,6 @@ struct TrackingGetUpAmpSettings3D {
     bool velocityActions = false;
     // (06/11 17h55) Com velocityActions, a cabeca da recuperacao tambem usa as velocidades da acao (o levantar).
     bool recoveryVelocity = false;
-    // (06/11 21h) Os exercicios sem a professora da locomocao livre (indices de drillAssist): so a rede, pela recompensa.
-    std::vector<std::uint8_t> teacherFreeDrills;
     // (06/11 22h10) Os pesos do sorteio das 7 manobras no treino (troca suave, media, forte, livre, curva suave, S, fechada).
     std::array<float, 7> maneuverWeights { 0.12f, 0.16f, 0.16f, 0.16f, 0.12f, 0.14f, 0.14f };
     // (06/11 10h50, a vigilia: as trocas media/forte paradas em ~15% ha 2 h - no atlas, a meia-volta saindo de LADO cai 30-69%
@@ -997,12 +993,6 @@ public:
     void locomotionFeedback(std::span<float> out) const;
     // O alvo do clipe do passo (a acao que reproduz o quadro do fim da decisao; zeros sem clipe): o teste de mergulho.
     void locomotionTargets(std::span<float> out) const;
-    // (06/11, a locomocao livre) A professora: a correcao dela por mundo (rad, como no step do residuo, n x actionSize;
-    // vazio desliga) e a parcela dela nos motores de cada mundo no proximo step (1: ela dirige, como no residuo; entre 0 e 1,
-    // o alvo e a velocidade-alvo misturados com os da aluna). Depois do step, selfTeacherLabels: por mundo, o alvo absoluto
-    // (rad) dela na decisao, os canais do passo dela e, por ultimo, 0 sem rotulo, 1 com rotulo e 2 com ela no volante.
-    void setSelfTeacher(std::span<const float> actions, std::span<const float> share);
-    void selfTeacherLabels(std::span<float> out) const;
     // (05/11, a perda de simetria) O espelho de cada mundo, 2 por mundo: se o estado de agora tem espelho (1/0: a locomocao
     // dirigindo um rumo reto sem manobra, num clipe periodico com espelho, fora da arrancada e das transicoes) e o
     // deslocamento da fase do clipe no espelho (pi nos clipes que servem aos dois lados; 0 nos laterais, cujo par e o
@@ -1056,12 +1046,10 @@ public:
     void setRiseStiffness(float scale);
     // (06/11) A velocidade-alvo dos motores pelo proprio alvo da cabeca da locomocao, sem clipe (freeVelocityFeedforward).
     void setFreeVelocityFeedforward(bool on);
-    void setSelfTeacherVelocityMode(int mode);
     void setFreeDampingScale(float scale);
     // (06/11 17h40) A velocidade-alvo na acao (velocityActions); muda o tamanho e os nomes da acao - chamar antes de usa-los.
     void setVelocityActions(bool on);
     void setRecoveryVelocity(bool on);
-    void setTeacherFreeDrills(const std::vector<int>& drills);
     void setManeuverWeights(std::array<float, 7> weights);
     static constexpr float VelocityActionLimit = 12.0f;
     void setTurnSettleLateral(float speed);

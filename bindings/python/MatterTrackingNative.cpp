@@ -495,21 +495,6 @@ NB_MODULE(matter_tracking_native, m) {
             return out;
         })
         // (06/11) A professora da locomocao livre: a correcao dela e quem ela dirige, antes do step; os rotulos, depois.
-        .def("set_self_teacher",
-            [](TrackingGetUpAmpTraining3D& b, nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> actions,
-                nb::ndarray<const float, nb::ndim<1>, nb::c_contig, nb::device::cpu> share) {
-                if (actions.shape(0) != b.environmentCount() || actions.shape(1) != b.actionSize() || share.shape(0) != b.environmentCount())
-                    throw nb::value_error("professora com forma errada");
-                b.setSelfTeacher(std::span<const float>(actions.data(), actions.size()),
-                    std::span<const float>(share.data(), share.size()));
-            }, "actions"_a, "share"_a)
-        .def("clear_self_teacher", [](TrackingGetUpAmpTraining3D& b) { b.setSelfTeacher({}, {}); })
-        .def("self_teacher_labels", [](const TrackingGetUpAmpTraining3D& b) {
-            auto out = owned<float>({ b.environmentCount(), b.actionSize() + 1 });
-            b.selfTeacherLabels(std::span<float>(out.data(), out.size()));
-            return out;
-        })
-        // (05/11) O espelho de cada mundo: [vale, deslocamento da fase] (a perda de simetria; ler antes do step).
         .def("mirror_info", [](const TrackingGetUpAmpTraining3D& b) {
             auto out = owned<float>({ b.environmentCount(), TrackingGetUpAmpTraining3D::MirrorInfoSize });
             b.mirrorInfo(std::span<float>(out.data(), out.size()));
@@ -586,11 +571,9 @@ NB_MODULE(matter_tracking_native, m) {
         .def("set_lateral_start", &TrackingGetUpAmpTraining3D::setLateralStart, "acceleration"_a)
         .def("set_rise_stiffness", &TrackingGetUpAmpTraining3D::setRiseStiffness, "scale"_a)
         .def("set_free_velocity_feedforward", &TrackingGetUpAmpTraining3D::setFreeVelocityFeedforward, "on"_a)
-        .def("set_self_teacher_velocity_mode", &TrackingGetUpAmpTraining3D::setSelfTeacherVelocityMode, "mode"_a)
         .def("set_free_damping_scale", &TrackingGetUpAmpTraining3D::setFreeDampingScale, "scale"_a)
         .def("set_velocity_actions", &TrackingGetUpAmpTraining3D::setVelocityActions, "on"_a)
         .def("set_recovery_velocity", &TrackingGetUpAmpTraining3D::setRecoveryVelocity, "on"_a)
-        .def("set_teacher_free_drills", &TrackingGetUpAmpTraining3D::setTeacherFreeDrills, "drills"_a)
         .def("set_maneuver_weights", &TrackingGetUpAmpTraining3D::setManeuverWeights, "weights"_a)
         .def("set_turn_settle_lateral", &TrackingGetUpAmpTraining3D::setTurnSettleLateral, "speed"_a)
         .def("set_turn_settle_front", &TrackingGetUpAmpTraining3D::setTurnSettleFront, "speed"_a)

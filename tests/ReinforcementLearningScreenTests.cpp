@@ -804,8 +804,6 @@ int dumpGetUpViewer(const std::filesystem::path& out, const std::string& drill) 
     TrackingViewer3D viewer(assets, 21, drill, {}, 1.0f, 0.2f, {}, run ? std::filesystem::path(run) : std::filesystem::path());
     std::string label;
     viewer.setPolicy({}, label);
-    // (06/11, a locomocao livre: MATTER_RL_TEST_SOZINHA=1, a rede sozinha - sem a professora que o treino mistura nos motores.)
-    if (std::getenv("MATTER_RL_TEST_SOZINHA")) viewer.setTeacherShown(false);
     // (07/11: MATTER_RL_TEST_CINEMATICO=1, os exercicios pelo Motion Matching do juiz, sem fisica.)
     if (std::getenv("MATTER_RL_TEST_CINEMATICO")) {
         viewer.setKinematicMotionMatching(true);
@@ -842,8 +840,7 @@ int dumpGetUpViewer(const std::filesystem::path& out, const std::string& drill) 
         }
     }
     const auto [good, total] = viewer.getUpTally();
-    std::cout << drill << ": " << good << " de " << total << " (" << label << "; professora " << viewer.teacherShare()
-              << (viewer.teacherShown() ? " ligada" : " desligada") << ")\n";
+    std::cout << drill << ": " << good << " de " << total << " (" << label << ")\n";
     return 0;
 }
 

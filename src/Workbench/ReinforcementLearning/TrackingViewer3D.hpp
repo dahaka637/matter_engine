@@ -140,9 +140,6 @@ public:
     [[nodiscard]] bool drivingLocomotion() const;
     // (07/11) Na rede de agora (cabecas separadas), se a cabeca da locomocao dirige: a ultima entrada da observacao.
     [[nodiscard]] bool locomotionHeadDriving() const;
-    // (06/11, a locomocao livre) A professora do treino na parcela dela nos motores, como no treino (ligada por padrao), e a
-    // parcela de agora (0: sem professora no treino).
-    void setTeacherShown(bool shown);
     // (07/11, temporario) Os exercicios de forma cinematica pelo Motion Matching do juiz (sem fisica, sem a rede).
     void setKinematicMotionMatching(bool on);
     [[nodiscard]] bool kinematicMotionMatching() const;
@@ -155,8 +152,6 @@ public:
     // (08/11) Os empurroes do treino (o nivel de cada grupo, os pontos variados) em todo episodio; desligado por padrao.
     void setPushes(bool on);
     [[nodiscard]] bool pushes() const;
-    [[nodiscard]] bool teacherShown() const;
-    [[nodiscard]] float teacherShare() const;
     [[nodiscard]] const std::string& partnerText() const;
     [[nodiscard]] static Conditions conditionsOf(const std::filesystem::path& trackingTask);
 
