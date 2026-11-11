@@ -204,6 +204,24 @@ def configure_idle_noise(model, batch, level: float) -> None:
         print(f"exploracao parada: o desvio x {level} com o pedido zero e o corpo parado (de volta ao inteiro ate 0,5 m/s)", flush=True)
 
 
+def piso_do_desvio(model, batch, args, device="cpu") -> None:
+    """O piso do desvio da locomocao (07/11, --ruido-velocidade: nos alvos de velocidade ele cai junto; --piso-posicao nos eixos)."""
+    if args.habilidades_separadas and (args.ruido_velocidade != 1.0 or args.piso_posicao > 0):
+        model.loco_log_floor = torch.tensor([LOG_STD_MIN + math.log(args.ruido_velocidade) if n.startswith("vel.")
+                                             else math.log(args.piso_posicao) if args.piso_posicao > 0 and not n.startswith("passo.")
+                                             else LOG_STD_MIN for n in batch.action_names()], device=device)
+
+
+def preparar_politica(model, batch, args) -> None:
+    """O que a politica usa alem dos pesos (o treino e a suite montam igual): os eixos sem os passos e as velocidades, a
+    velocidade da recuperacao e o ruido parado."""
+    model.joint_names = tuple(nm for nm in batch.action_names() if not nm.startswith(("passo.", "vel.")))
+    model.recovery_velocity = args.levantar_velocidade is not None
+    model.step_count = sum(1 for nm in batch.action_names() if nm.startswith("passo."))
+    if args.ruido_parado < 1.0:
+        configure_idle_noise(model, batch, args.ruido_parado)
+
+
 class Policy(nn.Module):
     """A acao da rede e normalizada na faixa de cada junta (como no AMP/ASE): o alvo e o meio da faixa mais a metade
     dela vezes a saida - a saida zero e o meio do movimento (nao a pose em T) e o ruido e proporcional a cada junta."""
@@ -2638,11 +2656,7 @@ def main() -> int:
     else:
         reference = torch.as_tensor(batch.reference_pairs(), device=device)
     model = Policy(obs_size, act_size, batch.action_ranges(), split=args.habilidades_separadas).to(device)
-    if args.habilidades_separadas and (args.ruido_velocidade != 1.0 or args.piso_posicao > 0):
-        # (07/11, --ruido-velocidade: nos alvos de velocidade o piso do desvio da locomocao cai junto com ele.)
-        model.loco_log_floor = torch.tensor([LOG_STD_MIN + math.log(args.ruido_velocidade) if n.startswith("vel.")
-                                             else math.log(args.piso_posicao) if args.piso_posicao > 0 and not n.startswith("passo.")
-                                             else LOG_STD_MIN for n in batch.action_names()], device=device)
+    piso_do_desvio(model, batch, args, device)
     disc = Discriminator(amp).to(device)
     disc_loco = reference_loco = disc_loco_opt = None
     mm = None
@@ -2890,9 +2904,7 @@ def main() -> int:
         with torch.no_grad():
             (model.loco_log_std if model.split else model.log_std).fill_(math.log(args.desvio))
     # (17h40: sem as velocidades - na recuperacao, que nao as usa, o log da probabilidade fica so com os eixos.)
-    model.joint_names = tuple(nm for nm in batch.action_names() if not nm.startswith(("passo.", "vel.")))
-    model.recovery_velocity = args.levantar_velocidade is not None
-    model.step_count = sum(1 for nm in batch.action_names() if nm.startswith("passo."))
+    preparar_politica(model, batch, args)
     if args.levantar_velocidade is not None and counters.get("levantar_velocidade_desvio") != args.levantar_velocidade:
         # (O desvio das velocidades da recuperacao, uma vez por valor: comecam em zero - o levantar de antes - e exploram pouco.)
         counters["levantar_velocidade_desvio"] = args.levantar_velocidade
@@ -2937,8 +2949,6 @@ def main() -> int:
     # coleta - 2,41 de 2,48 s - e a atualizacao 0,41 s, 14% da rodada; a GPU ficava em 1-20%. A coleta usa a rede de uma
     # atualizacao atras; o PPO e o desacoplado (Hilton et al. 2021, como o do B21): o corte contra a rede do comeco da
     # atualizacao e o peso de importancia da coleta, cortado em 2.)
-    if args.ruido_parado < 1.0:
-        configure_idle_noise(model, batch, args.ruido_parado)
     collector = copy.deepcopy(model)
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     update_generator = torch.Generator(device=device)

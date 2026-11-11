@@ -225,7 +225,7 @@ def main() -> int:
     q.add_argument("--saida", required=True, help="o margens.json")
     t = sub.add_parser("autoteste", parents=[comum])
     t.add_argument("--checkpoint", default=PADRAO_PRINCIPAL)
-    t.add_argument("--receita", default="principal_1011")
+    t.add_argument("--receita", default="campeao")
     a = ap.parse_args()
     return {"medir": cmd_medir, "capturar": cmd_capturar, "comparar": cmd_comparar, "autoteste": cmd_autoteste, "aa": cmd_aa}[a.cmd](a)
 

@@ -80,32 +80,13 @@ def carregar(nome: str, checkpoint: str | Path, receita: str | Path, assets: str
 
 
 def politica(cand: Candidato, b):
-    """A politica do checkpoint como o main() a monta (levantar_amp.py, depois do 'model = Policy(': o piso do desvio,
-    o residuo e o alcance por parte, a autoridade sob ameaca e o ruido parado)."""
-    import torch
+    """A politica do checkpoint montada como no treino (levantar_amp.piso_do_desvio e preparar_politica)."""
     L = _treinador()
     args = cand.args
-    names = list(b.action_names())
     model = L.Policy(b.obs_size, b.action_size, b.action_ranges(), split=args.habilidades_separadas)
-    if args.habilidades_separadas and (args.ruido_velocidade != 1.0 or args.piso_posicao > 0):
-        model.loco_log_floor = torch.tensor([L.LOG_STD_MIN + math.log(args.ruido_velocidade) if n.startswith("vel.")
-                                             else math.log(args.piso_posicao) if args.piso_posicao > 0 and not n.startswith("passo.")
-                                             else L.LOG_STD_MIN for n in names])
+    L.piso_do_desvio(model, b, args)
     model.load_state_dict(cand.estado["model"])
-    model.residual = args.residuo if model.split else 0.0
-    model.joint_names = tuple(n for n in names if not n.startswith(("passo.", "vel.")))
-    model.recovery_velocity = args.levantar_velocidade is not None
-    model.step_count = sum(1 for n in names if n.startswith("passo."))
-    if model.split and args.residuo > 0 and args.residuo_partes:
-        spine, arms, head = args.residuo_partes
-        model.residual_joint = torch.as_tensor(
-            [1.0 if n.split(".")[0] == "passo" else spine if n.split(".")[0] in ("Abdomen", "Chest", "UpperChest")
-             else arms if ("Arm" in n.split(".")[0] or "Hand" in n.split(".")[0]) else head if n.split(".")[0] in ("Neck", "Head")
-             else args.residuo for n in names], dtype=torch.float32)
-    if model.split and args.residuo > 0:
-        L.configure_threat(model, b, args.autoridade_ameaca, args.autoridade_demanda)
-    if args.ruido_parado < 1.0:
-        L.configure_idle_noise(model, b, args.ruido_parado)
+    L.preparar_politica(model, b, args)
     model.eval()
     return model
 
