@@ -3192,6 +3192,11 @@ def main() -> int:
             # (03/11: no rastreio os custos so comem a nota do passo, nunca a deixam negativa - com a nota baixa do
             # comeco, o limite x2 deixava cada passo negativo e cair voltava a compensar, o erro da locomocao livre.)
             costs = torch.where(loco > .5, torch.minimum(costs, roll["feedback"][..., 0]), costs)
+            if args.parado_unico:
+                # (11/11 09h45, ele: "a recompensa por ficar na pose nunca pode ser maior que o objetivo de nao cair": no parado da
+                # cabeca da locomocao os custos tambem nunca passam da nota - de pe a nota nunca fica negativa e cair nunca compensa.)
+                idle_head = (roll["obs"][..., -1] > .5) & (loco < .5)
+                costs = torch.where(idle_head, torch.minimum(costs, roll["feedback"][..., 0].clamp(min=0.0)), costs)
             rew = (1.0 - gamma) * (task_style - costs) + gamma * roll["boot"]
             adv = torch.zeros(T, n, device=device)
             gae = torch.zeros(n, device=device)

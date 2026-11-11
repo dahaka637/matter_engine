@@ -3739,6 +3739,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.trackScale = scale;
             w.trackStart = -w.time * scale;
             w.trackYaw = w.faceYaw;
+            // (11/11: o peito do clipe no alvo de agora - o quadro gira pelo desvio entre o peito dele e o alvo.)
+            w.trackYaw = wrapAngle(w.trackYaw + wrapAngle(w.faceYaw - referenceChestYaw(w)));
             // (11h20, a folha r400: o corpo do giro ficava parado na base do idle, os pes plantados - nunca vivia um estado
             // girando. No comeco do treino, em locomotionClipFraction, ja dentro do clipe do giro - o RSI: instante e rumo
             // sorteados, as velocidades do clipe na velocidade pedida -, o rumo pedido no ponto do ciclo.)
@@ -3765,8 +3767,28 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.turnLeft = settings.evaluation ? 1.0e9f : (30.0f + 420.0f * u(w.rng)) * Pi / 180.0f;
     }
     // O rumo pedido do giro, uma decisao adiante.
+    // (11/11, ele: "corrija o giro parado... o clipe que ele precisa seguir aponta para uma direcao, mas o alvo esta em outra")
+    // O rumo do peito do quadro de referencia posto, pela mesma conta do chestYaw do corpo.
+    float referenceChestYaw(World& w) const {
+        TrackingClipFrame3D frame;
+        referenceFrame(w, 0.0f, true, frame);
+        const std::size_t c = contract->chestLink();
+        if (c >= frame.links.size()) return w.faceYaw;
+        const Vec3 f = (frame.links[c].orientation * profile->links[c].modelOrientation.conjugate()).normalized().rotate({ 1.0f, 0.0f, 0.0f });
+        return std::atan2(f.y, f.x);
+    }
     void advanceTurn(World& w) {
         if (w.startKind != 7) return;
+        // (O giro com o clipe: o alvo e o peito do clipe a cada decisao - o clipe gira em passos, e o alvo que girava liso ficava
+        // fora dele; agora os dois apontam sempre para o mesmo lado. O que falta girar desconta o quanto o peito girou.)
+        if (w.trackClip < references.size() && (w.trackClip == turnIndices[0] || w.trackClip == turnIndices[1])) {
+            const float chest = referenceChestYaw(w);
+            w.turnLeft -= std::abs(wrapAngle(chest - w.faceYaw));
+            w.faceYaw = w.moveYaw = chest;
+            if (w.turnLeft > 0.0f) return;
+            nextTurn(w);
+            return;
+        }
         const float step = std::min(std::abs(w.turnRate) * TicksPerDecision * TickSeconds, w.turnLeft);
         w.faceYaw = wrapAngle(w.faceYaw + std::copysign(step, w.turnRate));
         w.turnLeft -= step;
@@ -7436,8 +7458,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
                                         [&](const RagdollContactPoint3D& c) { return c.linkIndex == f; });
                                     if (down) slide += std::hypot(w.body->links[f].linearVelocity.x, w.body->links[f].linearVelocity.y);
                                 }
-                                idleScore = settings.idleRewardPose * close + settings.idleRewardStill * still
-                                    - settings.idleSlideCost * std::min(0.5f, slide);
+                                // (11/11 09h45, ele: "a recompensa por ficar na pose nunca pode ser maior que o objetivo de nao cair"):
+                                // de pe vale a base 0,5; a pose e a quietude sao o bonus ate 0,5 por cima; o deslize come so do
+                                // bonus e da base, e a nota nunca fica negativa - cair (que encerra) nunca compensa.
+                                const float bonus = settings.idleRewardPose * close + settings.idleRewardStill * still;
+                                idleScore = std::max(0.0f, 0.5f + 0.5f * bonus / std::max(1.0e-3f, settings.idleRewardPose + settings.idleRewardStill)
+                                    - 0.5f * settings.idleSlideCost * std::min(1.0f, slide));
                                 match = close;
                             }
                             state = idleScore - (w.stepsOn && w.steps.recoveryStarted() ? 0.05f : 0.0f)
