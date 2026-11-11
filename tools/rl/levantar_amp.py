@@ -1742,11 +1742,6 @@ def build_parser() -> argparse.ArgumentParser:
                              "comparacoes com o clipe e a fase observada no passo do corpo")
     parser.add_argument("--rastreio-encerra", type=float, default=0.0,
                         help="a media movel da nota do rastreio (~0,5 s) abaixo disto encerra, depois de 1 s (0: so a queda)")
-    parser.add_argument("--residuo", type=float, default=0.0,
-                        help="a cabeca da locomocao corrige o clipe (alvo = clipe + metade da faixa x saida x isto; 0: a mistura)")
-    parser.add_argument("--residuo-limite", type=float, default=0.0,
-                        help="o peso que puxa a media da cabeca da locomocao para dentro do alcance (|a| <= 1; 04/11 09h45: a "
-                             "media saia sem freio); 0: sem")
     parser.add_argument("--simetria", type=float, default=0.0,
                         help="(05/11, o vies para a direita) o peso da perda de simetria na cabeca da locomocao: a acao no "
                              "estado espelhado e o espelho da acao (Yu, Turk e Liu 2018), nos rumos retos com o clipe "
@@ -1979,12 +1974,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--entrega-calma", type=float, default=0.0,
                         help="depois de levantar, a recuperacao so entrega ao idle com o ponto de captura dentro da base e o corpo "
                              "abaixo de 0,4 m/s - ou este prazo de pe (s); 0: na hora (04/11 21h35)")
-    parser.add_argument("--autoridade-ameaca", type=float, default=1.0,
-                        help="de pe sem pedido de deslocamento, o limite da correcao da locomocao abre ate este multiplo com a "
-                             "ameaca (o ponto de captura na borda da base); 1: fixo (04/11 23h10)")
-    parser.add_argument("--autoridade-demanda", type=float, default=1.0,
-                        help="andando, o limite da correcao da locomocao abre ate este multiplo com a demanda (a velocidade pedida "
-                             "menos a do corpo, de 1 a 2,5 m/s); 1: fixo (04/11 23h40, as trocas de direcao)")
     parser.add_argument("--troca-inclinar", type=float, default=0.0,
                         help="nas trocas de direcao (1-4), a referencia inclina para a aceleracao da velocidade pedida, "
                              "atan(a/g), ate este angulo (graus): a frenagem para tras e a arrancada no rumo novo; 0: sem")
@@ -1995,8 +1984,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="a multa por decisao (ate) do levantar subindo para fora dos pes: o ponto de captura fora da base e a "
                              "velocidade no plano, com a recuperacao e a cabeca acima de 1 m (04/11 16h40: ele subia explosivo, "
                              "passava do ponto e caia de costas)")
-    parser.add_argument("--residuo-partes", type=float, nargs=3, default=None, metavar=("COLUNA", "BRACOS", "CABECA"),
-                        help="o alcance da correcao na coluna, nos bracos e na cabeca (o resto com --residuo)")
     parser.add_argument("--congelar-recuperacao", action="store_true",
                         help="com as habilidades separadas, so a cabeca da locomocao aprende (a da recuperacao fica como veio)")
     parser.add_argument("--preservar-peso", type=float, default=0.0, help="âncora do ator inicial nos exercícios antigos")
@@ -2377,7 +2364,6 @@ def configurar(b, args, counters: dict, training: bool) -> None:
 def montar_v2(args) -> dict:
     """Os ajustes de todo lote da receita, o do treino e os das avaliacoes (10/11: fora do main, para a suite)."""
     return dict(separate_skills=args.habilidades_separadas,
-              locomotion_residual=args.residuo > 0,
               tracking_termination=args.rastreio_encerra, avoid_newtons=tuple(args.evitar_forca), push_newtons=tuple(args.empurrao_forca),
               move_speed=tuple(args.velocidade), push_hold_fraction=args.empurrao_continuo,
               push_hold_newtons=tuple(args.empurrao_continuo_forca), walk_fraction=args.andar,
@@ -2438,7 +2424,7 @@ def main() -> int:
     info["v2"] = {"movimento": args.movimento, "evitar": args.evitar, "arrancada": args.arrancada,
                   "deitado": bool(args.levantar_deitado), "juiz_unreal": bool(args.juiz_unreal),
                   "preservar_peso": args.preservar_peso, "habilidades_separadas": args.habilidades_separadas,
-                  "rastreio": True, "recompensa_rastreio": 19, "rastreio_encerra": args.rastreio_encerra, "residuo": args.residuo,
+                  "rastreio": True, "recompensa_rastreio": 19, "rastreio_encerra": args.rastreio_encerra, "residuo": 0.0,
                   "acao_velocidade": args.acao_velocidade, "levantar_velocidade": args.levantar_velocidade is not None,
                   "congelar_recuperacao": args.congelar_recuperacao,
                   "peso_tarefa": args.peso_tarefa, "peso_estilo": args.peso_estilo, "suave": args.suave,
@@ -2485,8 +2471,8 @@ def main() -> int:
                   "mao_corpo": args.mao_corpo, "equilibrio": args.equilibrio, "equilibrio_fatia": args.equilibrio_fatia,
                   "empurrao_idle": args.empurrao_idle, "chegada_premio": args.chegada_premio, "voo_multa": args.voo_multa,
                   "subida_equilibrio": args.subida_equilibrio, "entrega_calma": args.entrega_calma,
-                  "autoridade_ameaca": args.autoridade_ameaca, "evitar_idle": args.evitar_idle,
-                  "autoridade_demanda": args.autoridade_demanda, "troca_inclinar": args.troca_inclinar,
+                  "evitar_idle": args.evitar_idle,
+                  "troca_inclinar": args.troca_inclinar,
                   "idle_alcance_ameaca": args.idle_alcance_ameaca}
     if args.servico:
         info["comando"] = ["/usr/bin/systemctl", "--user", "start", args.servico]
@@ -2698,7 +2684,7 @@ def main() -> int:
     critic_opt = torch.optim.Adam(model.critic.parameters(), lr=args.taxa_critico)
     disc_opt = torch.optim.Adam(disc.net.parameters(), lr=args.taxa_disc, weight_decay=1e-4)
     counters = {"atualizacao": 0, "amostras": 0, "episodios": 0}
-    settings = {"mundos": n, "passos": args.passos, "residuo": args.residuo, "peso_tarefa": args.peso_tarefa, "peso_estilo": args.peso_estilo,
+    settings = {"mundos": n, "passos": args.passos, "residuo": 0.0, "peso_tarefa": args.peso_tarefa, "peso_estilo": args.peso_estilo,
                 "comeco_clipe": args.comeco_clipe, "observacao": batch.observation_names(), "acao": batch.action_names(),
                 "pares_dos_clipes": int(reference.shape[0]), "habilidades_separadas": args.habilidades_separadas}
     checkpoint = run / "ultimo.pt"
@@ -2903,7 +2889,6 @@ def main() -> int:
     if args.desvio is not None:
         with torch.no_grad():
             (model.loco_log_std if model.split else model.log_std).fill_(math.log(args.desvio))
-    model.residual = args.residuo if model.split else 0.0
     # (17h40: sem as velocidades - na recuperacao, que nao as usa, o log da probabilidade fica so com os eixos.)
     model.joint_names = tuple(nm for nm in batch.action_names() if not nm.startswith(("passo.", "vel.")))
     model.recovery_velocity = args.levantar_velocidade is not None
@@ -2916,41 +2901,12 @@ def main() -> int:
             model.log_std[first:] = math.log(args.levantar_velocidade)
         print(f"levantar com a velocidade: desvio {args.levantar_velocidade} nas {model.log_std.numel() - first} velocidades", flush=True)
 
-    if model.split and args.residuo > 0 and args.residuo_partes:
-        # (04/11 04h30, ele: "os bracos, a cabeca e a coluna nao se reajustaram ao clipe o quanto queriamos" - medido: a
-        # correcao da rede os empurrava para longe do clipe, ~2x nos bracos e ~3x na cabeca; com o alcance menor neles, a
-        # cabeca erra metade e os bracos ~40% menos, sem cair. As pernas e a pelve com o --residuo.)
-        spine, arms, head = args.residuo_partes
-        reach = []
-        for name in batch.action_names():
-            joint = name.split(".")[0]
-            # (04/11 15h: os canais do passo passam crus, -1..1.)
-            reach.append(1.0 if joint == "passo" else spine if joint in ("Abdomen", "Chest", "UpperChest")
-                         else arms if ("Arm" in joint or "Hand" in joint) else head if joint in ("Neck", "Head") else args.residuo)
-        model.residual_joint = torch.as_tensor(reach, dtype=torch.float32, device=device)
-        print(f"alcance da correcao: coluna {spine}, bracos {arms}, cabeca {head}, o resto {args.residuo}", flush=True)
-    if model.split and args.residuo > 0:
-        configure_threat(model, batch, args.autoridade_ameaca, args.autoridade_demanda)
-        if model.threat_index is not None:
-            print(f"autoridade sob ameaca: ate {model.threat_reach}x de pe (entradas {model.threat_index}, {model.speed_index}); "
-                  f"andando, pela demanda ate {model.demand_reach}x", flush=True)
-
     if "soltar" in counters:
         # shortcut: a professora do --soltar (apagada na limpeza c2) nascia aqui e gastava o gerador da CPU - uma Policy com a
         # acao sem as velocidades; este gasto so mantem a prova de equivalencia igual ao ouro. Sai quando o ouro for refeito.
         kept = act_size - sum(1 for nm in batch.action_names() if nm.startswith("vel."))
         Policy(obs_size, kept, batch.action_ranges()[:kept], split=True)
 
-    def zero_locomotion_output() -> None:
-        # (A acao de significado novo pede a camada de saida nova: zerada, a cabeca comeca fazendo exatamente o clipe.)
-        with torch.no_grad():
-            last = [m for m in model.actor.locomotion if isinstance(m, nn.Linear)][-1]
-            last.weight.zero_()
-            last.bias.zero_()
-        print("cabeca da locomocao: residual sobre o clipe, ultima camada zerada", flush=True)
-
-    if model.split and args.residuo > 0 and state is not None and not state.get("settings", {}).get("residuo", 0.0):
-        zero_locomotion_output()
     if not checkpoint.exists() and args.de:
         source = torch.load(DATA / args.de / "ultimo.pt", map_location=device, weights_only=False)
         grown_source = expand_inputs(source["model"], obs_size)
@@ -2968,8 +2924,6 @@ def main() -> int:
             copy_recovery_to_locomotion()
         if model.split and not args.loco_da_recuperacao:
             print(f"normalizacao da locomocao: {calibrate_locomotion_norm(model, batch, device)}", flush=True)
-        if model.split and args.residuo > 0:
-            zero_locomotion_output()
         export_policy()
     elif not checkpoint.exists() and args.professor_passos > 0:
         row = {"atualizacao": 0, **warm_start(model, args.threads, args.professor_passos, device)}
@@ -3149,13 +3103,6 @@ def main() -> int:
                 w = weight[idx]
                 a_mb = f_adv[idx]
                 pol_loss = -torch.min(ratio * w * a_mb, ratio.clamp(1 - clip, 1 + clip) * w * a_mb).mean()
-                if args.residuo_limite > 0 and model.residual > 0:
-                    rows = f_loco[idx]
-                    if rows.any():
-                        excess = (dist_mb.mean[rows].abs() - model.limit(f_obs[idx][rows])).clamp_min(0.0)
-                        outside = excess.pow(2).mean()
-                        pol_loss = pol_loss + args.residuo_limite * outside
-                        stats["fora_do_alcance"] = stats.get("fora_do_alcance", 0.0) + outside.item()
                 if f_clip is not None:
                     shown = f_loco[idx] & (flat(roll["clip"])[idx].abs().sum(-1) > 0)
                     if shown.any():
