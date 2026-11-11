@@ -1431,9 +1431,6 @@ def evaluate(model: Policy, batch, device: torch.device, prefix: str = "", judge
                 if key:
                     groups.setdefault(key, []).append(judged[env])
         out[f"{prefix}juiz_exercicios"] = {k: round(float(np.mean(v)), 4) for k, v in groups.items()}
-    if prefix.startswith(("aluna_", "b21_")):
-        # (A professora: por rumo, a aluna sozinha e ela no volante - o sem cair, a velocidade, o peito e o desvio do rumo.)
-        out[prefix + "rumos"] = summarize_scenery(rows, student_only=not prefix.startswith("b21_"))
     return out
 
 
@@ -1583,22 +1580,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="o peso da imitacao supervisionada dos alvos do clipe na cabeca da locomocao (0: sem)")
     parser.add_argument("--imitar-atualizacoes", type=int, default=300,
                         help="as atualizacoes em que o peso da imitacao cai linearmente a zero")
-    # A professora B21 (03/11 18h27, ele: "gravar os movimentos que o b21 faz para se locomover nas 8 direcoes... FORCAR
-    # absolutamente o nosso rl_final a fazer EXATOS mesmos movimentos, e aprender com eles, e ai apos ele dominar isso nos
-    # vamos afrouxando"): nos rumos ela dirige o corpo (a fatia beta) e a cabeca da locomocao aprende, supervisionada (o
-    # --imitar, constante), o rotulo dela: o alvo que no musculo da aluna (--musculo) daria o torque dela. As linhas com ela
-    # no volante ficam fora do PPO, do juiz e da vantagem; a retomada dela fecha o trecho da aluna.
-    parser.add_argument("--professor", type=str, default="",
-                        help="a pasta da professora congelada (tarefa.json e a rede .mrlpolicy; vazio: sem)")
-    parser.add_argument("--professor-beta", type=float, default=1.0,
-                        help="a fatia dos episodios dos rumos com a professora no volante do comeco ao fim")
-    parser.add_argument("--professor-pedidos", type=float, nargs=8, default=[3.0, 3.0, 1.5, 1.5, 1.5, 1.5, 1.5, 3.0],
-                        help="o pedido a ela por rumo (m/s; 0 frente, 2 esquerda, 4 costas, 6 direita)")
-    parser.add_argument("--professor-aluna", type=float, nargs=8, default=[1.79, 1.44, 0.98, 1.10, 1.15, 1.13, 1.11, 1.37],
-                        help="o pedido da aluna por rumo (m/s): o que ela faz, medido na cena da rl_final")
-    parser.add_argument("--professor-retomada", type=float, nargs=5, default=[15.0, 45.0, 25.0, 20.0, 1.0],
-                        help="a intervencao: tronco (graus), tronco (graus/s), peito (graus), rumo (graus), segundos")
-    parser.add_argument("--professor-multa", type=float, default=1.0, help="a multa da retomada (na nota da tarefa)")
     parser.add_argument("--kl-max-loco", type=float, default=0.0,
                         help="o freio de KL so da cabeca da locomocao (0: o --kl-max); 03/11 23h30: o 0,02 travava a "
                              "locomocao em toda atualizacao e ela nao aprendia o rumo")
@@ -1610,20 +1591,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(03/11 22h45, ele: 'ele ja sabe se equilibrar muito bem sozinho... o treino de locomocao esta "
                              "errado') a cabeca da locomocao vira uma copia da recuperacao - a que se equilibra, com o "
                              "musculo dela -, ignorando o pedido no comeco (as colunas do comando zeradas); uma vez por treino")
-    parser.add_argument("--professor-embalo", type=float, nargs=2, default=[0.0, 0.0],
-                        help="nos episodios da aluna, a professora dirige o comeco (s, min e max) e entrega no embalo dela")
-    # A passagem do volante (a fase B, o DAgger com a intervencao): o beta desce pela escada so pelo portao - de 1 para o
-    # proximo quando a copia estabiliza (a imitacao melhora menos que --professor-plato em 60 atualizacoes); dai em diante
-    # quando a autonomia da aluna nos episodios dela (as decisoes sem a professora no volante) passa do limiar do degrau
-    # em duas medidas seguidas. Cada degrau dura no minimo --professor-degrau-min atualizacoes.
-    parser.add_argument("--professor-escada", type=float, nargs="+", default=[1.0, 0.5, 0.25, 0.1, 0.0])
-    parser.add_argument("--professor-autonomia", type=float, nargs="+", default=[0.5, 0.75, 0.9, 0.95])
-    parser.add_argument("--professor-degrau-min", type=int, default=100)
-    parser.add_argument("--professor-plato", type=float, default=0.05)
-    parser.add_argument("--professor-so-volante", type=int, default=1,
-                        help="1: a imitacao so nas decisoes com ela no volante (o rotulo exato - as retomadas, o HG-DAgger)")
-    parser.add_argument("--taxa-imitar", type=float, default=3e-4,
-                        help="com a professora: a taxa do ator da cabeca da locomocao (a copia supervisionada)")
     parser.add_argument("--musculo", type=str, default="",
                         help="o musculo da cabeca da locomocao (json: rigidez, amortecimento, teto por eixo e gravidade)")
     parser.add_argument("--aquecer-critico", type=int, default=20,
@@ -2494,8 +2461,6 @@ def montar_v2(args) -> dict:
               moving_push_newtons=tuple(args.empurrao_mov_forca), moving_push_hold_fraction=args.empurrao_mov_continuo,
               moving_push_hold_newtons=tuple(args.empurrao_mov_continuo_forca),
               locomotion_seconds=args.locomocao_segundos, locomotion_termination=args.queda_encerra,
-              # (Com a professora, todos os lotes no protocolo ensinado - as avaliacoes sem ela tambem: a revisao de 03/11.)
-              **({"taught_headings": True} if args.professor else {}),
               **({"clip_blend": args.mistura_clipe} if args.mistura_clipe < 1.0 else {}),
               **({"protective_fall": True} if args.queda_programada else {}),
               **({"roll_blend": args.rolar_clipe} if args.rolar_clipe < 1.0 else {}),
@@ -2575,9 +2540,7 @@ def main() -> int:
                   "levantar_guiado": args.levantar_guiado, "levantar_segundos": args.levantar_segundos,
                   "levantar_clipe": args.levantar_clipe,
                   "estilo_chao": args.estilo_chao, "chao_altura": args.chao_altura, "rolar_clipe": args.rolar_clipe,
-                  "professor": args.professor, "professor_beta": args.professor_beta,
-                  "professor_pedidos": list(args.professor_pedidos), "professor_aluna": list(args.professor_aluna),
-                  "professor_retomada": list(args.professor_retomada), "musculo": args.musculo,
+                  "musculo": args.musculo,
                   "ajuda_locomocao": args.ajuda_locomocao, "sincronizar_fase": args.sincronizar_fase, "imitacao_folga": args.imitacao_folga, "peito_vista": args.peito_vista, "bracos_clipe": args.bracos_clipe, "estrela": args.estrela, "estrela_segundos": args.estrela_segundos, "comando": args.comando, "comando_segundos": args.comando_segundos, "parada": args.parada, "parada_clipes": args.parada_clipes, "passos_ciclos": args.passos_ciclos, "levantar_voo": args.levantar_voo, "lateral_pernas_rigor": args.lateral_pernas_rigor, "lento": args.lento, "cabeca_clipe": args.cabeca_clipe, "fogo_fatia": args.fogo_fatia if args.fogo >= 0 else 0.0, "fogo_pontos": args.fogo_pontos, "fogo_alvo": args.fogo_alvo, "diagonal_peito": args.diagonal_peito, "rumo_suave": args.rumo_suave, "rumo_limite": args.rumo_limite, "sem_potencial_loco": args.sem_potencial_loco, "nota_velocidade": args.nota_velocidade, "estilo_velocidade": args.estilo_velocidade, "joelho_dentro": args.joelho_dentro, "idle_altura": args.idle_altura, "parada_corpo": args.parada_corpo, "lento_faixa": args.lento_faixa,
                   "ajuda_corrida": -1.0, "manobras": args.manobras, "ajuda_manobra": -1.0,
                   "comeco_clipe": args.comeco_clipe, "comeco_de_pe": args.comeco_de_pe,
@@ -2624,32 +2587,9 @@ def main() -> int:
     torch.manual_seed(args.semente)
     v2 = montar_v2(args)
     batch = get_up_batch(str(REPO / "assets"), environments=args.mundos, threads=args.threads, **lote_do_treino(args), **v2)
-    if args.professor and not args.habilidades_separadas:
-        raise SystemExit("--professor pede --habilidades-separadas")
     muscle = json.loads(Path(args.musculo).read_text()) if args.musculo else None
-    teacher_files = None
-    if args.professor:
-        folder = Path(args.professor)
-        teacher_files = (str(folder / "tarefa.json"), str(sorted(folder.glob("*.mrlpolicy"))[0]))
-
-    def teach(b, share: float, takeover=None) -> None:
-        """O musculo da aluna e, com a professora, ela nos rumos (a fatia share no volante)."""
-        if muscle:
-            b.set_student_actuator(muscle["rigidez"], muscle["amortecimento"], muscle["teto"], bool(muscle["gravidade"]))
-        if teacher_files:
-            b.set_locomotion_teacher(str(REPO / "assets"), teacher_files[0], teacher_files[1], share=share,
-                                     speeds=tuple(args.professor_pedidos), student_speeds=tuple(args.professor_aluna),
-                                     takeover=tuple(args.professor_retomada if takeover is None else takeover))
-
-    teach(batch, args.professor_beta)
-    if teacher_files and args.professor_embalo[1] > 0:
-        batch.set_teacher_lead(*args.professor_embalo)
-    if teacher_files and args.professor_so_volante and args.professor_retomada[4] <= 0:
-        # (22h25: sem retomada e com a imitacao so no volante, a sombra depois da entrega so gastava tempo.)
-        batch.set_teacher_shadow(False)
-    if teacher_files:
-        batch.reset(args.semente)
-        print(f"professora: {teacher_files[1]} (beta {args.professor_beta})", flush=True)
+    if muscle:
+        batch.set_student_actuator(muscle["rigidez"], muscle["amortecimento"], muscle["teto"], bool(muscle["gravidade"]))
     # (31/10 23h40, ele: "verifica se... nao conseguimos mais decisoes por segundo": as avaliacoes numa thread so paravam
     # o treino ~21 s a cada 50 atualizacoes, 13% do tempo; com as threads do treino, as que esperam ficam paradas.)
     eval_threads = args.threads
@@ -2694,27 +2634,6 @@ def main() -> int:
             evaluation_band=1, **dict(v2, moving_push_newtons=(0.0, 0.0), moving_push_hold_newtons=(0.0, 0.0)))
         evaluations["manobras_"].set_maneuvers(0.0, 0)
         evaluations["manobras_"].set_tracking_reward(19)
-    if teacher_files:
-        # (A prova do dominio: a aluna SOZINHA nos 8 rumos - de pe, no rumo, no pedido do que a professora faz, sem
-        # retomada -, 4 por rumo; e a professora no volante, a regua, na mesma cena.)
-        evaluations["aluna_"] = get_up_batch(str(REPO / "assets"), environments=32, threads=eval_threads, seed=444,
-                                                     evaluation=True, evaluation_kind=4, **dict(
-                                                         v2, moving_push_newtons=(0.0, 0.0), moving_push_hold_newtons=(0.0, 0.0)))
-        teach(evaluations["aluna_"], 0.0, takeover=(15.0, 45.0, 25.0, 20.0, 0.0))
-        evaluations["b21_"] = get_up_batch(str(REPO / "assets"), environments=32, threads=eval_threads, seed=444,
-                                                   evaluation=True, evaluation_kind=4, **dict(
-                                                       v2, moving_push_newtons=(0.0, 0.0), moving_push_hold_newtons=(0.0, 0.0)))
-        teach(evaluations["b21_"], 1.0)
-        # (03/11 20h30, ele: o giro parado e o parado tambem - "ficar na pose IDLE ALERTA quando parado": a aluna sozinha e a
-        # professora no parado - 8, sem empurrao - e no giro parado - 8, 0,6 rad/s, metade para cada lado.)
-        for prefix, kind in (("parado_", 5), ("giro_", 6)):
-            for who, share in (("aluna_", 0.0), ("b21_", 1.0)):
-                key = who + prefix
-                evaluations[key] = get_up_batch(str(REPO / "assets"), environments=8, threads=eval_threads,
-                                                        seed=222 if kind == 5 else 333, evaluation=True,
-                                                        evaluation_kind=kind, **dict(
-                                                            v2, moving_push_newtons=(0.0, 0.0), moving_push_hold_newtons=(0.0, 0.0)))
-                teach(evaluations[key], share, takeover=(15.0, 45.0, 25.0, 20.0, 0.0) if share == 0.0 else None)
     if args.levantar_deitado:
         # (07/11: o levantar deitado de costas e de brucos, 16 de cada, e o levantar correndo - o mov_ - deitado.)
         for prefix, kind in (("costas_", 9), ("brucos_", 10)):
@@ -2726,7 +2645,7 @@ def main() -> int:
                 evaluations[prefix].set_lying_starts(LYING_STAND, LYING_RUN)
                 evaluations[prefix].set_moving_handoff(True)
     for key, other in [("", evaluation), *evaluations.items()]:
-        if muscle and not key.startswith(("aluna_", "b21_")):
+        if muscle:
             other.set_student_actuator(muscle["rigidez"], muscle["amortecimento"], muscle["teto"], bool(muscle["gravidade"]))
     falls = {"mtime": 0.0}
 
@@ -2836,13 +2755,7 @@ def main() -> int:
         disc_loco_opt = torch.optim.Adam(disc_loco.net.parameters(), lr=args.taxa_disc, weight_decay=1e-4)
         print(f"juiz da locomocao: {len(reference_loco)} pares de {len(loco_style_clips)} clipes"
               f"{'' if args.juiz_unreal else ' ' + str(LOCO_STYLE_CLIPS)}", flush=True)
-    if args.professor and model.split:
-        # (A copia da professora e supervisionada: a cabeca da locomocao com a taxa dela, --taxa-imitar.)
-        loco_params = list(model.actor.locomotion.parameters()) + [model.loco_log_std]
-        loco_ids = {id(p) for p in loco_params}
-        actor_opt = torch.optim.Adam([{"params": [p for p in model.actor_parameters() if id(p) not in loco_ids]},
-                                      {"params": loco_params, "lr": args.taxa_imitar}], lr=args.taxa_ator)
-    elif args.taxa_ator_rec is not None and model.split:
+    if args.taxa_ator_rec is not None and model.split:
         # (06/11 15h, a locomocao livre: com 5e-5 nas duas cabecas o levantar caiu de 97% para 73% em 50 atualizacoes - ela
         # aprende com ~6% dos episodios. Cada cabeca com a sua taxa: a recuperacao com a de quando avaliava 97-98%.)
         loco_params = list(model.actor.locomotion.parameters()) + [model.loco_log_std]
@@ -2903,7 +2816,7 @@ def main() -> int:
                 actor_opt.load_state_dict(state["actor_opt"])
             except ValueError:
                 saved = state["actor_opt"]
-                if len(saved["param_groups"]) == 1 and len(actor_opt.param_groups) == 2 and not args.professor:
+                if len(saved["param_groups"]) == 1 and len(actor_opt.param_groups) == 2:
                     # (05/11: um grupo -> um por cabeca, os momentos do Adam mantidos - so a numeracao muda.)
                     old_ids = [id(p) for p in model.actor_parameters()]
                     new_ids = [id(p) for group in actor_opt.param_groups for p in group["params"]]
@@ -2912,7 +2825,7 @@ def main() -> int:
                     actor_opt.load_state_dict(fresh)
                     print("adam do ator: um grupo por cabeca, os momentos mantidos", flush=True)
                 else:
-                    # (Os grupos do Adam mudaram - a taxa propria da locomocao com a professora: o ator do zero.)
+                    # (Os grupos do Adam mudaram: o ator do zero.)
                     print("adam do ator do zero (grupos novos)", flush=True)
             critic_opt.load_state_dict(state["critic_opt"])
         if not fresh_judges:
@@ -2949,11 +2862,6 @@ def main() -> int:
             # (A calibracao das entradas novas depois do alcance da correcao - com ele a coleta age como o treino.)
             balance_calibration = (old_inputs - 1, obs_size - 1)
             counters["equilibrio_desde_atualizacao"] = counters["atualizacao"]
-        if teacher_files and "professor" in counters:
-            # (A escada do volante continua de onde parou.)
-            batch.set_teacher_share(args.professor_escada[counters["professor"]["degrau"]])
-            print(f"professora: degrau {counters['professor']['degrau']} (beta "
-                  f"{args.professor_escada[counters['professor']['degrau']]})", flush=True)
     # (31/10 23h, ele: "nao consigo saber se ele esta ou nao treinando... agora essa passa a ser a nossa rede PRINCIPAL":
     # o status.json que o laboratorio le dos treinadores de processo proprio - vivo pelo pid, parar por sinal. O tempo
     # treinado vem dos contadores; sem ele, a soma dos intervalos curtos entre as linhas do log.)
@@ -3056,8 +2964,8 @@ def main() -> int:
         copy_recovery_to_locomotion()
     # (As taxas da linha de comando tambem ao retomar - o Adam guardado trazia as de antes; a revisao de 03/11.)
     for i, group in enumerate(actor_opt.param_groups):
-        group["lr"] = args.taxa_imitar if (args.professor and model.split and i == 1) else args.taxa_ator
-    if args.taxa_ator_rec is not None and model.split and len(actor_opt.param_groups) == 2 and not args.professor:
+        group["lr"] = args.taxa_ator
+    if args.taxa_ator_rec is not None and model.split and len(actor_opt.param_groups) == 2:
         actor_opt.param_groups[0]["lr"] = args.taxa_ator_rec
         print(f"taxas: recuperacao {args.taxa_ator_rec:.3g}, locomocao {args.taxa_ator:.3g}", flush=True)
     if args.taxa_adaptativa > 0 and len(actor_opt.param_groups) == 2:
@@ -3175,9 +3083,6 @@ def main() -> int:
             # pos-levantar, nunca a rede correndo.)
             style_rows = ~(roll["loco"].reshape(-1) > .5) if disc_loco is None \
                 else torch.ones(T * n, dtype=torch.bool, device=device)
-            # (A professora no volante: as linhas dela nao sao da aluna - fora do juiz, do PPO e da vantagem.)
-            drove = roll["drove"].reshape(-1) > .5
-            style_rows = style_rows & ~drove
             head_loco = roll["obs"][..., -1].reshape(-1) > .5
             loco_x = loco_real = None
             mm_stats = {}
@@ -3272,8 +3177,7 @@ def main() -> int:
             # nunca deu um passo de lado ou de costas e o RL sozinho so achava a frente. No comeco, a cabeca da locomocao
             # aprende supervisionada os alvos de motor do clipe do rumo pedido (na acao normalizada), com o peso caindo a
             # zero em --imitar-atualizacoes; o clipe nunca vai aos motores.)
-            imitate = args.imitar if teacher_files else \
-                args.imitar * max(0.0, 1.0 - counters["atualizacao"] / max(1, args.imitar_atualizacoes))
+            imitate = args.imitar * max(0.0, 1.0 - counters["atualizacao"] / max(1, args.imitar_atualizacoes))
             f_clip = (flat(roll["clip"]) - model.action_mid) / model.action_half if imitate > 0 else None
             # (01/11 21h50: normalizar tudo junto afogava o levantar - a imitacao x4 da locomocao varia muito mais e a
             # vantagem do levantar ia a ~0; ele: "a calibragem de recompensa dele esta bem defeituosa". Cada grupo a parte.)
@@ -3281,15 +3185,9 @@ def main() -> int:
             # Recovery can rescue a locomotion episode without learning its different objective.
             learn = (f_loco if args.congelar_recuperacao else ~(flat(loco) > .5) | f_loco) if model.split \
                 else torch.ones_like(f_loco)
-            f_valid = flat(roll["valid"]) > .5
-            # (03/11 21h45, ele: "voce precisa fazer o RL trabalhar para conseguir adaptar os movimentos e se mover com
-            # auto-equilibrio": so a copia nao equilibra - nem o rotulo perfeito nos motores fica de pe. O PPO volta em toda
-            # linha em que a aluna dirige; a imitacao fica de guia.)
-            mine = ~drove
-            for group in (f_loco & mine, ~f_loco & mine):
+            for group in (f_loco, ~f_loco):
                 if int(group.sum()) > 1:
                     f_adv[group] = (f_adv[group] - f_adv[group].mean()) / (f_adv[group].std() + 1e-8)
-            f_adv[~mine] = 0.0
             anchor = skill_logp(model, model.distribution(model.norm(f_obs)), f_act, f_obs)
             logp_coleta = flat(roll["logp"])
             weight = torch.exp((anchor - logp_coleta).clamp(max=math.log(2.0)))
@@ -3325,12 +3223,8 @@ def main() -> int:
                 # exp de centenas -, e o NaN do gradiente dessas linhas mascaradas envenenava a rede: o log da razao preso.)
                 ratio = torch.exp((logp - anchor[idx]).clamp(-20.0, 20.0))
                 w = weight[idx]
-                own = ~drove[idx]
-                if own.any():
-                    r_own, w_own, a_own = ratio[own], w[own], f_adv[idx][own]
-                    pol_loss = -torch.min(r_own * w_own * a_own, r_own.clamp(1 - clip, 1 + clip) * w_own * a_own).mean()
-                else:
-                    pol_loss = torch.zeros((), device=device)
+                a_mb = f_adv[idx]
+                pol_loss = -torch.min(ratio * w * a_mb, ratio.clamp(1 - clip, 1 + clip) * w * a_mb).mean()
                 if args.residuo_limite > 0 and model.residual > 0:
                     rows = f_loco[idx]
                     if rows.any():
@@ -3339,8 +3233,7 @@ def main() -> int:
                         pol_loss = pol_loss + args.residuo_limite * outside
                         stats["fora_do_alcance"] = stats.get("fora_do_alcance", 0.0) + outside.item()
                 if f_clip is not None:
-                    shown = f_loco[idx] & ((f_valid[idx] & (drove[idx] | (args.professor_so_volante == 0))) if teacher_files
-                                           else (flat(roll["clip"])[idx].abs().sum(-1) > 0))
+                    shown = f_loco[idx] & (flat(roll["clip"])[idx].abs().sum(-1) > 0)
                     if shown.any():
                         imitation = (dist_mb.mean[shown] - f_clip[idx][shown]).pow(2).mean()
                         pol_loss = pol_loss + imitate * imitation
@@ -3386,7 +3279,7 @@ def main() -> int:
                     # coleta sobreposta ela esta uma atualizacao atras, o KL ja nascia acima do teto e o freio travava a
                     # cabeca da locomocao em 98% das atualizacoes, antes do primeiro passo.)
                     log_c = (logp - anchor[idx]).clamp(-20.0, 20.0)
-                    kl_rows = torch.where(own, torch.exp(log_c) - 1 - log_c, torch.zeros_like(log_c))
+                    kl_rows = torch.exp(log_c) - 1 - log_c
                     kl = kl_rows.mean().item()
                     if model.split:
                         for skill, mask in enumerate((~f_loco[idx], f_loco[idx])):
@@ -3470,7 +3363,7 @@ def main() -> int:
                         stats["d_loco_corpo"] = stats.get("d_loco_corpo", 0.0) + j_body.mean().item()
                 stats["pol"] += pol_loss.item()
                 stats["vf"] += vf_loss.item()
-                stats["clip"] += ((ratio[own] - 1).abs() > clip).float().mean().item() if own.any() else 0.0
+                stats["clip"] += ((ratio - 1).abs() > clip).float().mean().item()
                 stats["kl"] += kl
                 stats["disc"] += disc_loss.item()
                 stats["d_clipe"] += d_clip.mean().item()
@@ -3541,9 +3434,7 @@ def main() -> int:
                     "ator_locomocao_parado": float(skill_frozen[1]),
                     "passos_ator_rec": skill_steps[0], "passos_ator_loco": skill_steps[1], "minilotes": minibatches,
                     **({"kl_rec": skill_kl[0], "kl_loco": skill_kl[1], "taxa_rec": actor_opt.param_groups[0]["lr"],
-                        "taxa_loco": actor_opt.param_groups[-1]["lr"]} if model.split else {}),
-                    **({"professora_volante": float(drove.float().mean()), "rotulos": float(f_valid.float().mean())}
-                       if teacher_files else {})})
+                        "taxa_loco": actor_opt.param_groups[-1]["lr"]} if model.split else {})})
         return out
 
     def set_assist(value: float) -> None:
@@ -3897,6 +3788,7 @@ def main() -> int:
             if hasattr(batch, "set_launch_hand"):
                 batch.set_launch_hand(counters["largada_mao"])
         physics = 0.0
+        # (Os "valid" e "drove" das professoras, apagadas na limpeza c2, ficam em zero: a prova hasheia a coleta inteira.)
         roll = {k: torch.zeros(T, n, *s, device=device) for k, s in
                 (("obs", (obs_size,)), ("act", (act_size,)), ("logp", ()), ("val", ()), ("task", ()), ("boot", ()),
                  ("done", ()), ("pairs", (2 * amp,)), ("jerk", ()), ("limit", ()), ("prot", ()), ("loco", ()),
@@ -3919,7 +3811,7 @@ def main() -> int:
                 if mirror is not None:
                     # (O espelho do estado destas entradas: lido antes do step, como elas.)
                     roll["espelho"][t] = torch.as_tensor(batch.mirror_info(), device=device)
-                if args.imitar > 0 and not teacher_files:
+                if args.imitar > 0:
                     roll["clip"][t] = torch.as_tensor(batch.locomotion_targets(), device=device)
                 # (01/11 00h17: o tranco na acao media da rede, nao na sorteada - nas sorteadas ele tambem punia o ruido
                 # da exploracao, 2 sigma^2 em media, e o PPO encolhia o desvio para fugir do custo; o Codex concordou.)
@@ -3937,15 +3829,6 @@ def main() -> int:
                 roll["feedback"][t] = torch.as_tensor(batch.locomotion_feedback(), device=device)
                 physics += time.time() - tick
                 roll["task"][t] = torch.as_tensor(task, device=device)
-                takeover = None
-                if teacher_files:
-                    # (O rotulo da decisao que acabou de rodar, a professora no volante e a retomada dela.)
-                    taught = torch.as_tensor(batch.teacher_targets(), device=device)
-                    roll["clip"][t] = taught[:, :act_size]
-                    roll["valid"][t] = taught[:, 2 * act_size]
-                    roll["drove"][t] = taught[:, 2 * act_size + 1]
-                    takeover = taught[:, 2 * act_size + 2]
-                    roll["task"][t] -= args.professor_multa * takeover
                 roll["pairs"][t] = torch.as_tensor(batch.amp_pairs(), device=device)
                 if mm is not None:
                     roll["mm"][t] = torch.as_tensor(batch.motion_queries(), device=device)
@@ -3954,10 +3837,6 @@ def main() -> int:
                     final = torch.as_tensor(batch.final_observations(), device=device)
                     roll["boot"][t] = trunc * collector.value(collector.norm(final))
                 roll["done"][t] = torch.maximum(torch.as_tensor(term, device=device).float(), trunc)
-                if takeover is not None:
-                    # (A retomada fecha o trecho da aluna: sem o valor do trecho da professora.)
-                    roll["done"][t] = torch.maximum(roll["done"][t], takeover)
-                    roll["boot"][t] *= 1.0 - takeover
                 next_obs = torch.as_tensor(batch.observations(), device=device)
                 if model.split:
                     # Do not bootstrap the locomotion critic from recovery's unrelated positive values.
@@ -4202,39 +4081,6 @@ def main() -> int:
             row.update(summarize(recent[recent[:, 1] == 7] if len(recent) else recent, "giro_"))
             row.update(summarize(recent[recent[:, 1] == 8] if len(recent) else recent, "quedas_loco_"))
             row["cenarios"] = summarize_scenery(recent)
-            if teacher_files:
-                # A escada do volante (o beta), so pelo portao.
-                ladder = counters.setdefault("professor", {"degrau": 0, "desde": counters["atualizacao"], "imitacao": [],
-                                                           "autonomia": []})
-                ladder["imitacao"] = (ladder["imitacao"] + [last.get("imitacao", float("nan"))])[-4:]
-                taught = recent[np.isin(recent[:, 1], (2, 6, 7)) & (recent[:, 27] < 0.999) & (recent[:, 29] > 0)] \
-                    if len(recent) and recent.shape[1] >= 32 else recent[:0]
-                autonomy = float(1.0 - taught[:, 27].mean()) if len(taught) >= 16 else float("nan")
-                ladder["autonomia"] = (ladder["autonomia"] + [autonomy])[-2:]
-                ladder["imitacao"] = [x if np.isfinite(x) else float("nan") for x in ladder["imitacao"]]
-                step, since = ladder["degrau"], ladder["desde"]
-                promote = False
-                if step + 1 < len(args.professor_escada) and counters["atualizacao"] - since >= args.professor_degrau_min:
-                    if args.professor_escada[step] >= 1.0:
-                        # (So ela no volante: desce quando a copia estabiliza.)
-                        old_mse, new_mse = ladder["imitacao"][0], ladder["imitacao"][-1]
-                        promote = len(ladder["imitacao"]) == 4 and np.isfinite(old_mse) and np.isfinite(new_mse) \
-                            and new_mse > (1.0 - args.professor_plato) * old_mse
-                    else:
-                        # (Com a aluna dirigindo: pela autonomia dela - o limiar do degrau entre os de beta < 1.)
-                        below = sum(1 for b in args.professor_escada[:step] if b < 1.0)
-                        need = args.professor_autonomia[min(below, len(args.professor_autonomia) - 1)]
-                        promote = len(ladder["autonomia"]) == 2 and all(np.isfinite(a) and a >= need for a in ladder["autonomia"])
-                if promote:
-                    ladder["degrau"], ladder["desde"] = step + 1, counters["atualizacao"]
-                    ladder["autonomia"] = []
-                    print(f"professora: beta {args.professor_escada[step]} -> {args.professor_escada[step + 1]} "
-                          f"(atualizacao {counters['atualizacao']}, imitacao {ladder['imitacao']}, autonomia {autonomy})", flush=True)
-                beta = args.professor_escada[ladder["degrau"]]
-                batch.set_teacher_share(beta)
-                # (Sem NaN no log: o leitor do laboratorio descarta a linha inteira - a revisao de 03/11.)
-                row.update(professor_beta=beta, professor_autonomia=autonomy if np.isfinite(autonomy) else None,
-                           professor_degrau=ladder["degrau"])
             if "ajuda_exercicios" in counters:
                 # (A forca dinamica, exercicio por exercicio, a cada linha do log.)
                 levels, states, dominio, changes = counters["ajuda_exercicios"], counters["ajuda_estado"], {}, []
