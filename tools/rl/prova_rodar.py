@@ -20,7 +20,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 PYTHON = Path("/home/dahaka/Projetos/matter_engine/tools/rl/.venv/bin/python")
-COPY = ("ultimo.pt", "run.json", "log.jsonl", "professora_soltar.pt", "tarefa.json")
+COPY = ("ultimo.pt", "run.json", "log.jsonl", "tarefa.json")
 
 
 def main() -> int:

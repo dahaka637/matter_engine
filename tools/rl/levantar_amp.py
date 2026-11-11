@@ -2212,39 +2212,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="o peso do estilo com a pelve abaixo de --chao-altura (a tarefa fica 1 - isto): o virar-se no chao")
     parser.add_argument("--chao-altura", type=float, default=0.6, help="a altura da pelve (m) abaixo da qual vale --estilo-chao")
     parser.add_argument("--so-clipe", default="", help="nos rumos, so os passos deste clipe (o imitador de um clipe)")
-    # (06/11, ele: "aplicar essa mesma ideia de receita que levou o levantar-se a ter sucesso... liberdade total nos motores,
-    # sem clipe e sem mao... para todos os demais exercicios": a cabeca da locomocao passa a dar o alvo absoluto de cada junta
-    # - com --residuo 0, sem o clipe nos motores -, e a locomocao de antes - o clipe + a correcao - fica congelada como
-    # professora, como o levantar livre nasceu da rede de brucos: primeiro a copia de saida (ela dirige, a aluna aprende o alvo
-    # final dela); dai os motores recebem a mistura - a parcela dela e o resto da aluna -, a parcela comecando em 1 e descendo
-    # --soltar-descida a cada linha do log enquanto a media dos exercicios fica de pe e na velocidade acima dos pisos (a
-    # logica da descida dele); a copia segue de guia nos estados de agora (DAgger) e some em GUIA atualizacoes depois da
-    # parcela chegar a zero. Dai so o PPO, a tarefa e o juiz. Uma vez por treino: a professora fica em professora_soltar.pt.)
-    parser.add_argument("--soltar", type=int, default=None, metavar="GUIA")
-    parser.add_argument("--soltar-descida", type=float, nargs=3, default=(0.01, 0.5, 0.5), metavar=("PASSO", "DE_PE", "VEL"))
-    parser.add_argument("--soltar-imitar", type=float, default=2.0, help="o peso da copia da professora (acao normalizada)")
-    parser.add_argument("--soltar-recomeco", default="",
-                        help="(08/11) uma etiqueta: quando muda, a copia da professora recomeca agora - a aluna no volante "
-                             "(parcela 0), o peso --soltar-imitar caindo a zero em --soltar atualizacoes; uma vez por etiqueta")
-    # (06/11 16h45: a mistura dos alvos ensina a rede a completar a professora - com a parcela em 0,5 o treino segura 84% de
-    # pe e a rede sozinha cai parada em 2 s; o erro da copia nos estados visitados so cresce. A mistura do DAgger e por
-    # decisao: em cada decisao dirige a professora (na probabilidade da parcela) ou a rede, inteira.)
-    parser.add_argument("--soltar-alternar", action="store_true",
-                        help="em cada decisao e mundo, a professora dirige com a probabilidade da parcela; senao a rede sozinha")
-    parser.add_argument("--soltar-desvio", type=float, default=0.06, help="o desvio da cabeca da locomocao ao soltar")
-    parser.add_argument("--soltar-copia-passos", type=int, default=400,
-                        help="as decisoes do lote do treino com a professora no volante para a copia de saida (warm_start)")
-    parser.add_argument("--soltar-residuo", type=float, default=0.15, help="o alcance da professora (o --residuo dela)")
-    parser.add_argument("--soltar-residuo-partes", type=float, nargs=3, default=None, metavar=("COLUNA", "BRACOS", "CABECA"))
     parser.add_argument("--sem-mao", action="store_true", help="(06/11) toda forca auxiliar em zero; o portao so mede")
     parser.add_argument("--acao-velocidade", action="store_true",
                         help="(06/11 17h40, liberdade total nos motores) a rede da tambem a velocidade-alvo de cada eixo; a "
                              "professora copiada inteira, com a velocidade do clipe")
-    # (06/11 17h50: a rede copiada quase perfeita nos estados da professora (0,0006) cai sozinha - nos estados dela o erro e
-    # 50x. O DAgger de verdade (Ross et al. 2011): todo estado da cabeca da locomocao com o rotulo da professora vai a uma
-    # reserva e, a cada atualizacao, a cabeca e retreinada nela, supervisionada (PASSOS minilotes de 4096, TAXA); enquanto a
-    # parcela da professora nao zera, sem o PPO na locomocao (so a copia). Com a parcela em zero, o PPO volta e a guia some.)
-    parser.add_argument("--dagger", type=float, nargs=3, default=None, metavar=("RESERVA", "PASSOS", "TAXA"))
     parser.add_argument("--levantar-velocidade", type=float, default=None, metavar="DESVIO",
                         help="(06/11 17h55, ele: a autonomia da velocidade dos motores tambem no levantar) a cabeca da recuperacao "
                              "usa as velocidades da acao; o desvio delas ao ligar (uma vez); com --preservar-peso a ancora so nas "
@@ -2269,20 +2240,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "os dois juizes recomecam do zero (a marca 'juiz' nos contadores)")
     parser.add_argument("--estilo-manobras-zero", action="store_true",
                         help="(06/11 22h) nas manobras (trocas e curvas) da locomocao, so a tarefa - sem o juiz de estilo")
-    parser.add_argument("--soltar-livres", nargs="*", default=[],
-                        help="(06/11 21h, ele: 'tire a professora desses exercicios ja que nem ela consegue sem forca auxiliar... "
-                             "deixa-la criar o proprio movimento') os exercicios sem a professora: nem rotulo nem volante, so o PPO")
-    parser.add_argument("--soltar-sozinha", action="store_true",
-                        help="(06/11 19h25) a parcela desce tambem quando a rede sozinha (a capacidade a 0%%) fica de pe tanto "
-                             "quanto o treino misto (e acima de 0,3)")
     parser.add_argument("--preservar-velocidade", type=float, default=0.0,
                         help="(06/11 19h25) com --levantar-velocidade, a ancora tambem nas velocidades da recuperacao, com este peso")
-    parser.add_argument("--soltar-recopiar", action="store_true",
-                        help="refaz uma vez a copia de saida da professora (com a velocidade, quando ligada)")
     parser.add_argument("--amortecimento-livre", type=float, default=0.0,
                         help="(06/11) a escala do amortecimento dos motores da locomocao sem clipe (0: a do rastreio, 0,5)")
-    parser.add_argument("--soltar-teste-velocidade", type=int, default=0,
-                        help="(06/11 diagnostico) a velocidade-alvo da professora no volante: 0 a do clipe, 1 zero, 2 a dos alvos dela")
     parser.add_argument("--velocidade-propria", action="store_true",
                         help="(06/11) na cabeca da locomocao sem clipe, a velocidade-alvo dos motores pelo proprio alvo dela")
     parser.add_argument("--imitacao", type=float, default=0.0,
@@ -2362,8 +2323,6 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_free_velocity_feedforward(args.velocidade_propria)
     if args.levantar_velocidade is not None:
         b.set_recovery_velocity(True)
-    if args.soltar_livres:
-        b.set_teacher_free_drills([DRILL_KEYS.index(k) for k in args.soltar_livres])
     if args.manobras_pesos:
         b.set_maneuver_weights(list(args.manobras_pesos))
     if args.comando > 0:
@@ -2384,8 +2343,6 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_push_imitation_relief(args.fogo_alivio)
     if args.amortecimento_livre > 0 and hasattr(b, "set_free_damping_scale"):
         b.set_free_damping_scale(args.amortecimento_livre)
-    if args.soltar_teste_velocidade and hasattr(b, "set_self_teacher_velocity_mode"):
-        b.set_self_teacher_velocity_mode(args.soltar_teste_velocidade)
     b.set_idle(args.idle_pos_levantar, args.parado_locomocao, args.idle_alcance)
     b.set_idle_handoff(args.idle_entrega, args.idle_entrega_alcance)
     b.set_rise_handoff(args.entrega_subindo)
@@ -3146,92 +3103,11 @@ def main() -> int:
             print(f"autoridade sob ameaca: ate {model.threat_reach}x de pe (entradas {model.threat_index}, {model.speed_index}); "
                   f"andando, pela demanda ate {model.demand_reach}x", flush=True)
 
-    # (06/11, a locomocao livre - ver --soltar: a professora congelada, a locomocao de antes com o alcance dela.)
-    teacher = None
-    soltar_axes = sum(1 for nm in batch.action_names() if not nm.startswith("passo."))
-    if args.soltar and model.split:
-        if args.residuo > 0:
-            raise SystemExit("--soltar pede --residuo 0 (a aluna da o alvo absoluto)")
-        teacher_file = run / "professora_soltar.pt"
-        if "soltar" in counters and teacher_file.exists():
-            # (17h40: a professora com o tamanho de acao dela - os eixos e os canais, sem a velocidade da rede livre.)
-            saved_teacher = torch.load(teacher_file, map_location=device, weights_only=False)
-            teacher_acts = int(saved_teacher["actor.locomotion.4.weight"].shape[0])
-            teacher = Policy(obs_size, teacher_acts, batch.action_ranges()[:teacher_acts], split=True).to(device).eval()
-            teacher.load_state_dict(saved_teacher)
-        else:
-            teacher = copy.deepcopy(model).eval()
-            torch.save(teacher.state_dict(), teacher_file)
-            counters["soltar"] = {"desde": counters["atualizacao"], "parcela": 1.0}
-            with torch.no_grad():
-                model.loco_log_std.fill_(math.log(args.soltar_desvio))
-            # (A saida mudou de significado: os momentos do Adam da cabeca da locomocao do zero.)
-            for p in list(model.actor.locomotion.parameters()) + [model.loco_log_std]:
-                actor_opt.state.pop(p, None)
-            print(f"soltar: a professora guardada em {teacher_file.name} (atualizacao {counters['atualizacao']})", flush=True)
-        teacher.requires_grad_(False)
-        # (08/11 03h, ele: "sem semelhanca alguma com os clipes": a semelhanca medida 0,54 -> 0,05 desde que a copia acabou
-        # (06/11). A copia volta como guia, com a aluna sempre no volante e o PPO em toda linha.)
-        if args.soltar_recomeco and counters["soltar"].get("recomeco") != args.soltar_recomeco:
-            counters["soltar"].update(zerou=counters["atualizacao"], recomeco=args.soltar_recomeco, parcela=0.0)
-            print(f"soltar: a copia da professora recomeca na atualizacao {counters['atualizacao']} "
-                  f"(peso {args.soltar_imitar}, {args.soltar} atualizacoes)", flush=True)
-        teacher.residual = args.soltar_residuo
-        if args.soltar_residuo_partes:
-            spine, arms, head = args.soltar_residuo_partes
-            teacher.residual_joint = torch.as_tensor(
-                [1.0 if nm.split(".")[0] == "passo" else spine if nm.split(".")[0] in ("Abdomen", "Chest", "UpperChest")
-                 else arms if ("Arm" in nm.split(".")[0] or "Hand" in nm.split(".")[0])
-                 else head if nm.split(".")[0] in ("Neck", "Head") else args.soltar_residuo
-                 for nm in batch.action_names()[:teacher.action_half.numel()]],
-                dtype=torch.float32, device=device)
-        configure_threat(teacher, batch, args.autoridade_ameaca, args.autoridade_demanda)
-        if teacher.threat_axes is not None:
-            # (17h40: os eixos da ameaca no tamanho de acao dela - a acao de agora tem as velocidades depois.)
-            teacher.threat_axes = teacher.threat_axes[:teacher.action_half.numel()]
-        # (06/11, ele: "eu preciso ver o que de fato esta acontecendo": a professora exportada e a parcela dela no run.json -
-        # o laboratorio roda a mesma mistura do treino.)
-        export(teacher, run / "exports" / "professora_soltar.mrlpolicy",
-               {"run": args.treino, "iteration": counters["soltar"]["desde"], "steps": 0,
-                "observationNames": settings["observacao"]})
-        print(f"soltar: parcela da professora {counters['soltar']['parcela']} desde {counters['soltar']['desde']}, descida "
-              f"{list(args.soltar_descida)}, guia {args.soltar} depois; peso {args.soltar_imitar}, alcance dela {args.soltar_residuo}",
-              flush=True)
-
-    def write_soltar() -> None:
-        """A parcela da professora e o arquivo dela no run.json (o laboratorio)."""
-        info = json.loads((run / "run.json").read_text())
-        info["v2"]["soltar"] = {"parcela": counters["soltar"]["parcela"], "professora": "exports/professora_soltar.mrlpolicy",
-                                "alternar": bool(args.soltar_alternar),
-                                "livres": [DRILL_KEYS.index(k) for k in args.soltar_livres]}
-        (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
-
-    if teacher is not None:
-        write_soltar()
-
-    soltar_steps = sum(1 for nm in batch.action_names() if nm.startswith("passo."))
-    dagger = None
-    if args.dagger and teacher is not None:
-        size = int(args.dagger[0])
-        dagger = {"x": torch.zeros(size, obs_size, device=device), "y": torch.zeros(size, act_size, device=device),
-                  "next": 0, "count": 0, "steps": int(args.dagger[1]),
-                  "opt": torch.optim.Adam(list(model.actor.locomotion.parameters()), lr=float(args.dagger[2]))}
-        print(f"dagger: reserva {size}, {dagger['steps']} minilotes por atualizacao a {args.dagger[2]}", flush=True)
-
-    def teacher_env(o: torch.Tensor) -> np.ndarray:
-        """A correcao media da professora (rad) no tamanho da acao de agora: a velocidade dela em zero (o ambiente compoe a do clipe)."""
-        t = teacher.env_action(teacher.actor(teacher.norm(o)), o).cpu().numpy().astype(np.float32)
-        if t.shape[1] < act_size:
-            t = np.concatenate([t, np.zeros((t.shape[0], act_size - t.shape[1]), np.float32)], 1)
-        return t
-
-    def soltar_phase() -> tuple[float, float]:
-        """(A parcela da professora nos motores, o peso da copia) nesta atualizacao."""
-        share = float(counters["soltar"]["parcela"])
-        if share > 0:
-            return share, args.soltar_imitar
-        since = counters["atualizacao"] - counters["soltar"].get("zerou", counters["atualizacao"])
-        return 0.0, args.soltar_imitar * max(0.0, 1.0 - since / max(1, args.soltar))
+    if "soltar" in counters:
+        # shortcut: a professora do --soltar (apagada na limpeza c2) nascia aqui e gastava o gerador da CPU - uma Policy com a
+        # acao sem as velocidades; este gasto so mantem a prova de equivalencia igual ao ouro. Sai quando o ouro for refeito.
+        kept = act_size - sum(1 for nm in batch.action_names() if nm.startswith("vel."))
+        Policy(obs_size, kept, batch.action_ranges()[:kept], split=True)
 
     def zero_locomotion_output() -> None:
         # (A acao de significado novo pede a camada de saida nova: zerada, a cabeca comeca fazendo exatamente o clipe.)
@@ -3398,9 +3274,6 @@ def main() -> int:
             # zero em --imitar-atualizacoes; o clipe nunca vai aos motores.)
             imitate = args.imitar if teacher_files else \
                 args.imitar * max(0.0, 1.0 - counters["atualizacao"] / max(1, args.imitar_atualizacoes))
-            if teacher is not None:
-                # (A copia da professora da locomocao livre: o rotulo e o alvo final dela, em roll["clip"].)
-                imitate = soltar_phase()[1]
             f_clip = (flat(roll["clip"]) - model.action_mid) / model.action_half if imitate > 0 else None
             # (01/11 21h50: normalizar tudo junto afogava o levantar - a imitacao x4 da locomocao varia muito mais e a
             # vantagem do levantar ia a ~0; ele: "a calibragem de recompensa dele esta bem defeituosa". Cada grupo a parte.)
@@ -3417,9 +3290,6 @@ def main() -> int:
                 if int(group.sum()) > 1:
                     f_adv[group] = (f_adv[group] - f_adv[group].mean()) / (f_adv[group].std() + 1e-8)
             f_adv[~mine] = 0.0
-            if dagger is not None and counters["soltar"]["parcela"] > 0:
-                # (21h: so nas linhas com o rotulo dela - nos exercicios livres o PPO segue.)
-                f_adv[f_loco & (flat(roll["clip"]).abs().sum(-1) > 0)] = 0.0
             anchor = skill_logp(model, model.distribution(model.norm(f_obs)), f_act, f_obs)
             logp_coleta = flat(roll["logp"])
             weight = torch.exp((anchor - logp_coleta).clamp(max=math.log(2.0)))
@@ -3615,33 +3485,6 @@ def main() -> int:
                     factor = (args.taxa_adaptativa / max(skill_kl[skill], 1.0e-6)) ** 0.25
                     group["lr"] = float(np.clip(group["lr"] * np.clip(factor, 0.9, 1.1), 1.0e-6, 3.0e-4))
             counters["taxa_cabecas"] = [group["lr"] for group in actor_opt.param_groups]
-        if dagger is not None and f_clip is not None and counters["soltar"]["parcela"] > 0:
-            # (O DAgger: os estados rotulados desta coleta na reserva; a cabeca retreinada na reserva inteira. Com a parcela em
-            # zero, o PPO manda: so a guia dentro dele, que some - 19h55, o retreino de 64 minilotes nao briga com o PPO.)
-            with torch.no_grad():
-                rows = f_loco & (flat(roll["clip"]).abs().sum(-1) > 0)
-                x_new, y_new = f_obs[rows], f_clip[rows]
-                size = dagger["x"].shape[0]
-                if len(x_new) > size:
-                    x_new, y_new = x_new[-size:], y_new[-size:]
-                k = len(x_new)
-                where = (torch.arange(k, device=device) + dagger["next"]) % size
-                dagger["x"][where], dagger["y"][where] = x_new, y_new
-                dagger["next"] = (dagger["next"] + k) % size
-                dagger["count"] = min(size, dagger["count"] + k)
-            if dagger["count"] >= 4096:
-                total = 0.0
-                for _ in range(dagger["steps"]):
-                    pick = torch.randint(dagger["count"], (4096,), device=device, generator=update_generator)
-                    loss = (model.actor(model.norm(dagger["x"][pick])) - dagger["y"][pick]).pow(2).mean()
-                    dagger["opt"].zero_grad()
-                    loss.backward()
-                    nn.utils.clip_grad_norm_(list(model.actor.locomotion.parameters()), 1.0)
-                    dagger["opt"].step()
-                    total += loss.item()
-                model.actor.zero_grad(set_to_none=True)
-                stats["dagger_perda"] = total / max(1, dagger["steps"]) * max(1, steps)
-                stats["dagger_reserva"] = dagger["count"] * max(1, steps)
         if args.redo_atualizacoes > 0 and model.split:
             # (07/11) A janela do ReDo: o maximo de cada unidade nas linhas da locomocao desde o ultimo renascimento.
             with torch.no_grad():
@@ -4040,52 +3883,6 @@ def main() -> int:
         collector.load_state_dict(model.state_dict())
         batch.reset(args.semente)
         obs = torch.as_tensor(batch.observations(), device=device)
-    if teacher is not None and ("copia" not in counters["soltar"]
-                                or (args.soltar_recopiar and not counters["soltar"].get("recopia_velocidade"))):
-        counters["soltar"]["recopia_velocidade"] = bool(args.soltar_recopiar)
-        # (06/11, como o levantar livre nasceu da rede de brucos - warm_start: a professora dirige a locomocao no lote do
-        # treino e a cabeca da locomocao aprende supervisionada o alvo final dela, fora do PPO, com a taxa e as epocas
-        # daquele comeco; a recuperacao segue a dela. Depois, a mistura e a guia do --soltar.)
-        began = time.time()
-        xs, ys = [], []
-        batch.reset(args.semente + 17)
-        o = torch.as_tensor(batch.observations(), device=device)
-        everyone = np.ones(n, dtype=np.float32)
-        with torch.no_grad():
-            for _ in range(args.soltar_copia_passos):
-                own = model.env_action(model.actor(model.norm(o)), o).cpu().numpy().astype(np.float32)
-                t_env = teacher_env(o)
-                batch.set_self_teacher(np.ascontiguousarray(t_env), everyone)
-                rows = (o[:, -1] > .5).cpu().numpy()
-                own[rows, soltar_axes:soltar_axes + soltar_steps] = t_env[rows, soltar_axes:soltar_axes + soltar_steps]
-                batch.step(own)
-                lab = torch.as_tensor(batch.self_teacher_labels(), device=device)
-                has = lab[:, -1] > 0
-                if has.any():
-                    xs.append(o[has].clone())
-                    ys.append((lab[has, :-1] - model.action_mid) / model.action_half)
-                batch.finished_episodes()
-                o = torch.as_tensor(batch.observations(), device=device)
-        batch.clear_self_teacher()
-        x, y = torch.cat(xs), torch.cat(ys)
-        loco_params = list(model.actor.locomotion.parameters())
-        copier = torch.optim.Adam(loco_params, lr=3e-4)
-        with torch.no_grad():
-            before = float((model.actor(model.norm(x[:8192])) - y[:8192]).pow(2).mean())
-        loss = torch.zeros(())
-        for _ in range(30):
-            for idx in torch.randperm(len(x), device=device).split(4096):
-                loss = (model.actor(model.norm(x[idx])) - y[idx]).pow(2).mean()
-                copier.zero_grad()
-                loss.backward()
-                copier.step()
-        model.actor.zero_grad(set_to_none=True)
-        counters["soltar"]["copia"] = {"amostras": int(len(x)), "perda_antes": round(before, 5), "perda": round(float(loss.item()), 5),
-                                       "segundos": round(time.time() - began, 1)}
-        print(f"soltar: copia da professora {counters['soltar']['copia']}", flush=True)
-        collector.load_state_dict(model.state_dict())
-        batch.reset(args.semente)
-        obs = torch.as_tensor(batch.observations(), device=device)
     while (args.atualizacoes <= 0 or counters["atualizacao"] < args.atualizacoes) and not stop["pedido"]:
         begin = time.time()
         if (args.largada_clipe[0] > 0 or args.largada_mao > 0) and hasattr(batch, "set_launch_clip_share"):
@@ -4107,12 +3904,6 @@ def main() -> int:
                  ("espelho", (3,)))}
         if mm is not None:
             roll["mm"] = torch.zeros(T, n, mm.width + 2, device=device)
-        # (A locomocao livre: nesta rodada, os mundos com a professora no volante - a fatia dela.)
-        soltar_share = soltar_phase()[0] if teacher is not None else 0.0
-        teacher_on = teacher is not None and (soltar_share > 0 or soltar_phase()[1] > 0)
-        share_np = np.full(n, soltar_share, dtype=np.float32)
-        if teacher is not None and not teacher_on:
-            batch.clear_self_teacher()
         with torch.no_grad():
             for t in range(T):
                 collector.norm.update(obs)
@@ -4139,24 +3930,10 @@ def main() -> int:
                 roll["logp"][t] = skill_logp(collector, dist, action, obs)
                 roll["val"][t] = collector.value(obs_n)
                 env_action = collector.env_action(action, obs).cpu().numpy().astype(np.float32)
-                if teacher_on:
-                    # (A professora: a correcao media dela vai ao ambiente, que calcula no step o alvo final - o clipe + ela,
-                    # como no residuo - e, nos mundos dela, o manda aos motores; os canais do passo, os dela.)
-                    t_env = teacher_env(obs)
-                    if args.soltar_alternar:
-                        share_np = (np.random.random(n) < soltar_share).astype(np.float32)
-                    batch.set_self_teacher(np.ascontiguousarray(t_env), share_np)
-                    rows = (obs[:, -1] > .5).cpu().numpy() & (share_np >= 0.5)
-                    env_action[rows, soltar_axes:soltar_axes + soltar_steps] = t_env[rows, soltar_axes:soltar_axes + soltar_steps]
                 roll["prot"][t] = torch.as_tensor(batch.protecting(), device=device).float()
                 roll["loco"][t] = torch.as_tensor(batch.locomoting(), device=device).float()
                 tick = time.time()
                 task, term, trunc = batch.step(env_action)
-                if teacher_on:
-                    # (O rotulo de cada mundo nesta decisao: o alvo dela; a ultima coluna, 1 com rotulo e 2 com ela no volante.)
-                    lab = torch.as_tensor(batch.self_teacher_labels(), device=device)
-                    roll["clip"][t] = torch.where(lab[:, -1:] > 0, lab[:, :-1], torch.zeros_like(lab[:, :-1]))
-                    roll["drove"][t] = (lab[:, -1] > 1.5).float()
                 roll["feedback"][t] = torch.as_tensor(batch.locomotion_feedback(), device=device)
                 physics += time.time() - tick
                 roll["task"][t] = torch.as_tensor(task, device=device)
@@ -4274,9 +4051,6 @@ def main() -> int:
                    **({"desvio_loco": float(model.loco_log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean())} if model.split else {}),
                    "am_s": T * n / (time.time() - begin), "t_coleta": collected - begin, "t_fisica": physics,
                    "t_espera": waited, **{k: v for k, v in last.items() if k != "estilo"}}
-            if teacher is not None:
-                share_now, guide_now = soltar_phase()
-                row["soltar"] = {"parcela": round(share_now, 4), "guia": round(guide_now, 4)}
             row.update(summarize(recent[recent[:, 1] == 0] if len(recent) else recent, "queda_"))
             row.update(summarize(recent[recent[:, 1] == 1] if len(recent) else recent, "clipe_"))
             # (07/11, ele: "os levantares nao estao mostrando os dados completos": o treino de costas e de brucos separado.)
@@ -4542,28 +4316,6 @@ def main() -> int:
                     set_drill_assist()
                     if not assist_frozen:
                         print(f"forca dinamica (atualizacao {counters['atualizacao']}): " + ", ".join(changes), flush=True)
-                if teacher is not None and counters["soltar"]["parcela"] > 0 and dominio:
-                    # (A descida da parcela da professora, a logica da descida dele: a media dos exercicios de pe e na
-                    # velocidade acima dos pisos desce um passo; senao para onde esta.)
-                    step, floor_up, floor_speed = args.soltar_descida
-                    # (06/11 15h30, ele: "ir descendo devagar conforme aprende... ate mais devagar conforme vai aprendendo": o
-                    # passo proporcional a parcela - 0,01 em 1, metade em 0,5, um quarto abaixo de 0,25.)
-                    step *= max(0.25, float(counters["soltar"]["parcela"]))
-                    up = float(np.mean([d["fim"] for d in dominio.values()]))
-                    speed = float(np.mean([d["vel"] for d in dominio.values()]))
-                    # (06/11 19h25: a alternancia derruba o treino misto - a troca de piloto a cada decisao da trancos: a rede
-                    # sozinha ficava de pe 0,55 e o treino 0,46, abaixo do piso, e a parcela parou em 0,73 por mais de 1 h.
-                    # Com --soltar-sozinha, desce tambem quando a rede sozinha (a ultima capacidade) ja fica de pe tanto quanto
-                    # o treino misto e acima de 0,3: tirar a professora nao a piora.)
-                    alone = counters["soltar"].get("sozinha")
-                    alone_ok = args.soltar_sozinha and alone is not None and alone >= 0.3 and alone >= up
-                    if (up >= floor_up and speed >= floor_speed) or alone_ok:
-                        counters["soltar"]["parcela"] = round(max(0.0, counters["soltar"]["parcela"] - step), 4)
-                        if counters["soltar"]["parcela"] <= 0:
-                            counters["soltar"]["zerou"] = counters["atualizacao"]
-                        write_soltar()
-                    row.setdefault("soltar", {}).update(media_de_pe=round(up, 3), media_vel=round(speed, 3),
-                                                        parcela_nova=counters["soltar"]["parcela"], sozinha=alone)
                 exigencias = {k: drill_requirements(float(levels[k]), k, 1.0 if k in ("lev_parado", "lev_levantar") else ceilings.get(k),
                                                     speed_ceilings.get(k), stability_ceilings.get(k))
                               for k in DRILL_KEYS}
@@ -4672,10 +4424,6 @@ def main() -> int:
             if capacity_batches and time.time() - capacity_at[0] >= 60.0 * args.capacidade_minutos:
                 capacity_at[0] = time.time()
                 row["capacidade"] = capacity(collector)
-                if teacher is not None and row["capacidade"].get("0"):
-                    # (A rede sozinha, a media do de pe - o portao da parcela com --soltar-sozinha.)
-                    alone = [v["de_pe"] for v in row["capacidade"]["0"].values()]
-                    counters["soltar"]["sozinha"] = round(float(np.mean(alone)), 4)
             row["t_aval"] = time.time() - judged
             log.write(json.dumps(finite_json(row)) + "\n")
             log.flush()
