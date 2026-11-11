@@ -893,8 +893,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
     std::pair<Vec3, Quaternion> placedOnBody(World& w, float ahead, Vec3 shift) {
         referenceFrame(w, ahead, false, w.stepFrame);
         const PhysicsBodyState3D& pelvis = w.body->links[rootLink];
-        const Quaternion turn = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f },
-            wrapAngle(pelvisHeading(pelvis) - pelvisHeading(w.stepFrame.links[rootLink])));
+        // (11/11, E5-15: no parado depois do parkStop, o idle no rumo do alvo (o do rastreio), nao no da pelve de agora - medido na
+        // E5-12: com o idle girando junto com o corpo, cada passo do gerador reajustava a base na pelve atual e nunca o rumo, e a
+        // pelve derivava 15 -> 50 graus passo a passo enquanto o peito torcia de volta para a vista, a coluna de lado.)
+        const float angle = parkedIdle(w) ? trackSample(w, ahead).second
+                                          : wrapAngle(pelvisHeading(pelvis) - pelvisHeading(w.stepFrame.links[rootLink]));
+        const Quaternion turn = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, angle);
         const Vec3 root { pelvis.position.x + shift.x, pelvis.position.y + shift.y, floorUnder(w) + w.stepFrame.rootPosition.z };
         return { root, (turn * w.stepFrame.rootOrientation).normalized() };
     }
@@ -915,9 +919,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
         TrackingBalanceStepsInput3D in;
         in.balance = measureTrackingBalance3D(*profile, w.body->links, w.body->interactions, { footLinks[0], footLinks[1] }, ground);
         in.pelvis = pelvis.position;
-        in.facingYaw = pelvisHeading(pelvis);
         in.groundHeight = ground;
         const auto [root, orientation] = placedOnBody(w, 0.0f, {});
+        // (E5-15: parado depois do parkStop, o rumo do gerador e o da pelve do idle posto no alvo.)
+        in.facingYaw = parkedIdle(w) ? wrapAngle(trackSample(w, 0.0f).second + pelvisHeading(w.stepFrame.links[rootLink]))
+                                     : pelvisHeading(pelvis);
         athleteWorldPose3D(*profile, w.stepFrame.coordinates, root, orientation, w.stepPose);
         for (std::size_t s = 0; s < 2; ++s) {
             in.foot[s] = w.body->links[footLinks[s]].position;
