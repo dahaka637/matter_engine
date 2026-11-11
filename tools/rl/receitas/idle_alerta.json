@@ -2,7 +2,7 @@
  "receita": "IDLE-ALERTA",
  "treino_original": "rl_final_clipe",
  "build_original": "build-rl-n17",
- "descricao": "campeao r72370 (a freada como ele sabia) + freado, o idle alerta (parkStop) com a nota do parado dele: perto da pose, quieto, sem pe deslizando; o parado so pelo alert_idle; trote 4 m/s nos 8 rumos; 09h50, ele: o giro em giros fixos de 60/90/180/360 graus, velocidades variadas, inversao e pausas, com o bonus da coluna reta (--giro-variado --giro-coluna 0.3); 10h30, ele \"em definitivo\": os custos de quietude do RL v1 no parado e no giro (--quieto-custos 0.5), a coluna sem se apoiar no batente (--custo-batente 0.15) com a cabeca de autoridade inteira, mais treino de parado (25%) e de giro (15%), episodios do parado de 12 s; 10h45, ele: a coluna torta no parado - a coluna sem o canal livre de velocidade (--coluna-sem-velocidade, 10/11: batente 82-100% -> 0-1%)",
+ "descricao": "campeao r72370 (a freada como ele sabia) + freado, o idle alerta (parkStop) com a nota do parado dele: perto da pose, quieto, sem pe deslizando; o parado so pelo alert_idle; trote 4 m/s nos 8 rumos; 09h50, ele: o giro em giros fixos de 60/90/180/360 graus, velocidades variadas, inversao e pausas, com o bonus da coluna reta (--giro-variado --giro-coluna 0.3); 10h30, ele \"em definitivo\": os custos de quietude do RL v1 no parado e no giro (--quieto-custos 0.5), a coluna sem se apoiar no batente (--custo-batente 0.15) com a cabeca de autoridade inteira, mais treino de parado (25%) e de giro (15%), episodios do parado de 12 s; 10h45, ele: a coluna torta no parado - a coluna sem o canal livre de velocidade (--coluna-sem-velocidade, 10/11: batente 82-100% -> 0-1%); 11h10: a coluna alinhada e cada elo da cadeia contra o do idle (o abdome tinha ido 17 graus para tras), com peso 1.0",
  "capturada": "2026-11-10 16h45, do ExecStart do servico",
  "argumentos": [
   "--simetria",
@@ -333,7 +333,7 @@
   "--idle-depois-freada",
   "--giro-variado",
   "--giro-coluna",
-  "0.3",
+  "1.0",
   "--quieto-custos",
   "0.5",
   "--custo-batente",
