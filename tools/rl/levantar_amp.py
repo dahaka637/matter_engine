@@ -1825,6 +1825,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(10/11 01h40) o peso da tarefa nas linhas do parado com a cabeca da locomocao (o exercicio parado e o do "
                              "equilibrio); com --peso-estilo-parado. Sem: os da recuperacao (o juiz preferia o corpo dobrado)")
     parser.add_argument("--peso-estilo-parado", type=float, default=None)
+    parser.add_argument("--juiz-andando", action="store_true",
+                        help="(11/11, E5-8) o juiz da locomocao aprende sem freio so nas linhas andando (o portao da velocidade > 0); "
+                             "o parado e a pos-parada ficam com o estilo de uma copia congelada do juiz do ponto de partida, como antes")
     parser.add_argument("--parada-pose-sempre", type=float, default=0.0,
                         help="(11/11, E5-7, ele: 'a pose deve ser cobrada sempre') na parada livre, conforme ele para, a nota vira a pose do "
                              "idle alerta na regua estrita: (1-k*near)*nota + k*near*(0,25+0,75*semelhanca); 0: sem")
@@ -2882,6 +2885,13 @@ def main() -> int:
         if disc_loco is not None and (state is None or "disc_loco" not in state or fresh_judges or fresh_mm):
             disc_loco.norm.update(reference_loco[:, :amp])
     replay_loco = torch.zeros(0, 2 * (2 * amp + mm.context) if mm is not None else 2 * amp, device=device)
+    # (11/11, E5-8, --juiz-andando: a E5-5 mostrou que o juiz aprendendo melhora a corrida e estraga o parado - o estilo do parado
+    # fica com a copia congelada, a de antes; a normalizacao dela segue como a do juiz congelado do campeao.)
+    # shortcut: a copia nasce do juiz do checkpoint a cada inicio (nao e salva); continuar o treino a refaz do juiz ja treinado.
+    disc_loco_idle = None
+    if args.juiz_andando and disc_loco is not None:
+        disc_loco_idle = copy.deepcopy(disc_loco).eval()
+        disc_loco_idle.requires_grad_(False)
 
     retained = None
     if args.preservar_peso > 0:
@@ -3053,6 +3063,7 @@ def main() -> int:
             style_rows = ~(roll["loco"].reshape(-1) > .5) if disc_loco is None \
                 else torch.ones(T * n, dtype=torch.bool, device=device)
             head_loco = roll["obs"][..., -1].reshape(-1) > .5
+            walking = roll["feedback"][..., TRACKING_TERMS.index("portao_velocidade")].reshape(-1) > 0
             loco_x = loco_real = None
             mm_stats = {}
             if disc_loco is not None:
@@ -3083,11 +3094,16 @@ def main() -> int:
                         disc_loco.norm.update(torch.cat([pairs[loco_style_rows, :amp], loco_real[loco_style_rows, :amp]]))
                         disc_loco.context_norm.update(context[loco_style_rows])
                 else:
+                    if disc_loco_idle is not None:
+                        disc_loco_idle.norm.update(torch.cat([pairs[loco_style_rows, :amp], reference_loco[:, :amp]]))
+                        loco_style_rows = loco_style_rows & walking
                     disc_loco.norm.update(torch.cat([pairs[loco_style_rows, :amp], reference_loco[:, :amp]]))
             disc.norm.update(torch.cat([pairs[style_rows, :amp], reference[:, :amp]]))
             d = disc(pairs)
             if disc_loco is not None:
                 d = torch.where(head_loco, disc_loco(loco_x if loco_x is not None else pairs), d)
+                if disc_loco_idle is not None:
+                    d = torch.where(head_loco & ~walking, disc_loco_idle(pairs), d)
             d = d.reshape(T, n)
             style = torch.clamp(1.0 - 0.25 * (d - 1.0).pow(2), min=0.0)
             # (A nota por passo vezes 1 - gamma: o retorno fica entre 0 e 1 e o critico nao precisa correr atras da
@@ -3319,7 +3335,8 @@ def main() -> int:
                         # ainda como os clipes sao; pela margem ele aprende os clipes e para so quando separa bem os dois.)
                         # (09h57: so o da locomocao - o do levantar congelado pelo freio foi enganado pela rede: o levantar de
                         # quedas caiu de 97% para 61% e os deitados para 0% em 1h30; o do levantar segue como era, sem freio.)
-                        if args.juiz_freio is None or judge_index == 0 or (j_clip.mean() - j_body.mean()).item() < args.juiz_freio:
+                        if args.juiz_freio is None or judge_index == 0 or disc_loco_idle is not None \
+                                or (j_clip.mean() - j_body.mean()).item() < args.juiz_freio:
                             judge_opt.step()
                         else:
                             stats[f"juiz_freado_{judge_index}"] = stats.get(f"juiz_freado_{judge_index}", 0.0) + 1.0
