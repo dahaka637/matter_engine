@@ -153,6 +153,11 @@ def skill_logp(model, dist, act, obs):
     return lp.sum(-1)
 
 
+def anchor_distance(model, obs, target):
+    """(E5) A distancia da ancora no campeao: a MSE da acao media normalizada da rede (com a normalizacao dela) contra a do campeao."""
+    return (model.actor(model.norm(obs)) - target).square().mean()
+
+
 def mlp(inputs: int, outputs: int) -> nn.Sequential:
     return nn.Sequential(nn.Linear(inputs, 1024), nn.ReLU(), nn.Linear(1024, 512), nn.ReLU(), nn.Linear(512, outputs))
 
@@ -2005,6 +2010,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--congelar-recuperacao", action="store_true",
                         help="com as habilidades separadas, so a cabeca da locomocao aprende (a da recuperacao fica como veio)")
     parser.add_argument("--preservar-peso", type=float, default=0.0, help="âncora do ator inicial nos exercícios antigos")
+    parser.add_argument("--ancora", type=float, default=0.0,
+                        help="(10/11, E5) o peso da ancora no campeao: a MSE entre a acao media da cabeca da locomocao e a do "
+                             "campeao congelado nos estados do banco fixo (banco_ancora.py); 0: desligada")
+    parser.add_argument("--ancora-banco", type=str, default="", help="o banco da ancora (banco_ancora.py)")
+    parser.add_argument("--ancora-de", type=str, default="",
+                        help="o checkpoint da rede congelada da ancora (padrao: o do banco)")
     parser.add_argument("--locomocao", type=float, default=0.0,
                         help="a fatia dos rumos (andar ou trotar num dos 8 rumos, mantendo o rumo do corpo)")
     parser.add_argument("--giro", type=float, default=0.0, help="a fatia do giro parado suave")
@@ -2837,6 +2848,34 @@ def main() -> int:
             retained.load_state_dict(split_state(expand_inputs(state["preservation_anchor"], obs_size)) if args.habilidades_separadas else expand_inputs(state["preservation_anchor"], obs_size))
         retained.requires_grad_(False)
 
+    # (10/11, E5: a ancora no campeao; metodologia_rl.md, secao 8 item 2.) A acao media do campeao no banco e constante (a rede
+    # e a normalizacao dele congeladas): calculada uma vez aqui. A distancia e a MSE das medias normalizadas, nao a KL: o desvio
+    # da locomocao e um parametro fixo por eixo (o mesmo em todo estado, com pisos das flags), entao a KL so somaria o puxao do
+    # desvio da exploracao e pesaria cada eixo por 1/(2 desvio^2) do campeao (~100x com 0,05-0,08), uma escala sem relacao com
+    # a do PPO; a MSE e a forma da --preservar-peso e da imitacao, e a media e o que a suite mede.
+    anchor_obs = anchor_target = anchor_generator = None
+    if args.ancora > 0:
+        if not args.ancora_banco:
+            raise SystemExit("--ancora precisa de --ancora-banco")
+        bank = torch.load(Path(args.ancora_banco).expanduser(), map_location="cpu", weights_only=False)
+        if list(bank["meta"]["observacao"]) != list(batch.observation_names()):
+            raise SystemExit(f"o banco da ancora tem outras entradas ({bank['obs'].shape[1]} contra {obs_size})")
+        anchor_from = Path(args.ancora_de or bank["meta"]["checkpoint"]).expanduser()
+        anchor_state = torch.load(anchor_from, map_location="cpu", weights_only=False)["model"]
+        champion = copy.deepcopy(model).eval()
+        champion.load_state_dict(split_state(anchor_state) if args.habilidades_separadas else anchor_state)
+        anchor_obs = bank["obs"].to(device)
+        with torch.no_grad():
+            anchor_target = torch.cat([champion.actor(champion.norm(x)) for x in anchor_obs.split(8192)])
+        del champion, anchor_state
+        anchor_generator = torch.Generator(device=device)
+        anchor_generator.manual_seed(args.semente * 104729 + counters["atualizacao"])
+        info = json.loads((run / "run.json").read_text())
+        info["ancora"] = {"peso": args.ancora, "banco": str(Path(args.ancora_banco).expanduser()), "estados": len(anchor_obs),
+                          "de": str(anchor_from), "cenarios": bank["meta"]["cenarios"]}
+        (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
+        print(f"ancora no campeao: peso {args.ancora}, {len(anchor_obs)} estados do banco, rede {anchor_from}", flush=True)
+
     def export_policy() -> None:
         export(model, run / "exports" / "policy_latest.mrlpolicy",
                {"run": args.treino, "iteration": counters["atualizacao"], "steps": counters["amostras"],
@@ -3153,6 +3192,13 @@ def main() -> int:
                             # (19h25: a pose de pe do levantar caia 0,65 -> 0,57 com as velocidades soltas - elas tambem puxadas,
                             # mais fraco, para as da rede transplantada: zero onde nao ajudam.)
                             pol_loss = pol_loss + args.preservar_velocidade * (out_old[:, keep:] - target[:, keep:]).square().mean()
+                if anchor_obs is not None:
+                    # (E5: um minilote do banco por passo, do tamanho do do PPO; a rede atual com a normalizacao dela.)
+                    anchor_rows = torch.randint(len(anchor_obs), (min(minibatch, len(anchor_obs)),), device=device,
+                                              generator=anchor_generator)
+                    anchor_dist = anchor_distance(model, anchor_obs[anchor_rows], anchor_target[anchor_rows])
+                    pol_loss = pol_loss + args.ancora * anchor_dist
+                    stats["ancora_dist"] = stats.get("ancora_dist", 0.0) + anchor_dist.item()
                 # (O KL contra a rede que coletou - somado nos eixos, o estimador k3 -, no consenso com o Codex de 03/11:
                 # a ancora do recorte e intermediaria na coleta sobreposta. So o ator para; o critico e o juiz seguem.)
                 with torch.no_grad():
@@ -3647,6 +3693,9 @@ def main() -> int:
         # rodada vai para a atualizacao, depois da escrita (o modelo so muda na thread da atualizacao).
         if pending is not None:
             last = pending.result()
+            if anchor_obs is not None:
+                print(f"r{counters['atualizacao']} ancora_dist={last.get('ancora_dist', float('nan')):.4g} "
+                      f"t_ppo={last['t_ppo']:.3f}", flush=True)
             if prova is not None:
                 prova.rede(counters["atualizacao"], model, disc, disc_loco)
         waited = time.time() - collected
