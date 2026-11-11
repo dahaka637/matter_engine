@@ -1,0 +1,14 @@
+{
+ "firmeza.cabeca.paradas.det": 10.042806,
+ "firmeza.cabeca.paradas.ruido": 7.797432,
+ "firmeza.peito_vaivem.paradas.det": 1.760395,
+ "firmeza.peito_vaivem.paradas.ruido": 1.76544,
+ "firmeza.tronco_mole.paradas.det": 17.334465,
+ "firmeza.tronco_mole.paradas.ruido": 9.440354,
+ "paradas.quedas.det": 0.05,
+ "paradas.quedas.ruido": 0.05,
+ "paradas.quedas_antes.det": 0.05,
+ "paradas.quedas_antes.ruido": 0.039062,
+ "paradas.quedas_depois.det": 0.05,
+ "paradas.quedas_depois.ruido": 0.039062
+}

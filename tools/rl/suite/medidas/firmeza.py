@@ -39,6 +39,8 @@ def medir(caps: dict) -> list[Medida]:
         tipo = cap.meta["cenario"]["tipo"]
         if tipo == "parada":
             grupo, jan = "paradas", (4.0, 8.0)
+        elif tipo == "fogo":
+            grupo, jan = "fogo", (1.0, 8.0)
         elif nome == "reto_corrida_0":
             grupo, jan = "corrida_0", (2.0, 6.0)
         elif nome == "parado":
@@ -50,4 +52,9 @@ def medir(caps: dict) -> list[Medida]:
             key = f"firmeza.{chave}.{grupo}.{cond}"
             med = out.setdefault(key, Medida(key, "T9", f"{titulo}, {grupo}", unidade, "menor", margem=margem))
             med.por_cenario[nome] = v[chave]
+        if grupo == "fogo":
+            # (SUITE_V2: as quedas com os empurroes andando - o episodio que acaba antes dos 8 s.)
+            key = f"firmeza.quedas.fogo.{cond}"
+            med = out.setdefault(key, Medida(key, "T9", "quedas com empurrao andando", "taxa", "menor", tipo="taxa", margem=0.05))
+            med.por_cenario[nome] = cap.caiu().astype(float)
     return list(out.values())

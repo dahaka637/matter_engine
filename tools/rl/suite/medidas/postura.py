@@ -31,6 +31,8 @@ def janela(cap) -> np.ndarray:
         return cap.janela(2.0, 6.0)
     if tipo == "parado":
         return cap.janela(1.5, cap.meta["cenario"]["segundos"])
+    if tipo == "fogo":
+        return cap.janela(2.0, cap.meta["cenario"]["segundos"])
     fim = cap.meta["cenario"]["segundos"]
     return cap.janela(fim - 1.0, fim)
 
@@ -44,6 +46,8 @@ def grupo(nome: str) -> str | None:
         return "parado"
     if nome.startswith("parada_"):
         return "paradas"
+    if nome.startswith("fogo_"):
+        return "fogo"
     return None
 
 

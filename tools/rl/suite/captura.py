@@ -111,6 +111,9 @@ def lote(cand: Candidato, cen: C.Cenario, sementes: dict, mundos: int, threads: 
     if cen.tipo == "parado":
         b.set_balance_drill(*cen.equilibrio)
         b.set_fire(0.0, (1.0, 1.0), (1.0, 1.0), L.FIRE_HOLD_SECONDS, 0.0)
+    elif cen.tipo == "fogo":
+        hit, hold = L.fire_bands(C.FOGO_NIVEL)
+        b.set_fire(1.0, hit, hold, L.FIRE_HOLD_SECONDS, L.FIRE_HOLD_FRACTION)
     elif cen.tipo == "parada":
         b.set_final_stop(1.0, cen.ordem, cen.ordem, cand.args.parada_freio, True)
     b.reset(sementes["reset"])

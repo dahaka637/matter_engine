@@ -50,8 +50,15 @@ def cenarios() -> list[Cenario]:
 def extras() -> list[Cenario]:
     """(11/11, SUITE_V2) So por --so: as paradas longas, a ordem aos 4 s e 8 s depois dela (no V1, 4 s: nenhum braco assentava,
     a base no fim a 27-29 cm da do idle - a volta ao idle alerta ficava fora da janela)."""
-    return [Cenario(f"parada_longa_{MARCHAS[f]}_{h}", "parada", 12.0, faixa=f, rumo=h, ordem=4.0)
-            for f, hs in ((1, (0, 2, 4, 6)), (2, (0, 1, 4, 6))) for h in hs]
+    longas = [Cenario(f"parada_longa_{MARCHAS[f]}_{h}", "parada", 12.0, faixa=f, rumo=h, ordem=4.0)
+              for f, hs in ((1, (0, 2, 4, 6)), (2, (0, 1, 4, 6))) for h in hs]
+    # (11/11, SUITE_V2: os empurroes andando - os do treino (set_fire, as pancadas e os continuos do nivel FOGO_NIVEL), nos
+    # retos de frente e de lado, 8 s: a postura e a firmeza com empurrao - o corpo mole no empurrao, o problema 4 dele.)
+    fogo = [Cenario(f"fogo_{MARCHAS[f]}_{h}", "fogo", 8.0, faixa=f, rumo=h) for f in (1, 2) for h in (0, 2)]
+    return longas + fogo
+
+
+FOGO_NIVEL = 0.6
 
 
 def por_nome() -> dict[str, Cenario]:
