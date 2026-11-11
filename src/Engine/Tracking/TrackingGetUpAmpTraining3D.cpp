@@ -712,9 +712,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         TrackingClipFrame3D idleFrame;
         // (10/11, settings.basePosture) O idle alerta no rumo da vista, a distancia dele na decisao anterior (-1: nenhuma) e os pes.
         TrackingClipFrame3D baseFrame;
-        TrackingClipFrame3D idleWorldFrame;
-        float idleReturnPrev = -1.0f, idleReturnShaping = 0.0f;
-        float idleAnchorYaw = 0.0f;
         std::vector<RagdollDriveTarget3D> tonedDrives;
         float basePrevDistance = -1.0f;
         bool baseFootDown[2] { true, true };
@@ -7227,10 +7224,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 if (!w.idleAnchored) {
                     w.idleAnchor = root;
                     w.idleAnchored = true;
-                    // (10/11, settings.idleWorldTrack: o rumo do idle fixo junto com a ancora - o da pelve do corpo agora.)
-                    reference.frame(t, {}, 0.0f, w.idleFrame);
-                    w.idleAnchorYaw = wrapAngle(pelvisHeading(w.body->links[rootLink]) - pelvisHeading(w.idleFrame.links[rootLink]));
-                    w.idleReturnPrev = -1.0f;
                 }
                 const float dx = root.x - w.idleAnchor.x, dy = root.y - w.idleAnchor.y;
                 const float still = std::exp(-25.0f * (v.x * v.x + v.y * v.y)) * std::exp(-10.0f * (dx * dx + dy * dy))
@@ -7406,28 +7399,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
                             state = freeStopScore(w, v);
                             lost = false;
                         }
-                        if (settings.idleWorldTrack && w.locomotionControl) {
-                            // (10/11, settings.idleWorldTrack: o rastreio do DeepMimic contra o idle alerta fixo no mundo - ver o .hpp.)
-                            reference.frame(t, { w.idleAnchor.x, w.idleAnchor.y, floorUnder(w) }, w.idleAnchorYaw, w.idleWorldFrame);
-                            // (A nota do contrato ja e a do DeepMimic: pose, velocidade das juntas, extremidades e centro de massa no
-                            // MUNDO - contra o quadro fixo, os pes deslizando e o corpo a deriva passam a custar.)
-                            state = contract->reward(w.body->links, w.idleWorldFrame, 1.0f).total;
-                            if (settings.idleReturn > 0.0f) {
-                                // (settings.idleReturn: a distancia ao idle fixo sem saturar e o progresso para ele - ver o .hpp.)
-                                const TrackingClipFrame3D& F = w.idleWorldFrame;
-                                double d2 = 0.0;
-                                for (const std::uint32_t e : { footLinks[0], footLinks[1] })
-                                    if (e < w.body->links.size() && e < F.links.size())
-                                        d2 += (w.body->links[e].position - F.links[e].position).lengthSquared() / (0.05 * 0.05);
-                                d2 += (rlBodyCenterOfMass3D(*profile, w.body->links) - F.centerOfMass).lengthSquared() / (0.05 * 0.05);
-                                w.jointErrors.resize(trackingParts.size());
-                                contract->jointErrors(w.body->links, F, w.jointErrors);
-                                for (const float e : w.jointErrors) d2 += static_cast<double>(e) / (0.1 * 0.1);
-                                const float d = static_cast<float>(std::sqrt(d2));
-                                if (w.idleReturnPrev >= 0.0f) w.idleReturnShaping = settings.idleReturn * (w.idleReturnPrev - 0.99f * d);
-                                w.idleReturnPrev = d;
-                            }
-                        }
                         w.idleLostSeconds = w.startKind == 2 && lost && !recovering && w.time >= IdleLockAfterSeconds
                             ? w.idleLostSeconds + TicksPerDecision * TickSeconds : 0.0f;
                         // (04/11 05h20: o parado tambem no retorno do rastreio - a nota, os erros por parte contra o idle e a
@@ -7504,9 +7475,6 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // com a recuperacao no comando e sem empurrao.)
         reward += w.arrivalReward;
         w.arrivalReward = 0.0f;
-        reward += w.idleReturnShaping;
-        w.idleReturnShaping = 0.0f;
-        if (!idleTracked(w) || !w.idleAnchored) w.idleReturnPrev = -1.0f;
         if (settings.footSlipCost > 0.0f && w.locomotionControl && w.commandSpeed <= 0.0f) {
             // (10/11, settings.footSlipCost: os pes apoiados deslizando ou girando, parado - ver o .hpp.)
             const float still = std::clamp(1.0f - std::hypot(comVelocity.x, comVelocity.y) / 0.5f, 0.0f, 1.0f);
@@ -8509,9 +8477,7 @@ void TrackingGetUpAmpTraining3D::setPostureTail(float share) { m_impl->settings.
 void TrackingGetUpAmpTraining3D::setSpineTone(float tone) { m_impl->settings.spineTone = std::clamp(tone, 0.5f, 4.0f); }
 void TrackingGetUpAmpTraining3D::setJamCost(float weight) { m_impl->settings.jamCost = std::clamp(weight, 0.0f, 2.0f); }
 void TrackingGetUpAmpTraining3D::setFootSlipCost(float weight) { m_impl->settings.footSlipCost = std::clamp(weight, 0.0f, 2.0f); }
-void TrackingGetUpAmpTraining3D::setIdleWorldTrack(bool on) { m_impl->settings.idleWorldTrack = on; }
 void TrackingGetUpAmpTraining3D::setMotorGravity(bool on) { m_impl->settings.motorGravity = on; }
-void TrackingGetUpAmpTraining3D::setIdleReturn(float weight) { m_impl->settings.idleReturn = std::clamp(weight, 0.0f, 2.0f); }
 void TrackingGetUpAmpTraining3D::setLaunchCalmArms(bool on) {
     Impl& impl = *m_impl;
     impl.settings.launchCalmArms = on;

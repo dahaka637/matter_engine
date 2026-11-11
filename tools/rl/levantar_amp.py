@@ -1097,12 +1097,8 @@ def run_tracking_settings(b, v2: dict) -> None:
                     b.set_jam_cost(float(v2.get("custo_batente", 0.0)))
                 if hasattr(b, "set_foot_slip_cost"):
                     b.set_foot_slip_cost(float(v2.get("pes_firmes", 0.0)))
-                if hasattr(b, "set_idle_world_track"):
-                    b.set_idle_world_track(bool(v2.get("parado_fixo", False)))
                 if hasattr(b, "set_motor_gravity"):
                     b.set_motor_gravity(bool(v2.get("gravidade_motores", False)))
-                if hasattr(b, "set_idle_return"):
-                    b.set_idle_return(float(v2.get("volta_pose", 0.0)))
                 if hasattr(b, "set_stop_clips_base"):
                     b.set_stop_clips_base(bool(v2.get("parada_clipes_base", False)))
                 if hasattr(b, "set_stop_entry"):
@@ -1855,15 +1851,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--largada-no-lugar", type=float, default=0.0,
                         help="(10/11 08h20, ele: 'pelo menos tirar os passinhos no lugar') na largada, cada pe que pousa sem ter andado 15 cm "
                              "no rumo pedido custa ate isto na nota (para tras, o maximo); 0: sem")
-    parser.add_argument("--volta-pose", type=float, default=0.0,
-                        help="(10/11 15h35, ele: 'nao ha essa vontade de voltar a pose') com --parado-fixo, o progresso para o idle fixo no "
-                             "mundo a cada decisao (o potencial -d, sem saturar: pes, centro de massa, juntas) vezes isto; 0: sem")
     parser.add_argument("--gravidade-motores", action="store_true",
                         help="(10/11 15h25) a compensacao da gravidade nos motores da locomocao (o tonus antigravitacional): o torque que "
                              "segura o peso de cada osso na pose de agora, dentro da forca maxima do motor")
-    parser.add_argument("--parado-fixo", action="store_true",
-                        help="(10/11 15h10, ele: 'meta: 99%% de semelhanca com o clipe, sem oscilacoes, sem passo') o parado como o rastreio do "
-                             "DeepMimic com o idle alerta fixo no mundo onde ele parou: pose, velocidade das juntas, pes e maos no mundo, centro de massa")
     parser.add_argument("--pes-firmes", type=float, default=0.0,
                         help="(10/11 15h, ele: 'os pes deslizando... eu quero ele estatico quando parado') parado (pedido zero, corpo parado), "
                              "cada pe apoiado deslizando ou girando custa isto vezes min(2, v/5 cm/s + giro/0,5 rad/s); 0: como antes")
@@ -2333,12 +2323,8 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_jam_cost(args.custo_batente)
     if hasattr(b, "set_foot_slip_cost"):
         b.set_foot_slip_cost(args.pes_firmes)
-    if hasattr(b, "set_idle_world_track"):
-        b.set_idle_world_track(args.parado_fixo)
     if hasattr(b, "set_motor_gravity"):
         b.set_motor_gravity(args.gravidade_motores)
-    if hasattr(b, "set_idle_return"):
-        b.set_idle_return(args.volta_pose)
     if hasattr(b, "set_stop_clips_base"):
         b.set_stop_clips_base(args.parada_clipes_base)
     if hasattr(b, "set_stop_entry"):
@@ -2498,7 +2484,7 @@ def main() -> int:
                   "velocidades_trote": gait_speeds(args.velocidade_trote),
                   "velocidades_corrida": gait_speeds(args.velocidade_corrida),
                   "largada_costas": args.largada_costas, "curva_fora": args.curva_fora, "curva_inclinar": args.curva_inclinar, "pisada_largura": args.pisada_largura,
-                  "troca_freio": args.troca_freio, "troca_pe": args.troca_pe, "troca_assentada": args.troca_assentada, "troca_arrancada": args.troca_arrancada, "troca_pratica": args.troca_pratica, "corrida_largada": args.corrida_largada, "rumo_cauda": args.rumo_cauda, "inclinacao_cauda": args.inclinacao_cauda, "sem_penhascos": args.sem_penhascos, "penhascos_partes": args.penhascos_partes, "arrancada_pulo": args.arrancada_pulo, "largada_lado": args.largada_lado, "troca_assentada_lado": args.troca_assentada_lado, "troca_assentada_frente": args.troca_assentada_frente, "troca_giro_tempo": args.troca_giro_tempo, "parada_passada": args.parada_passada, "idle_pose": args.idle_pose, "parada_clipes_frente": args.parada_clipes_frente, "parada_clipes_comando": args.parada_clipes_comando, "parada_portao": args.parada_portao, "parada_livre": args.parada_livre, "parada_postura": args.parada_postura, "rigor_superior": args.rigor_superior, "arrancada_unreal": args.arrancada_unreal, "arrancada_unreal_escala": args.arrancada_unreal_escala, "largada_viva": args.largada_viva, "largada_passo": args.largada_passo, "largada_no_lugar": args.largada_no_lugar, "largada_bracos_calmos": args.largada_bracos_calmos, "coluna_sem_velocidade": args.coluna_sem_velocidade, "ruido_parado": args.ruido_parado, "tonus": args.tonus, "postura_cauda": args.postura_cauda, "tonus_coluna": args.tonus_coluna, "custo_batente": args.custo_batente, "pes_firmes": args.pes_firmes, "parado_fixo": args.parado_fixo, "gravidade_motores": args.gravidade_motores, "volta_pose": args.volta_pose, "postura_base": args.postura_base, "largada_clipe": args.largada_clipe, "largada_mao": args.largada_mao, "parada_clipes_base": args.parada_clipes_base, "parada_variantes": args.parada_variantes, "parada_variantes_mascara": args.parada_variantes_mascara, "parada_entrada": args.parada_entrada, "troca_livre": args.troca_livre, "parada_pose": args.parada_pose, "parado_livre": args.parado_livre, "pose_reforco": args.pose_reforco, "empurrao_livre": args.empurrao_livre, "parado_semelhanca": args.parado_semelhanca, "passo_baixo": args.passo_baixo, "parado_dobrado_encerra": args.parado_dobrado_encerra, "parado_largo": args.parado_largo, "simetria_ciclos": args.simetria_ciclos, "peso_tarefa_parado": args.peso_tarefa_parado, "peso_estilo_parado": args.peso_estilo_parado, "troca_assentada_costas": args.troca_assentada_costas, "troca_peito_fixo": args.troca_peito_fixo, "capacidade_minutos": args.capacidade_minutos, "pegada_cruzada": args.pegada_cruzada, "estab_ancora": args.estab_ancora,
+                  "troca_freio": args.troca_freio, "troca_pe": args.troca_pe, "troca_assentada": args.troca_assentada, "troca_arrancada": args.troca_arrancada, "troca_pratica": args.troca_pratica, "corrida_largada": args.corrida_largada, "rumo_cauda": args.rumo_cauda, "inclinacao_cauda": args.inclinacao_cauda, "sem_penhascos": args.sem_penhascos, "penhascos_partes": args.penhascos_partes, "arrancada_pulo": args.arrancada_pulo, "largada_lado": args.largada_lado, "troca_assentada_lado": args.troca_assentada_lado, "troca_assentada_frente": args.troca_assentada_frente, "troca_giro_tempo": args.troca_giro_tempo, "parada_passada": args.parada_passada, "idle_pose": args.idle_pose, "parada_clipes_frente": args.parada_clipes_frente, "parada_clipes_comando": args.parada_clipes_comando, "parada_portao": args.parada_portao, "parada_livre": args.parada_livre, "parada_postura": args.parada_postura, "rigor_superior": args.rigor_superior, "arrancada_unreal": args.arrancada_unreal, "arrancada_unreal_escala": args.arrancada_unreal_escala, "largada_viva": args.largada_viva, "largada_passo": args.largada_passo, "largada_no_lugar": args.largada_no_lugar, "largada_bracos_calmos": args.largada_bracos_calmos, "coluna_sem_velocidade": args.coluna_sem_velocidade, "ruido_parado": args.ruido_parado, "tonus": args.tonus, "postura_cauda": args.postura_cauda, "tonus_coluna": args.tonus_coluna, "custo_batente": args.custo_batente, "pes_firmes": args.pes_firmes, "gravidade_motores": args.gravidade_motores, "postura_base": args.postura_base, "largada_clipe": args.largada_clipe, "largada_mao": args.largada_mao, "parada_clipes_base": args.parada_clipes_base, "parada_variantes": args.parada_variantes, "parada_variantes_mascara": args.parada_variantes_mascara, "parada_entrada": args.parada_entrada, "troca_livre": args.troca_livre, "parada_pose": args.parada_pose, "parado_livre": args.parado_livre, "pose_reforco": args.pose_reforco, "empurrao_livre": args.empurrao_livre, "parado_semelhanca": args.parado_semelhanca, "passo_baixo": args.passo_baixo, "parado_dobrado_encerra": args.parado_dobrado_encerra, "parado_largo": args.parado_largo, "simetria_ciclos": args.simetria_ciclos, "peso_tarefa_parado": args.peso_tarefa_parado, "peso_estilo_parado": args.peso_estilo_parado, "troca_assentada_costas": args.troca_assentada_costas, "troca_peito_fixo": args.troca_peito_fixo, "capacidade_minutos": args.capacidade_minutos, "pegada_cruzada": args.pegada_cruzada, "estab_ancora": args.estab_ancora,
                   "trote_frente_inclinar": list(args.trote_frente_inclinar),
                   "corrida_inclinar": list(args.corrida_inclinar),
                   "corrida_costas_inclinar": list(args.corrida_costas_inclinar),

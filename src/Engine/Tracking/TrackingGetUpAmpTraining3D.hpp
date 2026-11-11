@@ -305,22 +305,11 @@ struct TrackingGetUpAmpSettings3D {
     // m/s), cada pe apoiado que desliza ou gira no chao custa isto vezes min(2, v/5 cm/s + giro/0,5 rad/s) por decisao. O pe no ar
     // (o passo de reequilibrar) nao paga. 0: como antes.
     float footSlipCost = 0.0f;
-    // (10/11 15h10, ele: "meta: 99% de semelhanca com o clipe durante todo o episodio, sem oscilacoes; nao deveria haver passo de
-    // recuperacao se ele seguir corretamente"; medido: a referencia do parado era reposta no corpo a cada decisao - os pes dela
-    // andavam 15 cm/s com ele, e deslizar nao custava.) O parado como o rastreio do DeepMimic (Peng et al. 2018) com o idle alerta
-    // FIXO no mundo onde o parado comecou (re-ancorado so depois de cada passo do gerador): 0,65 a pose, 0,10 a velocidade das juntas
-    // igual a do clipe, 0,15 os pes e as maos no mundo, 0,10 o centro de massa. false: como antes.
-    bool idleWorldTrack = false;
     // (10/11 15h25; medido: o clipe do idle tocado direto nos motores, sem a rede, nao fica de pe parado - 11 passos, os pes deslizam
     // 247 cm em 8,5 s: sem compensar a gravidade, cada motor e uma mola que o peso afunda (o joelho ~9 graus) e nenhuma pose fica.) A
     // compensacao da gravidade nos motores da cabeca da locomocao: o torque que segura o peso de cada osso na pose de agora (o tonus
     // antigravitacional), dentro da mesma forca maxima do motor. false: como antes.
     bool motorGravity = false;
-    // (10/11 15h35, ele: "o corpo nao esta tentando voltar a pose... nao ha essa vontade de voltar a pose"; os nucleos do DeepMimic
-    // saturam - o pe a ~20 cm ou a pose uns graus fora ja dao ~0, e chegar mais perto quase nao muda a nota.) Com o parado fixo: o
-    // progresso para o idle alerta fixo no mundo a cada decisao, o potencial -d (Ng, Harada & Russell 1999) vezes isto, com d a
-    // distancia sem saturar - os pes e as maos (5 cm), o centro de massa (5 cm) e os angulos das juntas (0,1 rad). 0: sem.
-    float idleReturn = 0.0f;
     // (10/11 04h40, ele: "ensinar a fazer pelos clipes, para ter base e DEPOIS de estar fazendo o movimento dos clipes deixar liberdade")
     // Com stopClips e freeStop: na parada final dos retos, a parada da Unreal do rumo (onde ha uma boa) e, quando ela assenta, a livre
     // (a cabeca da locomocao ate ficar de pe); sem clipe para o rumo, a livre direto.
@@ -1082,9 +1071,7 @@ public:
     void setSpineTone(float tone);
     void setJamCost(float weight);
     void setFootSlipCost(float weight);
-    void setIdleWorldTrack(bool on);
     void setMotorGravity(bool on);
-    void setIdleReturn(float weight);
     void setStopClipsBase(bool on);
     void setStopFrontVariants(bool on, int variant);
     void setStopFrontVariantMask(int mask);
