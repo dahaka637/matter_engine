@@ -237,14 +237,28 @@ MeshData3D buildHullMesh(const RagdollCapsuleDefinition3D& hull) {
     return mesh;
 }
 
+MeshData3D buildColliderVisual(const RagdollCapsuleDefinition3D& collider) {
+    if (collider.shape == RagdollColliderShape3D::ConvexHull) return buildHullMesh(collider);
+    if (ragdollColliderHasBox3D(collider)) {
+        return buildBoxMesh(collider.localPosition,
+            collider.boxHalfExtents, collider.localOrientation);
+    }
+    return buildCapsuleMesh(collider);
+}
+
 MeshData3D buildRagdollLinkVisual(
     const RagdollLinkDefinition3D& link) {
-    if (link.collider.shape == RagdollColliderShape3D::ConvexHull) return buildHullMesh(link.collider);
-    if (ragdollColliderHasBox3D(link.collider)) {
-        return buildBoxMesh(link.collider.localPosition,
-            link.collider.boxHalfExtents, link.collider.localOrientation);
+    MeshData3D mesh = buildColliderVisual(link.collider);
+    // Os colisores a mais do link (a mao: os dedos) na mesma malha; os presos a ossos, na pose de repouso deles (a mao relaxada).
+    const std::vector<RagdollBoneFrame3D> frames = ragdollPosableBoneFrames3D(link);
+    for (std::size_t k = 0; k < link.extraColliders.size(); ++k) {
+        const MeshData3D part = buildColliderVisual(ragdollExtraColliderInLink3D(link, k, frames));
+        const auto first = static_cast<std::uint32_t>(mesh.vertices.size());
+        mesh.vertices.insert(mesh.vertices.end(), part.vertices.begin(), part.vertices.end());
+        for (const std::uint32_t index : part.indices) mesh.indices.push_back(first + index);
     }
-    return buildCapsuleMesh(link.collider);
+    if (!link.extraColliders.empty()) recomputeBounds(mesh);
+    return mesh;
 }
 
 GpuModel3D uploadRagdollMesh(
@@ -593,6 +607,23 @@ void WorkbenchApp::takeControlOfLatestCharacter() {
         .orientation.rotate({ 1.0f, 0.0f, 0.0f });
     m_characterDesiredFacingYaw = std::atan2(forward.y, forward.x);
     m_laboratoryCameraYaw = m_characterDesiredFacingYaw;
+    // (02/11, ele: o boneco nascia no fisico.) De pe e com o padrao ligado, ele
+    // comeca no padrao, olhando para onde o corpo olha.
+    {
+        const Vec3 up = (candidate->physicsState.links.front().orientation
+            * m_humanRagdollProfile->links.front().modelOrientation.conjugate())
+            .rotate({ 0.0f, 0.0f, 1.0f });
+        auto& legacy = candidate->athlete.legacy;
+        if (m_defaultLocomotion && up.z > 0.85f
+            && legacy.bodyMode == LegacyBodyMode3D::Physical) {
+            legacy.guideFacingYawRadians = m_characterDesiredFacingYaw;
+            legacy.defaultLocomotion.reset(m_characterDesiredFacingYaw);
+            legacy.guided = true;
+            legacy.bodyMode = LegacyBodyMode3D::Animated;
+            legacy.bodyModeSeconds = 0.0f;
+            m_physicsScene->setRagdollGuided(candidate->physicsRagdoll, true);
+        }
+    }
     m_laboratoryCameraPitch = -0.20f;
     m_characterProxyVelocityWorld = {};
     m_characterSprinting = false;
@@ -1038,6 +1069,7 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.locomotionPolicy = (m_locomotionPolicyOn || (m_defaultLocomotion && m_defaultPhysicalPolicy))
         && m_athleteRuntime.locomotionPolicy() != nullptr;
     settings.getUpPolicy = settings.locomotionPolicy && m_athleteRuntime.getUpPolicy() != nullptr && !m_animatedGetUp;
+    settings.protectiveFallBeforeGetUp = m_protectiveFallBeforeGetUp;
     // Com a rede, a regua e as viradas do treino dela (no Fisico com RL; no Padrao, a regua dele).
     if (m_locomotionPolicyOn && settings.locomotionPolicy && m_locomotionPolicyConditions) {
         settings.historicalAssistRuler = m_locomotionPolicyConditions->historicalAssistRuler;

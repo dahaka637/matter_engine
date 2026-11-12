@@ -53,6 +53,22 @@ const float PI = 3.14159265359;
 // meshes and textured imported ones share this exact same shader unchanged.
 layout(set = 1, binding = 0) uniform sampler2D albedoMap;
 layout(set = 2, binding = 0) uniform sampler2D metallicRoughnessMap;
+layout(set = 5, binding = 0) uniform sampler2D normalMap;
+layout(set = 6, binding = 0) uniform sampler2D emissiveMap;
+layout(push_constant) uniform SurfaceParameters {
+    vec4 emissionNormal; // emissive radiance RGB, normal scale
+    vec4 relief;         // parallax depth in tile UV units
+} surface;
+
+// A cotangent frame from the actual UVs also handles rotated/mirrored brush faces.
+mat3 cotangentFrame(vec3 normal, vec3 position, vec2 uv) {
+    vec3 dp1=dFdx(position), dp2=dFdy(position);
+    vec2 duv1=dFdx(uv), duv2=dFdy(uv);
+    vec3 a=cross(dp2,normal), b=cross(normal,dp1);
+    vec3 t=a*duv1.x+b*duv2.x, bt=a*duv1.y+b*duv2.y;
+    float inv=inversesqrt(max(max(dot(t,t),dot(bt,bt)),1e-12));
+    return mat3(t*inv,bt*inv,normal);
+}
 // Cena vista pela camera espelhada. So objectParameters.y != 0 amostra este
 // binding; os demais materiais usam somente o ambiente analitico barato.
 layout(set = 3, binding = 0) uniform sampler2D planarReflectionMap;
@@ -446,22 +462,31 @@ vec3 accumulateLighting(vec3 normal, vec3 viewDirection, vec3 albedo,
             float distanceSquared = max(dot(toLight, toLight), 0.01);
             lightDirection = normalize(toLight);
             float attenuation = 1.9 / (1.0 + 0.020 * distanceSquared);
+            if (light.parameters.w > 0.5) {
+                float range = light.positionRange.w;
+                float cutoff = range > 0.0 ? pow(clamp(1.0 - pow(sqrt(distanceSquared)/range,4.0),0.0,1.0),2.0) : 1.0;
+                attenuation = cutoff / distanceSquared;
+            }
             radiance = light.colorIntensity.rgb * light.colorIntensity.a * attenuation;
         } else { // Spot
             vec3 spotOffset = worldPosition - light.positionRange.xyz;
             float spotDistance = length(spotOffset);
             float spotRange = light.positionRange.w;
-            if (spotRange <= 0.0 || spotDistance >= spotRange) continue;
+            if ((spotRange <= 0.0 && light.parameters.w < 0.5) || (spotRange > 0.0 && spotDistance >= spotRange)) continue;
             vec3 fromSpot = spotOffset / max(spotDistance, 0.001);
             float cone = smoothstep(light.directionOuterCosine.w,
                 light.parameters.x,
                 dot(normalize(light.directionOuterCosine.xyz), fromSpot));
-            float rangeFalloff = 1.0 - spotDistance / spotRange;
+            float rangeFalloff = spotRange > 0.0 ? 1.0 - spotDistance / spotRange : 1.0;
             rangeFalloff *= rangeFalloff;
             lightDirection = -fromSpot;
             radiance = light.colorIntensity.rgb * light.colorIntensity.a
                 * cone * rangeFalloff
                 / (1.0 + spotDistance * spotDistance * 0.035);
+            if (light.parameters.w > 0.5) {
+                float cutoff = spotRange > 0.0 ? pow(clamp(1.0-pow(spotDistance/spotRange,4.0),0.0,1.0),2.0) : 1.0;
+                radiance = light.colorIntensity.rgb * light.colorIntensity.a * cone * cutoff / max(spotDistance*spotDistance,.01);
+            }
         }
 
         bool castsShadow = i == 0 && light.parameters.z > 0.5;
@@ -548,6 +573,35 @@ void main() {
     }
     vec3 viewDirection = normalize(scene.cameraPosition.xyz - worldPosition);
     vec2 materialUv = vertexUv;
+    mat3 tbn = cotangentFrame(normal, worldPosition, vertexUv);
+    vec2 uvDx=dFdx(vertexUv), uvDy=dFdy(vertexUv);
+    if (surface.emissionNormal.w > 0.0) {
+        // Short parallax occlusion traversal; fades before the footprint exceeds a fibre.
+        float reliefFade = 1.0 - smoothstep(5.0,16.0,distanceFromCamera);
+        float depth = surface.relief.x * reliefFade;
+        if (depth > 0.0) {
+            vec3 tangentView=transpose(tbn)*viewDirection;
+            vec2 stepUv=tangentView.xy/max(abs(tangentView.z),.2)*depth/12.0;
+            float layer=0.0;
+            vec2 previousUv=materialUv;
+            float previousDifference=1.0-textureGrad(normalMap,materialUv,uvDx,uvDy).a;
+            for (int i=0;i<12;++i) {
+                float difference=1.0-textureGrad(normalMap,materialUv,uvDx,uvDy).a-layer;
+                if (difference <= 0.0) {
+                    float fraction=clamp(previousDifference/max(previousDifference-difference,1e-5),0.0,1.0);
+                    materialUv=mix(previousUv,materialUv,fraction);
+                    break;
+                }
+                previousUv=materialUv;
+                previousDifference=difference;
+                materialUv-=stepUv;
+                layer+=1.0/12.0;
+            }
+        }
+        vec3 mapped=textureGrad(normalMap,materialUv,uvDx,uvDy).xyz*2.0-1.0;
+        mapped.xy*=surface.emissionNormal.w;
+        normal=normalize(tbn*normalize(mapped));
+    }
 #ifdef MATTER_CHARACTER
     vec3 albedo = characterAlbedo(texture(albedoMap, materialUv).rgb) * vertexColor * objectTint;
 #else
@@ -647,7 +701,8 @@ void main() {
         blurredEnvironment * ambientFresnel * indirectVisibility;
 
     vec3 shaded = ambientDiffuse + bouncedDiffuse
-        + ambientSpecular + direct;
+        + ambientSpecular + direct
+        + texture(emissiveMap,materialUv).rgb * surface.emissionNormal.rgb;
 
     if (objectParameters.w != 0) {
         float rim = pow(1.0 - clamp(dot(normal, viewDirection), 0.0, 1.0), 7.0);

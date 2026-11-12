@@ -1,5 +1,6 @@
 #include "Engine/Physics/Jolt/JoltInternals3D.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <utility>
 #include <vector>
@@ -56,8 +57,35 @@ void PhysicsScene3D::setRagdollActiveDriveTargets(RagdollHandle3D h, std::span<c
             || !std::isfinite(target.gravityCompensationScale)) continue;
         r->stagedActiveTargets.push_back(target);
     }
+    // (10/11, RagdollJointCoupling3D: o alvo e a velocidade-alvo de um grupo acoplado viram a soma do grupo vezes as parcelas.)
+    for (const RagdollJointCoupling3D& coupling : r->profile.jointCouplings) {
+        std::array<RagdollDriveTarget3D*, 8> group {};
+        if (coupling.links.size() > group.size()) continue;
+        for (auto& target : r->stagedActiveTargets)
+            for (std::size_t k = 0; k < coupling.links.size(); ++k)
+                if (!group[k] && target.linkIndex == coupling.links[k] && target.axis == coupling.axis) group[k] = &target;
+        if (std::any_of(group.begin(), group.begin() + static_cast<std::ptrdiff_t>(coupling.links.size()),
+                [](const RagdollDriveTarget3D* t) { return t == nullptr; })) continue;
+        float position = 0.0f, velocity = 0.0f;
+        for (std::size_t k = 0; k < coupling.links.size(); ++k) {
+            position += group[k]->positionRadians;
+            velocity += group[k]->velocityRadiansPerSecond;
+        }
+        for (std::size_t k = 0; k < coupling.links.size(); ++k) {
+            group[k]->positionRadians = coupling.shares[k] * position;
+            group[k]->velocityRadiansPerSecond = coupling.shares[k] * velocity;
+        }
+    }
     r->gravityCompensationEnabled = gravity;
     r->stagedActiveTargetsDirty = true;
+}
+bool PhysicsScene3D::stagedRagdollDriveTargets(RagdollHandle3D h, std::vector<RagdollDriveTarget3D>& out,
+    bool& gravity) const {
+    const auto* r = m_impl->ragdoll(h);
+    if (!r) return false;
+    out = r->stagedActiveTargets;
+    gravity = r->gravityCompensationEnabled;
+    return true;
 }
 void PhysicsScene3D::setRagdollAnimationConstraint(RagdollHandle3D h, const RagdollAnimationConstraint3D& constraint) {
     auto* r = m_impl->ragdoll(h);

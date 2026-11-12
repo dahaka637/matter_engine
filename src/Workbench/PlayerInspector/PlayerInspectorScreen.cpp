@@ -301,7 +301,9 @@ void PlayerInspectorScreen::drawAnimationList() {
             }
             ImGui::PushID(static_cast<int>(i));
             ImGui::BeginDisabled(!m_animations.available(i));
+            if (entries[i].color != 0) ImGui::PushStyleColor(ImGuiCol_Text, entries[i].color);
             if (navigationButton(entries[i].label.c_str(), i == m_animations.selected(), { -1.0f, ui(30.0f) })) m_animations.select(i);
+            if (entries[i].color != 0) ImGui::PopStyleColor();
             ImGui::EndDisabled();
             ImGui::PopID();
         }

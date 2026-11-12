@@ -176,12 +176,24 @@ RagdollColliderWireframe3D buildRagdollColliderWireframe3D(
         wireframe.centerOfMassModel = link.modelPosition + link.modelOrientation.rotate(link.centerOfMassLocal);
         wireframe.hasInboundJoint = link.parentIndex >= 0;
         if (wireframe.hasInboundJoint) wireframe.inboundJointModel = link.inboundJoint.anchorModelPosition;
-        if (link.collider.shape == RagdollColliderShape3D::Box)
-            appendBox(wireframe.segments, link);
-        else if (link.collider.shape == RagdollColliderShape3D::ConvexHull)
-            appendHull(wireframe.segments, link);
-        else
-            appendCapsule(wireframe.segments, link, radialSegments, capSegments);
+        const auto append = [&](const RagdollLinkDefinition3D& part) {
+            if (part.collider.shape == RagdollColliderShape3D::Box)
+                appendBox(wireframe.segments, part);
+            else if (part.collider.shape == RagdollColliderShape3D::ConvexHull)
+                appendHull(wireframe.segments, part);
+            else
+                appendCapsule(wireframe.segments, part, radialSegments, capSegments);
+        };
+        append(link);
+        // Os colisores a mais (a mao: os dedos): o mesmo link com o extra no lugar do principal; os presos a ossos, na pose de
+        // repouso deles (a mao relaxada).
+        const std::vector<RagdollBoneFrame3D> frames = ragdollPosableBoneFrames3D(link);
+        for (std::size_t k = 0; k < link.extraColliders.size(); ++k) {
+            RagdollLinkDefinition3D part = link;
+            part.collider = ragdollExtraColliderInLink3D(link, k, frames);
+            part.extraColliders.clear();
+            append(part);
+        }
         result.links.push_back(std::move(wireframe));
     }
     return result;

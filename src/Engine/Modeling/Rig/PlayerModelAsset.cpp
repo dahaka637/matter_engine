@@ -293,13 +293,14 @@ std::filesystem::file_time_type newestWrite(const std::vector<std::filesystem::p
     return newest;
 }
 
-std::vector<std::string> availableClipIds() {
+std::vector<std::string> availableClipIds(const std::string& folder) {
     std::vector<std::string> ids;
     std::error_code ignored;
-    for (const auto& entry : std::filesystem::directory_iterator(clipsDirectory(), ignored)) {
+    const std::filesystem::path directory = folder.empty() ? clipsDirectory() : clipsDirectory() / folder;
+    for (const auto& entry : std::filesystem::directory_iterator(directory, ignored)) {
         const std::string name = entry.path().filename().string();
         if (name.size() > std::string_view(ClipSuffix).size() && name.ends_with(ClipSuffix))
-            ids.push_back(name.substr(0, name.size() - std::string_view(ClipSuffix).size()));
+            ids.push_back((folder.empty() ? std::string() : folder + "/") + name.substr(0, name.size() - std::string_view(ClipSuffix).size()));
     }
     std::sort(ids.begin(), ids.end());
     return ids;

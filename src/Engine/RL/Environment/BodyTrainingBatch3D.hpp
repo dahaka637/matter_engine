@@ -139,6 +139,28 @@ struct BodyEpisode3D {
 };
 
 // Um mundo visto por fora (a previa, as folhas de quadros).
+// (12/11 05h30, a fase de fogo do levantar - o desenho no laboratorio) O fogo de um mundo do levantar, como o
+// TrackingGetUpAmpWorldView3D o da: o tipo (1 pancada, 2 continuo, 3 os dois), o momento (1 comeco, 2 meio, 3 quase fim), o rumo
+// (0-7 a partir da frente do corpo; +8 de cima) e a inclinacao, a fracao do nivel, o tamanho, a forca continua de agora, a
+// pancada (a hora, a forca, o elo, quanto dura, o rumo dela agora), o tempo, o orcamento, os marcos e os niveis.
+struct GetUpFireView3D {
+    bool active = false;
+    int kind = 0, timing = 0, direction = 0, shoveLink = -1;
+    float abovePitch = 0.0f, fraction = 0.0f, size = 0.0f, shoveSize = 0.0f;
+    Vec3 hold, shoveForce, aim;
+    float shoveAt = -1.0f, shoveSeconds = 0.0f;
+    bool shoveDone = false;
+    float time = 0.0f, budget = 0.0f, upAt = -1.0f, deliveredAt = -1.0f, downAt = -1.0f, weight = 0.0f;
+    float levelHold = 0.0f, levelShove = 0.0f;
+    // (12/11 12h50, a fase 2) O agarrao puxando agora (o elo da mao e a forca; -1 sem) e se o chao e escorregadio.
+    int grabLink = -1;
+    Vec3 grabForce;
+    bool slip = false;
+    // (12/11 16h30) O fogo da locomocao (sem o levantar: o orcamento e o episodio, o desfecho e cair ou seguir firme) e o nivel L dele.
+    bool locomotion = false;
+    float locoLevel = 0.0f;
+};
+
 struct BodyWorldView3D {
     const RagdollState3D* state = nullptr;
     Vec3 origin;
@@ -153,6 +175,16 @@ struct BodyWorldView3D {
     bool targetStop = false;
     // Os pontos da estrela (o centro e as 8 pontas) no chao, quando o exercicio e a estrela.
     std::vector<Vec3> starPoints;
+    // (08/11, a estrela de 8 pontas no treino) As linhas dela no chao (do centro as pontas), a perna de agora, o ponto seguinte,
+    // o centro (o primeiro dos starPoints) e o texto da perna.
+    std::vector<std::pair<Vec3, Vec3>> starLines;
+    bool hasStarLeg = false;
+    std::pair<Vec3, Vec3> starLeg;
+    // (12/11 17h20) O caminho da perna de agora e o da seguinte (o arco em pontos nas curvas; 2 pontos nas retas).
+    std::vector<Vec3> starLegPoints, starNextPoints;
+    bool hasNextTarget = false;
+    Vec3 nextTarget;
+    std::string starCaption;
     // A velocidade do centro de massa e o rumo do peito (rad).
     Vec3 velocity;
     float chestHeading = 0.0f;
@@ -163,8 +195,14 @@ struct BodyWorldView3D {
     float pushFade = 1.0f;
     // O cenario em arame (no mundo): as paredes, os pilares, a rampa, os calombos e os corpos soltos do levantar.
     std::vector<std::pair<Vec3, Vec3>> scenery;
+    // (12/11 09h15) As paredes do levantar em grade (TrackingGetUpAmpTraining3D::arenaSegments).
+    std::vector<std::pair<Vec3, Vec3>> walls;
+    // (12/11 12h50) A placa da grama molhada em grade (TrackingGetUpAmpTraining3D::slipSegments).
+    std::vector<std::pair<Vec3, Vec3>> wet;
     // Os outros corpos da cena (os soltos do levantar nos ambientes), do mesmo perfil: desenhados pelos colisores.
     std::vector<const RagdollState3D*> otherBodies;
+    // (12/11 05h30) O fogo do levantar (so no levantar pelo clipe com fogo).
+    GetUpFireView3D fire;
 };
 
 // Os mundos de treino do Corpo v2: centenas de bonecos sem janela, avancados

@@ -1,0 +1,8 @@
+#!/bin/bash
+# O freio do treino para um comando pesado (08/11 16h15, pedido dele): marca o pid deste shell enquanto o comando roda e o
+# freio-jogo (tools/sistema/freio_jogo.py) limita a CPU do treino; a marca sai no fim. Uso: freio <comando> [args...]
+d="${XDG_RUNTIME_DIR:-/tmp}/freio-treino"; mkdir -p "$d"; m="$d/$$"; touch "$m"; trap 'rm -f "$m"' EXIT
+if systemctl --user is-active --quiet matter-rl-final-ajuda.service; then
+  for i in $(seq 20); do systemctl --user show matter-rl-final-ajuda.service -p CPUQuotaPerSecUSec | grep -q infinity || break; sleep 0.25; done
+fi
+"$@"

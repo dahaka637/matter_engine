@@ -38,6 +38,11 @@ private:
     bool m_ground = false;
     std::size_t m_phase = 0;
     std::size_t m_environment = 0;
+    // (04/11 15h, o layout v7) O equilibrio e o estado do gerador de passos do treino (zeros aqui), e os canais do passo.
+    static constexpr std::size_t StepStateSize = 10, StepChannels = 4;
+    std::size_t m_balance = 0;
+    std::size_t m_stepState = 0;
+    std::size_t m_skillMode = 0;
     mutable std::mutex m_mutex;
     mutable std::vector<std::pair<const RagdollProfile3D*, std::unique_ptr<TrackingGetUpContract3D>>> m_contracts;
 };

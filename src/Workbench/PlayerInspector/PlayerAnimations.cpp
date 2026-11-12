@@ -2,6 +2,8 @@
 
 #include "Engine/Modeling/Rig/PlayerModelAsset.hpp"
 
+#include "imgui.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -21,11 +23,11 @@ std::string plainName(const std::string& name) {
 
 std::vector<PlayerAnimations::Entry> playerAnimationEntries(const RagdollCharacter3D& character) {
     std::vector<PlayerAnimations::Entry> entries;
-    const auto add = [&](const std::string& clipId, const std::string& label, const char* group) {
+    const auto add = [&](const std::string& clipId, const std::string& label, const char* group, std::uint32_t color = 0) {
         if (clipId.empty()) return;
         for (const PlayerAnimations::Entry& entry : entries)
             if (entry.clipId == clipId) return;
-        entries.push_back({ clipId, label, group });
+        entries.push_back({ clipId, label, group, color });
     };
     // O modo padrao troca alguns papeis (o sprint de costas): o dele primeiro.
     const auto defaultClip = [&](const char* role) {
@@ -63,6 +65,29 @@ std::vector<PlayerAnimations::Entry> playerAnimationEntries(const RagdollCharact
     add(character.standUpFrontClipId, "Levantar de bruços", "No chão");
     add(character.standUpBackClipId, "Levantar de costas", "No chão");
     for (const auto& [role, clipId] : character.defaultLocomotionClipIds) add(clipId, "", "Corrida");
+    // (06/11, ele: "crie uma nova categoria e coloque essas animacoes boas que tu encontrou... para eu visualizar e entender
+    // como sao os movimentos"; depois "adicione... todas as outras principais de locomocao e curvas... e deixa de cor diversa
+    // no menu a de cada tipo de locomocao": as do Game Animation Sample da Epic, convertidas para o nosso esqueleto, so para
+    // ver - fora da biblioteca do jogo, na subpasta delas - num grupo e numa cor por tipo.)
+    struct UnrealKind { const char* prefix; const char* group; std::uint32_t color; };
+    static constexpr UnrealKind unrealKinds[] = {
+        { "stand_", "Unreal · Parado", IM_COL32(170, 195, 225, 255) },
+        { "idle_", "Unreal · Parado", IM_COL32(170, 195, 225, 255) },
+        { "walk_", "Unreal · Caminhada", IM_COL32(130, 215, 145, 255) },
+        { "trote_", "Unreal · Trote (a corrida deles a 4,5 m/s)", IM_COL32(250, 225, 120, 255) },
+        { "run_", "Unreal · Corrida (original)", IM_COL32(245, 195, 95, 255) },
+        { "sprint_", "Unreal · Sprint (a nossa corrida)", IM_COL32(245, 125, 105, 255) },
+        { "transition_", "Unreal · Transições", IM_COL32(195, 155, 245, 255) },
+        { "ragdoll_flail_", "Unreal · Queda protegida", IM_COL32(95, 210, 215, 255) },
+        { "ragdoll_reach_", "Unreal · Queda protegida", IM_COL32(95, 210, 215, 255) },
+        { "ragdoll_getup_", "Unreal · Levantar", IM_COL32(240, 145, 205, 255) },
+        { "ragdoll_poses_", "Unreal · No chão", IM_COL32(215, 215, 120, 255) },
+    };
+    const std::vector<std::string> unrealClips = Modeling::availableClipIds("referencias_unreal");
+    for (const UnrealKind& kind : unrealKinds)
+        for (const std::string& clipId : unrealClips)
+            if (clipId.starts_with(std::string("referencias_unreal/") + kind.prefix))
+                add(clipId, "", kind.group, kind.color);
     return entries;
 }
 

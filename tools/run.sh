@@ -4,12 +4,8 @@ set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 profile_executable="$root/build-profile/MatterEngine"
 debug_executable="$root/build-linux/MatterEngine"
-# O desenvolvimento alterna entre Debug e RelWithDebInfo. Escolher sempre o
-# profile apenas porque ele existe pode iniciar por dias uma build obsoleta e
-# fazer uma correcao recem-compilada parecer ausente. Quando ambas existem,
-# execute a que foi ligada por ultimo.
-if [[ -x "$profile_executable" && (! -x "$debug_executable" \
-        || "$profile_executable" -nt "$debug_executable") ]]; then
+# A build de diagnostico pode ser mais recente; jogar usa a otimizada.
+if [[ -x "$profile_executable" ]]; then
     executable="$profile_executable"
 else
     executable="$debug_executable"

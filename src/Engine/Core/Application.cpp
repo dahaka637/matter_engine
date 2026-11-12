@@ -6,7 +6,6 @@
 #include <chrono>
 #include <cmath>
 #include <memory>
-#include <thread>
 #include <utility>
 
 namespace MatterEngine {
@@ -59,6 +58,8 @@ void Application::run() {
         const float fixedDelta = 1.0f / std::max(1.0f, m_config.fixedUpdateHz);
         float accumulator = 0.0f;
         const float targetFrameSeconds = m_config.vsync ? 1.0f / queryRefreshRateHz(m_renderer->window()) : 0.0f;
+        const float frameInterval = m_config.maximumFrameRate > 0.0f
+            ? std::max(targetFrameSeconds, 1.0f / m_config.maximumFrameRate) : targetFrameSeconds;
 
         while (m_running) {
             const auto frameStart = Clock::now();
@@ -124,19 +125,9 @@ void Application::run() {
                     guiEnd - frameStart).count();
             m_frameMetrics.fixedStepCount = fixedSteps;
 
-            if (targetFrameSeconds > 0.0f) {
-                // Measured: std::this_thread::sleep_for on this machine (even
-                // after requesting 1ms timer resolution via timeBeginPeriod, and
-                // even for a request as small as ~4-5ms) routinely overshot to a
-                // ~10ms floor regardless of how small a sleep was actually asked
-                // for - turning an intended ~7ms vsync-paced frame into ~10-11ms
-                // actually elapsed. That oversleep, not game logic or rendering,
-                // was the dominant cost in every frame - a pure spin-wait (yield,
-                // not sleep) has no OS timer-granularity floor to overshoot past.
-                while (std::chrono::duration<float>(Clock::now() - current).count() < targetFrameSeconds) {
-                    std::this_thread::yield();
-                }
-            }
+            // Sleep instead of heating a CPU core while waiting for the next frame.
+            const float remaining = frameInterval - std::chrono::duration<float>(Clock::now() - frameStart).count();
+            if (remaining > 0.0f) SDL_DelayNS(static_cast<Uint64>(remaining * 1.0e9f));
         }
     } catch (...) {
         // The game's resources (notably SDL audio streams) must be released

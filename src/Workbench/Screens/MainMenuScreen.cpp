@@ -47,7 +47,7 @@ void WorkbenchApp::drawMainMenu() {
 
     if (navigationButton(laboratory.c_str(), false,
             { -1.0f, buttonHeight })) {
-        enterLaboratory();
+        m_screen = Screen::LaboratoryMaps;
     }
     if (navigationButton(viewer.c_str(), false,
             { -1.0f, buttonHeight })) {
@@ -106,7 +106,7 @@ void WorkbenchApp::drawMainMenu() {
     centerNextItem(actionWidth);
     if (ImGui::Button("ABRIR LABORATÓRIO",
             { actionWidth, ui(44.0f) })) {
-        enterLaboratory();
+        m_screen = Screen::LaboratoryMaps;
     }
     ImGui::EndChild();
     ImGui::End();

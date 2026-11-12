@@ -1,4 +1,6 @@
 #version 450
+invariant gl_Position;
+precise gl_Position;
 
 layout(set = 0, binding = 0, std140) uniform SceneUniform {
     mat4 cameraViewProjection;         // jitterizada quando TAA ativo (Fase 6)

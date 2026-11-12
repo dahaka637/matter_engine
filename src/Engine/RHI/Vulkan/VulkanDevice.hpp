@@ -26,7 +26,7 @@ public:
     ShaderHandle createShader(const ShaderDesc& desc) override;
     PipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc) override;
     TextureHandle createRenderTarget(const TextureDesc& desc) override;
-    TextureHandle createTexture2D(Extent2D extent, std::span<const std::byte> rgbaPixels) override;
+    TextureHandle createTexture2D(Extent2D extent, std::span<const std::byte> rgbaPixels, bool srgb = false) override;
     CharacterMaterialHandle createCharacterMaterial(const CharacterMaterialDesc& desc) override;
     void updateCharacterKitLayer(CharacterMaterialHandle handle, std::uint32_t layer, std::span<const std::byte> levels,
         std::span<const float> regionAverages) override;

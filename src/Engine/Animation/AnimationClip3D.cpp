@@ -661,4 +661,29 @@ AnimationClip3D scaledAnimationClip3D(const AnimationClip3D& clip, float scale) 
     return result;
 }
 
+void coupleAnimationClipJoints3D(AnimationClip3D& clip, const RagdollProfile3D& profile) {
+    if (profile.jointCouplings.empty()) return;
+    std::vector<AnimationTrack3D*> tracks(profile.links.size(), nullptr);
+    std::size_t keys = 0;
+    for (AnimationTrack3D& track : clip.tracks) {
+        if (track.space != AnimationTrackSpace3D::Joint) continue;
+        for (std::size_t i = 0; i < profile.links.size(); ++i)
+            if (profile.links[i].id == track.targetLinkId) tracks[i] = &track;
+    }
+    for (const RagdollJointCoupling3D& coupling : profile.jointCouplings)
+        for (const std::uint32_t link : coupling.links) {
+            // (Sem o canal, ou com amostragens diferentes, o clipe fica como esta - a validacao acusa.)
+            if (tracks[link] == nullptr || (keys && tracks[link]->keyframes.size() != keys)) return;
+            keys = tracks[link]->keyframes.size();
+        }
+    std::vector<Vec3> coordinates(profile.links.size());
+    for (std::size_t key = 0; key < keys; ++key) {
+        for (std::size_t i = 0; i < tracks.size(); ++i)
+            if (tracks[i] != nullptr && key < tracks[i]->keyframes.size()) coordinates[i] = tracks[i]->keyframes[key].jointPositionRadians;
+        coupleRagdollJointCoordinates3D(profile, coordinates);
+        for (const RagdollJointCoupling3D& coupling : profile.jointCouplings)
+            for (const std::uint32_t link : coupling.links) tracks[link]->keyframes[key].jointPositionRadians = coordinates[link];
+    }
+}
+
 } // namespace MatterEngine

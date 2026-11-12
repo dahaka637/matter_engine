@@ -122,7 +122,7 @@ std::unique_ptr<PhysicsScene3D> createSceneWithGround(
     settings.enableStabilization = true;
     auto scene = physics.createScene(settings, materials);
 
-    const auto groundMesh = physics.cookStaticTriangleMesh(makeGround(90.0f));
+    const auto groundMesh = physics.cookStaticTriangleMesh(makeGround(90.0f), "concrete");
     PhysicsShape3D groundShape;
     groundShape.type = PhysicsShapeType3D::TriangleMesh;
     groundShape.mesh = groundMesh;
@@ -208,7 +208,7 @@ int main() {
         PhysicsEngine3D physics;
         const RagdollProfile3D ragdoll = loadRagdollProfile3D(
             std::string(MATTERENGINE_ASSETS_DIR)
-                + "/physics/ragdolls/HumanAdultV1.ragdoll.json");
+                + "/characters/football_player/FootballPlayerV1.ragdoll.json");
 
         constexpr int StepCount = 120;
         std::cout << "MatterEngine physics workload benchmark ("

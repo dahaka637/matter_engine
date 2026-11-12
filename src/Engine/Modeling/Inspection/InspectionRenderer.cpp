@@ -462,6 +462,41 @@ void drawArrows(const InspectionScene& scene, Rasterizer& raster, float pixel) {
     }
 }
 
+// (12/11 05h30) O feixe (InspectionBeam): a faixa virada para a camera - o brilho largo, o miolo, um fio claro no meio e a ponta.
+void drawBeams(const InspectionScene& scene, const OrbitCamera& camera, Rasterizer& raster, float pixel) {
+    const Vec3 eye = camera.eye();
+    for (const InspectionBeam& beam : scene.beams) {
+        Vec3 along = beam.to - beam.from;
+        const float length = along.length();
+        if (length < 1.0e-3f) continue;
+        along = along * (1.0f / length);
+        Vec3 side = cross(along, (beam.from + beam.to) * 0.5f - eye);
+        if (side.length() < 1.0e-5f) side = camera.right();
+        side = side.normalized();
+        const float head = beam.head ? std::min(length * 0.4f, beam.width * 3.4f) : 0.0f;
+        const Vec3 neck = beam.to - along * head;
+        const auto band = [&](float half, Color color) {
+            const Vec3 a = beam.from + side * half, b = beam.from - side * half, c = neck - side * half, d = neck + side * half;
+            raster.overlayTriangle(a, b, c, color, 0.02f);
+            raster.overlayTriangle(a, c, d, color, 0.02f);
+        };
+        if (beam.glow > 0.0f) {
+            band(beam.width * 1.7f, withAlpha(beam.color, 0.16f * beam.glow * beam.color.a));
+            band(beam.width * 1.05f, withAlpha(beam.color, 0.30f * beam.glow * beam.color.a));
+        }
+        band(beam.width * 0.5f, beam.color);
+        raster.line(beam.from, neck, std::max(1.2f, 0.25f * beam.width / std::max(1.0e-4f, pixel)) * pixel,
+            withAlpha(mix(beam.color, rgb(255, 255, 255), 0.55f), beam.color.a), DepthMode::Test, 0.0f, 0.004f);
+        if (beam.head) {
+            if (beam.glow > 0.0f)
+                raster.overlayTriangle(neck + side * (beam.width * 2.1f) - along * (0.15f * head),
+                    neck - side * (beam.width * 2.1f) - along * (0.15f * head), beam.to + along * (0.12f * head),
+                    withAlpha(beam.color, 0.25f * beam.glow * beam.color.a), 0.02f);
+            raster.overlayTriangle(neck + side * (beam.width * 1.45f), neck - side * (beam.width * 1.45f), beam.to, beam.color, 0.02f);
+        }
+    }
+}
+
 // O olho virado para a camera: duas palpebras em arco, a iris cheia e a pupila.
 void drawEyes(const InspectionScene& scene, const OrbitCamera& camera, Rasterizer& raster, float pixel) {
     if (scene.eyes.empty()) return;
@@ -714,6 +749,7 @@ Image renderInspection(const InspectionScene& scene, const InspectionStyle& styl
     }
     drawMarkers(scene, raster, pixel);
     drawArrows(scene, raster, pixel);
+    drawBeams(scene, camera, raster, pixel);
     drawEyes(scene, camera, raster, pixel);
     for (const Highlight& highlight : scene.highlights) {
         if (hasMesh)
@@ -724,7 +760,7 @@ Image renderInspection(const InspectionScene& scene, const InspectionStyle& styl
                     withAlpha(highlight.color, 0.55f));
             }
         for (const auto& [a, b] : highlight.segments)
-            raster.line(a, b, 2.4f * pixel, highlight.color, DepthMode::Ghost, 0.35f, 0.003f);
+            raster.line(a, b, 2.4f * pixel, highlight.color, highlight.occluded ? DepthMode::Test : DepthMode::Ghost, 0.35f, 0.003f);
         for (const Vec3& point : highlight.points)
             raster.disc(point, 4.0f * pixel, highlight.color, DepthMode::Ghost, 0.4f);
     }

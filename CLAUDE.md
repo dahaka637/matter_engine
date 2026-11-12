@@ -65,6 +65,9 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 ## Build & Test
 
+Para mapas com TrenchBroom, leia `docs/MAPAS_TRENCHBROOM.md` e
+`tools/maps/AGENTS.md`. As fontes ficam em `assets/maps/src`.
+
 _Add your build and test commands here_
 
 ```bash

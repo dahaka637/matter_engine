@@ -158,6 +158,15 @@ SurfaceMaterial makeGrass() {
     return value;
 }
 
+// (12/11 12h50, a fase 2 do fogo do levantar: o chao escorregadio) A grama molhada - o atrito ~metade da seca.
+SurfaceMaterial makeWetGrass() {
+    SurfaceMaterial value = makeGrass();
+    value.id = "wet_grass";
+    value.displayName = value.id;
+    value.contact = { 0.45f, 0.35f, 0.075f, 0.015f };
+    return value;
+}
+
 SurfaceMaterial makePlastic() {
     SurfaceMaterial value = baseMaterial("plastic", 950.0f);
     value.contact = { 0.48f, 0.34f, 0.022f, 0.24f };
@@ -354,6 +363,7 @@ void MaterialLibrary::registerStandardMaterials() {
     registerMaterial(makeSand());
     registerMaterial(makeConcrete());
     registerMaterial(makeGrass());
+    registerMaterial(makeWetGrass());
     registerMaterial(makePlastic());
     registerMaterial(makeBrick());
     registerMaterial(makeWood());

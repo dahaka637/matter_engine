@@ -464,8 +464,9 @@ CookedDynamicCollision3D PhysicsEngine3D::cookDynamicCollision(
 }
 
 std::shared_ptr<const PhysicsMesh3D>
-PhysicsEngine3D::cookStaticTriangleMesh(const MeshData3D& mesh,
+PhysicsEngine3D::cookStaticTriangleMesh(const MeshData3D& mesh, std::string_view materialId,
     const StaticTriangleMeshCookingSettings3D& settings) {
+    if (materialId.empty()) throw std::invalid_argument("Static mesh material cannot be empty");
     validateTriangleMesh(mesh);
     // A tessellacao continua: o motivo original (triangulos enormes pioram a
     // geracao de contatos) vale para qualquer narrow phase, e ela e geometria
@@ -487,14 +488,12 @@ PhysicsEngine3D::cookStaticTriangleMesh(const MeshData3D& mesh,
             tessellated.indices[index + 2]));
     }
 
-    // O material fica vazio: a resolucao de material por ponto de contato
-    // acontece pela shape do corpo (ver JoltSurfaceMaterial), e uma malha
-    // estatica do mundo carrega um material so, atribuido na criacao do corpo.
+    // MeshShape resolves contact/raycast materials from its own immutable material list.
     // O construtor com lista indexada ja chama Sanitize(), que remove
     // triangulos duplicados e degenerados - o papel que eWELD_VERTICES tinha no
     // cooking do PhysX para superficies importadas com costuras repetidas.
     const JPH::MeshShapeSettings shapeSettings(std::move(vertices),
-        std::move(triangles));
+        std::move(triangles), {new JoltSurfaceMaterial(std::string(materialId))});
     const JPH::ShapeSettings::ShapeResult result = shapeSettings.Create();
     if (result.HasError()) {
         throw std::runtime_error(

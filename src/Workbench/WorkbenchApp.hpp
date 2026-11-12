@@ -68,6 +68,7 @@ private:
     enum class Screen {
         MainMenu,
         Laboratory,
+        LaboratoryMaps,
         ObjectInspector,
         ReinforcementLearning,
         PlayerInspector,
@@ -85,6 +86,12 @@ private:
         RHI::BufferHandle vertexBuffer;
         RHI::BufferHandle indexBuffer;
         RHI::TextureHandle albedoTexture;
+        RHI::TextureHandle metallicRoughnessTexture;
+        RHI::TextureHandle normalTexture;
+        RHI::TextureHandle emissiveTexture;
+        Vec3 emissiveFactor;
+        float normalScale = 1.0f;
+        float parallaxDepth = 0.0f;
         std::uint32_t indexCount = 0;
         std::vector<GpuMeshLod3D> lods;
         float metallic = 0.0f;
@@ -266,6 +273,9 @@ private:
     void loadAnimationCatalog();
 
     void drawMainMenu();
+    void drawLaboratoryMaps();
+    void selectLaboratoryMap(bool indoor);
+    void loadAuthoredLaboratoryMap(Renderer& renderer);
     // A tela "Objetos" (Workbench/ObjectInspector).
     void drawObjectInspector(Renderer& activeRenderer);
     // A tela "Aprendizado por Reforco" (Workbench/ReinforcementLearning).
@@ -328,7 +338,7 @@ private:
         std::span<const Frustum3D> lightFrustums, bool temporalHistoryValid);
     void finishInflatedBallFrame();
     // A trave com rede do mapa (GoalRuntime.cpp).
-    void createLaboratoryGoal(Renderer& renderer, Vec3 goalLineCenter, float facingYaw);
+    bool createLaboratoryGoal(Renderer& renderer, Vec3 goalLineCenter, float facingYaw, bool futsal = false);
     void releaseLaboratoryGoal(Renderer& renderer);
     void captureLaboratoryGoalNet();
     void appendLaboratoryGoalRenderables(std::vector<MeshRender3D>& meshes, const Frustum3D& cameraFrustum,
@@ -736,6 +746,7 @@ private:
     // contato (o fisico parcial), a pancada forte que vai ao fisico (m/s) e os
     // bonecos soltos tambem no padrao, com as mesmas trocas do controlado.
     bool m_contactBridge = true;
+    bool m_protectiveFallBeforeGetUp = false;
     float m_contactBridgeHardDeltaV = 1.2f;
     bool m_looseDefaultLocomotion = true;
     // O impulso extra do carrinho (%, 29/10).
@@ -1020,7 +1031,10 @@ private:
     CharacterMotorSettings3D m_avatarCharacterSettings = athleteAvatarMotorSettings3D();
     std::vector<LaboratoryMapPart> m_laboratoryMapParts;
     std::vector<PhysicsBodyHandle3D> m_laboratoryMapBodies;
-    LaboratoryGoal m_laboratoryGoal;
+    std::vector<LaboratoryGoal> m_laboratoryGoals;
+    std::vector<LightRender3D> m_laboratoryMapLights;
+    bool m_laboratoryIndoor = false;
+    std::array<UiTexture, 2> m_mapPreviews;
     std::vector<RHI::TextureHandle> m_laboratoryMapTextures;
     OceanVolume3D m_laboratoryOcean;
     bool m_laboratoryOceanEnabled = false;

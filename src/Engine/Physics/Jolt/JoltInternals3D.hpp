@@ -18,6 +18,7 @@
 #include <Jolt/Physics/Body/BodyID.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/GroupFilterTable.h>
+#include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 #include <Jolt/Physics/PhysicsStepListener.h>
@@ -152,6 +153,15 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         // A auto-colisao (GroupFilterTable) vive dentro das settings.
         JPH::Ref<JPH::Ragdoll> ragdoll;
         std::vector<JPH::BodyID> links;
+        // (11/11) Os links com colisores presos a ossos (os dedos da mao): o composto que muda, a parte de cada extra preso
+        // (o indice no composto e o do extra) e a rotacao atual de cada osso (setRagdollBoneRotations).
+        struct PosableShape {
+            std::uint32_t link = 0;
+            JPH::Ref<JPH::MutableCompoundShape> compound;
+            std::vector<std::pair<std::uint32_t, std::uint32_t>> parts;
+            std::vector<Quaternion> rotations;
+        };
+        std::vector<PosableShape> posableShapes;
         // Escala do atrito dos contatos do ragdoll (carrinho: o corpo desliza
         // na grama).
         float frictionScale = 1.0f;

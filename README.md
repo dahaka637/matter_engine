@@ -43,6 +43,9 @@ símbolos de diagnóstico. Para uma build com asserts e validações adicionais:
 ./tools/build.sh Debug
 ```
 
+`tools/run.sh` prefere a build otimizada mesmo quando a Debug foi compilada
+depois. Para investigar na Debug, execute `build-linux/MatterEngine` diretamente.
+
 Verificação completa da build otimizada:
 
 ```bash

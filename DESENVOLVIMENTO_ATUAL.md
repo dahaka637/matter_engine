@@ -5,7 +5,550 @@
 > registrar não apenas *o que* mudou, mas também *por que*, como foi validado e
 > quais limitações ainda existem.
 
-**Última atualização:** 29 de outubro de 2026
+**Última atualização:** 9 de novembro de 2026
+
+## Frente de mapas: reconstrução do campo, arquibancada e cercas (09/11)
+
+Usuário **rejeitou integralmente** a primeira autoria: má qualidade dos pilares,
+orientações e acabamentos; campo/arquibancada distantes das fotos. Ordenou apagar
+e refazer do zero, em etapas. Fonte, backups e prévias daquela versão removidos;
+referências originais, Galpão01 e engine/RL preservados.
+
+Escopo EXCLUSIVO: **campo, arquibancada descoberta com bloco adjacente de dois
+andares 5×20m e cercas**. Sem ruas, calçadas externas, casas, rio, mobiliário ou
+vegetação. Bloco orientado com20m ao longo da lateral e5m de profundidade;
+alturas e vãos são leitura das fotos, não levantamento. Degraus descobertos,
+vigas/pilares posteriores aparentes, empenas vazadas, verde claro/escuro,
+alambrado em mureta com postes inclinados. Cobertura metálica inventada removida.
+
+Autoria em `assets/maps/src/campo_grande_01.map`, ferramentas em `tools/maps/`.
+Testes técnicos e prévias reais do MAP ficam separados da aprovação visual.
+**Sem alteração/importação/testes/builds da engine e sem interferir no RL.**
+Documentação: `docs/MAPA_CAMPO_GRANDE_01.md`; controle reaberto: `matter_engine-niz`.
+Vegetação posterior, quando houver pack: `matter_engine-bdi`.
+
+## Estado vigente: professor reprovado, treino pausado (03/11)
+
+Usuário observou apenas ficar parado e cair. Confirmado na avaliação5200:
+locomoção0,001704m/s,sem cair0/32; início4582 era0,879m/s e31/32.
+Equilíbrio IDLE pose0,686->0,329,coluna0,719->0,238; levantar em movimento
+100%->87,5%. Levantar comum100%,evitar37,5%->50%: não confundir retenção
+parcial com sucesso global. Serviço parado/salvo5200,backup da regressão
+preservado. NÃO retomar este candidato como se estivesse validado.
+A perda supervisionada articular caiu mas a marcha colapsou: não é evidência
+suficiente de professor fisicamente executável. Causa exata ainda não isolada;
+flags KL encerram atualizações dos dois atores com frequência, normalizador de
+recuperação continua adaptando; separação de pesos não garantiu retenção.
+Sem rollback silencioso, sem nova calibração e sem treino adicional nesta leitura.
+Relatório: checagem/saidas/ab_codex/regressao_professor_0311.json.
+
+## Frente atual: professor por fase, trote4 e recuperação separada (03/11)
+
+Pedido vigente substitui a etapa sem professor abaixo. Treino pausado e salvo4581;
+backup `ultimo_antes_professor_fase_4581.pt`. Validação limitada numa cópia executou
+20 atualizações pequenas (32mundos/2threads), checkpoint4601 finito instalado em
+`rl_locomocao_livre`. **Retomado por ordem do usuário para deixar à noite:**
+PID57446,5threads,512mundos,GPU,4601->4620 confirmado (~4693decisões/s),
+checkpoint/export novos gravados sem pausar; CPU~76C/GPU58C na conferência.
+Vigia3s e monitor30min ativos; bloqueio de suspensão ativo. Sem religamento
+automático após parada térmica. Continuar na UI mantém wrapper
+seguro + vigia + monitor30min; serviço canônico atualizado,5threads,Restart=no.
+Não promover ao jogo; não religa automaticamente após calor.
+
+- Um arquivo, ator/crítico com ramos independentes recuperação/locomoção e
+  exploração separada. Observação308 inclui bit de habilidade; export v6/39ações,
+  runtime e viewer aceitam ambos os ramos e preservam layouts anteriores.
+- Recuperação ator/crítico/normalizador/ruído restaurados do original2679;
+  locomoção parte do4581. Erro máximo na migração de saídas recuperação4,77e-7.
+  Estatística só usa recuperação; amostras locomotoras não mudam seus pesos,
+  critic/ruído ou momentos Adam. KL e clipping por habilidade; currículo80/20 e
+  âncora2 preservados. Recuperação continua aprendendo suas próprias tarefas.
+- Professor usa os oito clipes de trote existentes, alvos articulares para a
+  próxima decisão e nota de pose sincronizados por fase. Peso supervisionado20,
+  influência1 manual; sem aposentadoria por tempo. Não é AMP genéricoB21, não
+  escreve transforms nem obriga fisicamente100% das poses. Pode desligar professor
+  posteriormente mantendo fase/ciclos persistidos e modelo autônomo.
+- Meta4m/s em todos os rumos; velocidade/progresso contínuos, maior nota perto
+  da meta, custo de inação, desvio/peito e esforço físico. Removido detector/regras
+  de distância/tempo de passada e seus bônus. Sem recompensa AMP locomotora.
+- Equilíbrio parado sem empurrões. IDLE/coluna só após estabilidade física>=0,5s,
+  velocidade/rotação baixas, sem contatos perturbadores e1,5s após último empurrão.
+  Sob perturbação vale equilíbrio funcional, sem impor IDLE. Evitar mantém pushes.
+- Perda/nota do professor e congelamento por ramo no log/monitor. Histórico antigo
+  arquivado; gráficos atuais iniciam na etapa nova para não misturar definições.
+- Native n1/profile1job passaram;9testes Python e468checks C++ passaram. Treinador
+  completo20updates + avaliação4582: levantar100%,movimento100%,evitar37,5%,
+  equilíbrio sem pushes100%,poseIDLE0,686/coluna0,719. Evitar ainda é fraco; estes
+  números são ponto inicial, não prova de melhora ou retenção futura. Locomoção
+  média inicial0,879m/s com meta4: marcha ainda não qualificada visualmente.
+- Laboratório real carregou4601,308/39,25exercícios,curva nova e render20s;
+  rumo6 pediu4m/s e mediu1,039m/s. Serviço permaneceu parado; sem prova de marcha boa.
+- Manifesto vigente `checagem/saidas/ab_codex/trote_professor_fase_0311.json`;
+  baseoriginal2679 preservada. BuildDebug/suíte ampla não executados nesta etapa
+  por escopo/limite térmico. Arquitetura possui falhas já existentes em
+  AnimatedGetUp3D incluindo Engine/Character; não alteradas aqui.
+
+## Histórico: locomoção livre, sem professor (03/11)
+
+
+**Retomada segura na UI:** seleção fixada em rl_locomocao_livre, sem combo/atalhos
+para outros modelos; modos ocultos. Continuar usa run.json.comando apontando
+checagem/continuar_locomocao_livre.py: inicia vigia+monitor30min, exige heartbeat
+fresco/sensores válidos e margem3C abaixo do limite de parada, então inicia
+matter-rl-locomocao-livre.service com configuração canônica intacta. Restart=no,
+proteção/emergência preservadas; não religa após calor sem clique. Wrapper testado
+com mocks (frio inicia unidade certa/quente bloqueia), sem iniciar treino real.
+Build profile atualizado; reabrir aplicativo. Não substituir comando wrapper do
+run.json pelo comando bruto; comando canônico também está no manifesto/serviço.
+
+
+**Estado conferido:** serviço ativo,PID41744,atualização/export2840,5threads,
+CPU76,25C. Configuração efetiva:locomoção.2/âncora2/estilo locomotor0; sem bancoB21.
+
+**Atualização de retenção:** avaliação periódica2750 completou após correção da
+interface: levantar78,125%, movimento43,75% (queda material versus baseline).
+Não declarar habilidades antigas retidas no candidato. Original2679 segue intacto.
+Após essa leitura, currículo restaurado80%habilidades antigas/20%locomoção,
+âncora do ator original0,2->2,0; recompensa nova de marcha preservada. Serviço
+retomado do último checkpoint; PID/iteração atuais no manifesto. Sem nova promoção;
+reavaliar retenção após estabilização, sem transformar testes de finitude em prova
+comportamental. Os valores40/60 eâncora.2 abaixo são da configuração inicial.
+
+
+**Ordem vigente implementada: remover cópia e aprender marcha própria.**
+- Novo candidato `rl_locomocao_livre` do original2679 (sem herdar o teste de imitação
+  3900), original/hash preservados e candidato antigo3900 arquivado. Serviço user
+  persistente `matter-rl-locomocao-livre.service`,PythonPID41744,5threads,Nice5,
+  Restart=no, bloqueio idle/sleep e vigia térmico mantidos. Não habilitado no boot.
+- Removidos coletor B21/professor_amp, CLI/banco/discriminador do professor,
+  inicializações B21, snapshots e conversor AMP exclusivos dessa transferência.
+  Dados antigos preservados para auditoria. Locomocão livre começa de pé/IDLE,
+  oito direções uniformes, sem fase, clipe, AMP ou professor locomotor; parada
+  aleatória no meio desativada. AMP anterior apenas para recuperação/equilíbrio;
+  não confundir com a imitação B21 descartada. Snapshot/export307observações39ações.
+- Recompensa por velocidade linear até a pedida0,8–1,4m/s (peso4), excesso custa;
+  progresso parcial ganha menos que velocidade alvo. Bônus8 por pouso válido,
+  ponderado pelo avanço real e velocidade; velocidade recebe só25% sem passo
+  válido nos últimos0,8s. Inatividade custa0,5 enquanto houver comando, também
+  caído/arrastando: cair não serve para escapar desse custo; sem multa extra de
+  queda/sem bônus de sobrevivência, episódio continua para tentar levantar.
+- Passo real: voo0,10–0,60s, lift>=3cm, pé avança>=12cm no rumo, COM>=5cm;
+  outro pé apoia por>=50% do voo, alternância obrigatória. Saltos sem apoio,
+  arrastar, micropassos e agitar pernas parado não recebem bônus. Não é molde de
+  animação nem garantia de convergência; critérios são mensuráveis e ajustáveis.
+- Visão mantém peito (tolerância10graus até zero40); trajetória tolera8graus até
+  zero30; diagonal45graus e virar peito90graus zeram bônus e custam. Custo idle
+  usa progresso validado: movimento errado/rastejo não evita punição por inação.
+- Currículo40%locomocão/60%habilidades antigas, âncora do ator2679 peso0,2,
+  ruído0,18/suave-loco0,1/KL0,04. Comando/serviço/PID em
+  `checagem/saidas/ab_codex/locomocao_livre_0311.json`; checkpoint/export antigos
+  não promovidos nem substituídos no jogo.
+- Lab profile recompilado: botão **Locomoção livre**, oito trotes/curvas próprias,
+  política/status com recarga automática. Teste real lev_trote_6 carregou run
+  correto2720/alvo1,1m/s e renderizou; reabrir pelo tools/run.sh.
+- Native n1+profile compilaram1job,468checks C++ e6Python passaram, smoke4updates
+  2679->2683 finito/sem estadoB21; original intacto. Falha de interface durante
+  remoção retirou episode_seconds/policy_dt: restaurados, teste nativo cobre
+  episódio completo/feedback7colunas. Parou na avaliação2700 com checkpoint salvo;
+  corrigido e retomado. Sem suite Debug/ctest ampla; arquitetura preexistente já
+  documentada, sem nova aprovação visual de marcha desejada.
+- Treino real2720/~5847dec/s/CPU74C:35eventos de passo real no lote,8,2% do tempo
+  com passo recente, movimento ainda ruim/inicial. Não declarar marcha adquirida.
+  Monitor30min retargetado ao run livre; inclui passos/tempo com passos e alerta
+  se zero. Novo baseline2679; analisar ganho por direção e recuperação antes de
+  promover. Avaliação2750 completou; resultado/regressão e ajuste de retenção registrados acima.
+
+
+**Histórico: candidato com professor pausado em3900.** Usuário só aceita
+cópia B21 se for possível impor100% dos movimentos; AMP atual recompensa
+semelhança, não satisfaz esse critério. Serviço matter-rl-unificado parado/salvo,
+sem reinício; rl_final original2679 preservado. Não retomar/recalibrar imitação sem
+novo acordo sobre método. Professor100% nos argumentos era peso da recompensa,
+não autoridade dos motores nem cópia física exata. Proposta seguinte deve explicar
+a diferença entre prescrever alvos de juntas e garantir trajetória sob física.
+
+
+**Preparação noturna anterior (03/11,05h09):** candidato salvo3125, snapshot completo
+em `~/.local/share/matter-engine/rl/checagem/saidas/noite_unificado_0311/`
+(`inicio.pt`, `policy_inicio.mrlpolicy`, `inicio.json` com métricas/configuração).
+- Incentivo temporário de tentar movimento correto1->2; professor/RSI1, tarefa0,
+  alinhamentos e currículo80/20 mantidos. Sem bônus por ficar parado/multa de queda
+  na locomocão ativa. Não é mecanismo que obriga a cópia exata do B21.
+- Treino migrado para serviço user transitório `matter-rl-unificado.service`,
+  PythonPID28828/inibidorPID28825,5threads,Nice5,Restart=no. Trabalhador pertence ao
+  cgroup do serviço, independente do chat/terminal. Suspensão/idle bloqueados via
+  systemd-inhibit enquanto o serviço roda; não bloqueia desligamento térmico.
+  Linger=no: manter login gráfico aberto (pode bloquear tela), não fazer logout.
+- Serviço não reinicia após falha/parada/calor; guardas continuam desativados.
+  Vigia vivo a cada3s, reconheceu este Python como carga protegida. Limites atuais
+  CPU85parar/87desligar até12h, depois83/85 conforme regra existente; GPU80/83.
+  Disco127GB livres; checkpoint periódico50updates, export10updates, salvamento
+  no SIGTERM. Não iniciar builds/benchmarks/3Dpesado durante a noite.
+- Monitor30min read-only retargetado ao candidato, agora também registra tentativa,
+  alinhamento/recompensa e perda do professor.5checks do monitor passaram. Não há
+  calibração autônoma por IA; evolução/retirada do professor só após avaliação.
+- Inicialização confirmada3140:5,79mil decisões/s,CPU69C; efeito comportamental
+  ainda não avaliado. Lab existente segue o mesmo run/policy atualizado.
+  Comparar manhã com baseline3125 e original2679, usando mesmos seeds e cenários;
+  não confundir métricas com largadas RSI com domínio a partir do parado.
+- Parada manual segura: `systemctl --user stop matter-rl-unificado.service`.
+  Comando integral/PID/unidade e histórico em
+  `checagem/saidas/ab_codex/unificado_b21_0311.json`. Rastreio matter_engine-pzf.
+
+
+**Calibração de direção/visão (mantida; incentivo atualizado abaixo):** principal
+continua congelado2679; candidato salvo3015 (backup
+`ultimo_antes_calibracao_rumos_3015.pt`) e retomado PID27893/5threads.
+- Mantido professor100%/RSI100% e currículo80/20; `--tentativa-loco 1.0` temporário.
+  Só locomocão livre com comando ativo: prêmio=(estilo ponderado+tarefa ponderada
+  +tentativa)*sqrt(progresso relativo)*portão; parado não recebe estilo/sobrevivência,
+  queda não recebe prêmio nem multa de queda. Tentativa não exige classificador
+  standing: sem tronco no chão, pelve>.5m/peito>.75m. Custos de limites/tranco mantidos.
+- Portão mede COM e peito físico (Chest), não só pelve. Visão: tolera10graus,
+  reduz até30graus/zero; desvio do deslocamento: tolera8graus, reduz até22,5graus/zero.
+  Erros também têm custo; diagonal45graus, peito90graus e marcha inversa não rendem.
+  AMP passa pelo mesmo portão mesmo com peso de tarefa0: corrigida brecha do teste
+  estilo puro, que desligava as restrições anteriores. Incentivo é deslocamento
+  correto inicial, não ruído de ações/agitar membros sem sair do lugar.
+- Native expõe feedback5colunas por transição (along/across/erro peito/pose utilizável/
+  velocidade pedida), capturado antes do reset terminal; observações307/ações39 e
+  export independente preservados. Python calibra somente recompensa do currículo
+  livre; recuperação e âncora antigas mantidas. Estatísticas loco_tentativa,
+  loco_alinhamento,loco_recompensa adicionadas ao log.
+- Native n1 compilado1job;4testes Python passaram (tentativa/parado/queda/peito/
+  diagonal/inversão, banco/discriminador/retomada/telemetria). Smoke4updates3015->3019
+  terminou0; pesos finitos incluindo professor/âncora. Sem suite ampla ou build UI:
+  adição nativa é telemetria exclusiva do treinador, sem mudança do contrato da
+  política; laboratório existente recarrega pesos deste mesmo run. Resultado
+  comportamental e retenção de longo prazo continuam pendentes. Nenhuma promoção.
+
+
+**Ajuste anterior — teste professor100%, solicitado pelo usuário:** salvo2922,
+backup `ultimo_antes_professor100_2922.pt`, retomado PID26160/5threads.
+Somente locomoção: peso estilo B21=1, tarefa=0, largadas em estados físicos do
+professor=100%; tranco.25/limites físicos preservados. Currículo80/20 e âncora dos
+exercícios anteriores mantidos. Banco/discriminador continuam só no treinamento.
+Informado ao usuário: AMP imita estilo/distribuição, não obriga copiar movimentos
+exatamente quadro a quadro. Este teste não implementa rastreamento supervisionado
+de trajetória; desempenho/direção sob estilo puro precisam ser observados.
+
+
+**Laboratório conferido após ajuste:** executável profile mais recente que fontes
+UI; teste real do visualizador com `rl_unificado_b21`/`lev_trote_0` passou exit0.
+Carregou export2880 (307/39), detectou PID25048 vivo/treinando,25exercícios incluindo
+8trotes, histórico e curva individual do cenário. Imagem lateral20s inspecionada.
+Log `/tmp/matter-unificado-lab-real.log`, capturas `inspecao/rl/0311_unificado_atual/`.
+Treino suspenso apenas durante checagem curta e continuado em finally; sem rebuild.
+UI recarrega pesos/status a cada2s. Reabrir app profile, botão Unificado.
+
+
+**Ajuste anterior — impulso inicial da locomoção:** salvo2834
+(backup `ultimo_antes_impulso_locomocao_2834.pt`) e retomado PID25048,5threads.
+Somente na locomoção: estilo do professor0,30->0,60, tarefa0,70->0,40,
+largadas físicas em movimento50%->85%, custo de tranco0,50->0,25.
+Currículo80/20, recuperação/âncora e limites físicos preservados; queda não encerra
+exercício. Incentivo por AMP, sem impor trajetória quadro a quadro ou aplicar
+forças do professor. Ajuste inicial reversível; ainda requer avaliar marcha e
+retenção antes de reduzir o professor. Comando/histórico no manifesto do candidato.
+
+
+- Pedido do usuário: começar agora a unificação; B21 deve ser professor temporário,
+  descartável sem dependência na inferência. Principal `rl_final` pausado/salvo2679;
+  cópia `base_rl_final.pt` preservada e hash conferido. Não promover candidato ainda.
+- Único treino ativo: `rl_unificado_b21`, retomado2683, PID22965,5threads. Comando
+  integral/PID em `~/.local/share/matter-engine/rl/checagem/saidas/ab_codex/unificado_b21_0311.json`.
+  80% do currículo anterior e20% locomocão:8direções, velocidade0,8–1,2m/s;
+  50% das largadas de locomocão usam estados físicos do professor, demais de pé.
+- B21 congelado92217, ajuda física0:30078transições válidas de128trajetórias,
+  16por direção. Banco `checagem/professor_b21_unificado/demonstracoes.npz`,
+  relatório e cópia do professor na mesma pasta. Velocidade comandada1,5m/s;
+  referência do aluno usa velocidade realmente realizada (~0,8–1,1m/s).
+- Professor exclusivamente no treinamento: discriminador AMP separado para
+  locomocão ativa; recuperação usa AMP anterior. Sem executar B21/partner no aluno,
+  sem rastrear clipes nos novos trotes. Actor exportado continua307observações/
+  39ações e funciona sem banco/B21. Âncora congelada do ator2679 nos exercícios
+  antigos (`--preservar-peso .1`), persistida nas retomadas; KLmáximo.04.
+- Laboratório profile atualizado: botão `Unificado (professor temporário)` e8trotes
+  individuais, curvas de velocidade/sem cair por direção, dados do run selecionado.
+  Reabrir pelo `tools/run.sh`. Não houve nova aprovação visual do usuário.
+- Verificação: native n1 e app/teste profile compilados sequencialmente;462checks
+  da tela e3testes Python do professor passaram. Smoke4updates finitos, checkpoint/
+  export independente conferidos. Mesmo benchmark rápido32episódios/condição:
+  levantar100%->100%, movimento96,875%->96,875%, sem cair93,75%->93,75%;
+  amostra curta, insuficiente para afirmar retenção de longo prazo ou melhora.
+- Treino real já avançou2720:5,15mil decisões/s; CPU74,5C, vigia ativo.
+  Oito direções com dados reais; velocidade inicial0,027–0,121m/s, ainda não domina
+  trote. Métricas online de recuperação oscilam; comparar checkpoints com mesma
+  semente antes de promover. Monitor somente leitura30min retargetado para este
+  candidato; inclui as8direções. Guardas de reinício seguem desativados.
+- Retirada futura: reduzir gradualmente peso de estilo/RSI do professor após
+  domínio medido, depois remover `--professor-banco`, mantendo `--locomocao-livre`.
+  Sem banco, modo livre desliga imitação locomotora e usa tarefa pura; recuperação
+  e âncora preservadas. Não retirar apenas por tempo decorrido. Jogo ainda não
+  substituiu B21 pelo candidato. Rastreio em progresso: matter_engine-pzf.
+- Suite Debug/ctest ampla não executada, conforme prioridade de rapidez do usuário;
+  arquitetura continua acusando includes preexistentes de AnimatedGetUp3D para
+  Character (confirmados no HEAD). Não executar build/testes pesados junto do treino.
+
+## Histórico — ordem anterior: somente rl_final, pose IDLE alerta (03/11, 01h35)
+
+- B21 parada/salva92217. rl_final salva994 e retomada PID87472,3threads.
+- standingReward quieto: pose completa0,35->0,70; base0,05, velocidade0,05,
+  coluna0,20; maximo1,0. Recompensa fora da quietude e fase de levantar preservadas.
+- Sem troca-de-pe/evitar-com-parceiro;15% dos comecos de pe para praticar IDLE.
+  Guard configurado igualmente, continua desativado. Backup ultimo_antes_pose_idle_0311.pt.
+- Build somente matter_tracking_native n1 passou. Check curto real:2corpos,
+  30passos com pesos994; observacoes e recompensas finitas. Sem suite ampla.
+  Melhora visual depende do aprendizado; nao foi declarada como ja adquirida.
+
+## Laboratorio RL atualizado e dois principais ativos (03/11, 01h25)
+
+- Pedido prioritario do usuario: interromper validacao ampla e colocar B21 e
+  rl_final principal para treinar. B21 retomada do checkpoint92177, PID74453,
+  duas threads, limite92605. rl_final retomada da965, PID84154, duas threads,
+  parametros preservados de guarda_rl_final.sh. Candidato KL1005 isolado,
+  sem promocao. CPU73,5C na retomada; vigia ativo, decisao a cada30min.
+- Laboratorio seleciona o treino mesmo com outro socket ativo; politica,
+  configuracao, log e graficos do levantar seguem a selecao. Prioriza treinos
+  vivos; estado usa PID validado, nao log recente. Salvar B21 segue pelo socket,
+  nao SIGUSR1. Equilibrio parado visivel, graficos de ambientes usam suas proprias
+  metricas e avaliacao da mesma atualizacao atualiza o ultimo ponto.
+- Build otimizada pronta;350checks da tela passaram. Smokes com B21 real92177
+  e candidato KL1005 passaram; imagens inspecionadas. Logs/capturas em
+  inspecao/rl/0311_laboratorio. Arquitetura acusa includes preexistentes de
+  AnimatedGetUp3D para Engine/Character (confirmados no HEAD).
+- Debug amplo interrompido no job43/220 a pedido do usuario; suite ampla nao
+  executada nesta etapa. Nao compilar/testar pesado com estes treinos ativos.
+  Rastreio: matter_engine-fju fechado; supervisao matter_engine-amj ativa.
+
+## Retomada do RL e fechamento do A/B (Codex, 03/11)
+
+- Continuidade do Claude: quatro braços encerrados, B21 em 92255 e rl_final em
+  1005; principais preservados e guardas de reinício continuam desativados.
+- Benchmarks concluídos: B21 17x64 episódios por braço; rl_final ampliada para
+  512 por cada uma de quatro condições críticas e comparada com `ultimo_bom`
+  (950). Sem ganho consistente; nenhuma promoção aprovada. Dados em
+  `~/.local/share/matter-engine/rl/checagem/saidas/ab_codex/`.
+- Falha encontrada no vigia: os scripts `bench_b21.py` e `bench_rl_final.py`
+  escapavam da identificação de carga pesada. Incluídos explicitamente; os 17
+  casos de `python3 tools/sistema/teste_vigia.py` passaram e o serviço foi
+  reiniciado. Limites térmicos existentes preservados.
+- Snapshot separado do `ultimo_bom` da rl_final e hashes das entradas preservados.
+  Rastreio desta retomada: `matter_engine-jt4`. Nenhuma compilação executada.
+- B21 retomada da 92105, configuração preservada, duas threads, limite 92605.
+  Candidato `ab_rlf_kl004_0311` iniciado da mesma 965 do controle
+  `ab_rlf_semtroca`: apenas `--kl-max 0.04` adicional, uma thread, limite 1005.
+  Controle já treinado reutilizado; principal rl_final preservada em 965.
+  Comandos/PIDs/hashes em `retomada_0311.json` na pasta dos resultados.
+- Não usar o tremor agregado dos benchmarks B21: inclui sentinela -1 de
+  ausência de medida. Decisão usou quedas e velocidade. Revisão visual,
+  benchmark do candidato KL e próximos A/B de recompensa continuam pendentes.
+
+## Galpao 01 no Laboratorio e autoria TrenchBroom (Codex, 02/11)
+
+- Pedido: finalizar o galpao, integrar mapas editados no TrenchBroom, cards
+  no Laboratorio com previews reais, grama com relevo, linhas, traves e revisao.
+  O usuario reforcou materiais fisicos/atrito da bola e personagem e luzes
+  direcionadas. Campo grande continua somente em pre-producao; RL intocado.
+- Novo seletor mantem Dev Map e Galpao 01. O runtime importa malhas, texturas,
+  materiais, nascimentos, luzes e marcador de campo. Abrir um card descarrega
+  a cena anterior e relê os assets; erros nao publicam carga parcial.
+  A build prepara o GLB automaticamente. MatterMapVerify agora e target CMake.
+  Cards centralizados a pedido posterior. Correcao do nascimento: o raio antigo
+  comecava50m acima e atingia o telhado; agora consulta o piso perto do marcador,
+  abaixo da cobertura, com seu yaw. Personagem dentro do campo conferido no Vulkan.
+- Grama: albedo original criado com imagegen em assets/maps/materials/grass,
+  normal/altura e roughness derivados, tile 1m, sRGB para cor e dados lineares.
+  Normal mapping e parallax occlusion de ate 12 passos, reduzido a distancia;
+  relevo visual sem alterar colisao plana. Receitas/fontes preservadas.
+- Campo 40x20: demarcacoes FIFA futsal (linhas 8cm, areas, circulo, marcas,
+  escanteios e substituicoes), duas traves 3x2m/tubos 8cm e redes fisicas,
+  reutilizando o gerador com receita trave_futsal.json. Portao permanece fechado.
+- Correcao na fisica: MeshShape descartava o material da superficie no cooking.
+  O ID agora e explicito/imutavel na malha e validado na criacao do corpo;
+  consumidores e testes migrados. A bola consulta a lista de materiais de mesh,
+  evitando GetMaterial(SubShapeID vazio), invalido para malhas com materiais.
+  Teste no GLB real: rolamento7,394m, quique0,776m de2m; solado desliza0,263m
+  na grama/0,286m concreto. Personagem apoiado; duas traves/redes independentes.
+- Luzes: 24spots900cd para baixo, cones totais90/120graus, alcance20m;
+  3spots60cd nos bancos, inclinacao75graus, cones70/110, alcance5m.
+  Fonte MAP/gerador/FGD/compilador/carregador concordam. Emissao funciona no Vulkan.
+  Sem Sol/Lua interiores. Sombras point/spot e GI calculada continuam ausentes;
+  o preenchimento indireto e uma aproximacao ambiental, documentada no guia.
+  Pedido posterior: areas sem luz direta devem continuar escuras mas legiveis;
+  irradiancia interior4,5 e visibilidade minima0,45, sem mudar os cones.
+- O usuario relatou desligamento abrupto. Reboot confirmado, sem diagnostico
+  termico conclusivo no journal. Validacao passou a ser sequencial, build-j1,
+  prioridade reduzida, smokes curtos30FPS e monitoramento. Espera ativa yield
+  foi substituida por SDL_DelayNS. O usuario depois pediu retirar o teto60FPS:
+  MATTERENGINE_MAX_FPS=0 agora e o padrao (sem limite adicional, V-sync conforme
+  tela); apenas meus testes mantem30FPS. Simulacao120Hz preservada.
+  Nas conferencias curtas as temperaturas da CPU ficaram abaixo de80C;
+  isso nao demonstra a causa do desligamento nem e certificacao termica.
+- Capturas e logs persistentes em inspecao/mapas/galpao_01/integracao;
+  PNGs dos cards em assets/maps/previews. Debug completo passou; AuthoredMaps
+  passou novamente3,96s apos correcao de spawn. Suite geral28/38 em1186,70s
+  com taskset1core/timeout180. Falhas retarget Foundation/Character, baseline
+  AdaptivePhysics, limite ObjectPhysics, TrainingEvolution vetor vazio,
+  Articulation forca nao explicada; quatro timeouts (LocomotionTraining,
+  PlayerModel, ObjectInspector, Athlete). Causas ainda nao todas isoladas,
+  registradas em matter_engine-cio; nao atribuir todas ao codigo anterior.
+- Usuario relatou lag massivo em qualquer colisao: personagem na parede/trave
+  e bola no poste. Launcher escolhia Debug sem otimizacao por ser a build mais
+  recente. Smoke com corpo/bola:16,98FPS medios, update30,92ms no ultimo quadro,
+  fisica5,25ms no ultimo tick. RelWithDebInfo compilada. Regressao no GLB real
+  passou nas duas builds: corpo/cerca P95 8,843->0,321ms, corpo/trave8,030->0,293ms;
+  bola/postes max0,539->0,023ms. A Debug ultrapassava8,33ms/tick, antes do resto
+  da atualizacao. Launcher agora prefere otimizada mesmo com Debug mais recente;
+  fallback Debug so quando nao ha profile. Se quiser diagnostico, abrir o binario
+  Debug diretamente. Autochecagem do launcher passou (preferencia/fallback/ausencia).
+  Sem mudanca no solver, treinos ou coeficientes: rolamento/quique/solado equivalentes.
+  Ar interno sem vento externo; arrasto normal da bola preservado.
+  QA da entrada pelo menu, janela, Python/auditor e encerramento ainda em curso.
+
+## Campo grande de Abelardo Luz — pre-producao (Codex, 01/11)
+
+- Pedido: mapa aberto de futebol de onze, inspirado no campo real da cidade,
+  com pesquisa de medidas oficiais e pelo menos 2–3 m alem das linhas.
+  **Somente documentacao, referencias e planejamento agora**; o usuario quer
+  tentar novas imagens antes de iniciar geometria no TrenchBroom.
+- Cidade confirmada por ele: Abelardo Luz, SC. Pesquisa municipal identifica
+  Valdir Luiz Stefani / Beira Rio; fotos e projetos de cobertura sao de epocas
+  diferentes e nao comprovam o estado atual da obra. A estimativa 104x70 m e
+  o poligono do Google Earth nao foram tratados como levantamento confiavel.
+- IFAB/FIFA pesquisadas em fontes oficiais. Proposta: jogo 105x68 m, folgas
+  de 3 m por lateral e 5 m por fundo; gramado 115x74 m. Sao escolhas de projeto
+  a revisar nas referencias, nao tamanho unico obrigatorio nem homologacao.
+- No vault, `08_mapa/plano_campo_grande_01.md`, prompts para cinco vistas e
+  `referencias/campo_grande_01/`: dez imagens originais, catalogo, manifesto
+  com dimensoes/SHA-256 e planta esquematica SVG. Referencias conferidas uma
+  a uma; hashes, decodificacao das dez imagens, medidas e SVG verificados.
+- Repasse tecnico em `docs/MAPA_CAMPO_GRANDE_01.md`, com ponteiros no guia
+  de mapas e instrucoes dos agentes. Ainda nao ha novo MAP/GLB, geometria,
+  texturas de jogo ou imagens conceituais geradas. Nao foram feitos builds
+  ou testes de runtime para esta mudanca documental. Galpao 01 e RL preservados.
+
+## Polimento do Galpao 01 e portao fechado (Codex, 31/10)
+
+- Pedido: polir o mapa inteiro, com exemplos da placa de saida repetida nas
+  laterais e da caixa vermelha provisoria; **fechar o portao da cerca**.
+  A pose aberta anterior foi substituida por ordem explicita do usuario.
+- Rotulos aplicados somente a frente, com UVs ajustadas a dimensao real do
+  PNG. Carcacas claras/metálicas, placa com fixacoes, armario de hidrante
+  identificado, portas com juntas/vedacoes, vidros escuros, molduras,
+  dobradicas, chapas inferiores e barras com suportes. Quadro com ferragens.
+- Madeira em segmentos sobre os apoios, chanfros, emendas, arruelas,
+  parafusos e sapatas. Calhas abertas, tubos redondos, luvas/abracadeiras,
+  lixeiras ocas com alcas e arremates no abrigo/luminarias.
+- Materiais repetiveis de 512px com escala mantida em 2 m, rotulos de formato
+  proprio, metais neutros e granulado discreto. Gramado uniforme preservado.
+  Usa IDs fisicos existentes, incluindo glass; nenhuma alteracao de runtime.
+- Doze testes passaram (41,404 s), incluindo caixa chanfrada convexa, rotulos
+  em uma face/UVs completas, pose fechada, circulacao externa, reserva de jogo,
+  contatos e duplicatas. O close revelou armario avancando sobre pilar:
+  reposicionado, e os testes de layout/UVs passaram novamente (12,678 s).
+  GltfLoader/Jolt passaram com 23 partes, 3 nascimentos
+  e 396 raios. Auditor: zero grupos soltos/duplicatas e zero coplanares na
+  cerca; os 162 candidatos internos antigos continuam listados.
+- GLB final: 5.418 brushes, 83.688 triangulos, 23 materiais, 8.948.748 bytes.
+  Apos o desligamento acidental, a fonte foi comparada ao gerador e o GLB a
+  uma compilacao em memoria: identicos, sem perda. GltfLoader/Jolt passaram
+  novamente, e o mapa foi reaberto no TrenchBroom.
+  Backup integral em `inspecao/mapas/galpao_01/antes_polimento/`; previas
+  finais conferidas de sinalizacao, bancos, vista geral e portao com prefixo
+  `polimento_`, refeitas apos a retomada. O portao fechado e estatico e bloqueia
+  acesso; interacao/in-game e desempenho continuam para a integracao futura.
+
+## Cerca metalica e acesso do Galpao 01 (Codex, 31/10)
+
+- O usuario esclareceu que a referencia veio do ChatGPT, tem erros e nao
+  deve ser copiada literalmente: inventar e corrigir conforme a logica do espaco.
+  Pediu trocar a rede verde por cerca metalica no comeco do campo, com portao
+  junto aos bancos. Todas as redes antigas, inclusive a baixa dos bancos, sairam.
+- Cerca galvanizada de 44,8x23 m junto ao gramado, antes dos drenos, com
+  altura de 5,4 m, malha soldada de 15 cm, postes/bases e travessas.
+  Mantem 2,4 m de folga nos fundos e 1,5 m nas laterais dos 40x20 de jogo.
+- Portao de 1,4 m nominal na ponta dos bancos, folha aberta a 90 graus para
+  a circulacao, com dobradicas, diagonal e fecho. Lixeira afastada do giro.
+  Passagem minima de 1,20x2,15 m verificada; sem soleira. O portao continua
+  estatico: abrir/fechar por interacao e posterior.
+- Dez testes passaram, incluindo ausencia da rede verde, volume jogavel,
+  acesso do portao, contatos reais por SAT e duplicatas. GltfLoader/Jolt
+  passaram com tres nascimentos e 396 raios de fechamento. Sem pecas soltas,
+  duplicatas ou candidatos coplanares na nova cerca.
+- Fonte em nove camadas; GLB de 4.815 brushes, 57.892 triangulos, 20 materiais,
+  5.988.324 bytes. Perfil/texturas existentes reutilizados. Versao anterior
+  preservada em `inspecao/mapas/galpao_01/antes_cerca.*`; previas atuais com
+  prefixo `cerca_`. Sem mudancas na engine, nos builds existentes ou no RL.
+
+## Encaixes do Galpao 01 (Codex, 31/10)
+
+- O usuario mostrou pecas afastadas e superficies disputando o mesmo plano.
+  Protecoes encostam na parede; canos possuem separacao visual e suportes.
+  Passeio na cota zero, bases e mobiliario apoiados; travessas sob as ripas,
+  fixacoes de redes, bandejas e luminarias. Nos da trelica com cortes de encontro.
+- Conferencia do GLB em close encontrou tambem o trilho da rede passando
+  diante das portas e pelo quadro: redes/trilhos agora param nos acessos,
+  com postes de borda; caixas ficam na parede, acima da protecao, atras da rede.
+- `tools/maps/auditar.py`: contatos reais por SAT, duplicatas e candidatos
+  de faces coplanares. Todas as 2.549 pecas alcancam a fundacao por contatos;
+  nenhuma duplicada. Candidatos internos permanecem: auditor nao calcula oclusao.
+- Dez testes passaram, incluindo contatos inclinados, pecas soltas, duplicatas,
+  faces coincidentes e acesso livre as portas; rede nao atravessa o quadro.
+  GLB final: 30.812 triangulos, 21 materiais, 3.930.148 bytes. GltfLoader/Jolt
+  passaram, incluindo tres nascimentos e 396 raios de fechamento.
+- Fonte anterior e relatorios preservados em `inspecao/mapas/galpao_01/`.
+  A iluminacao Vulkan e o resultado in-game continuam para a integracao futura.
+  Nenhum arquivo de runtime, build existente ou processo de RL alterado.
+
+## Primeiro mapa fechado: Galpao 01 (Codex, 31/10)
+
+- Pedido: galpao de futebol da fotografia do usuario, detalhado, sem traves
+  ou linhas e com gramado verde simples. Dimensoes iniciais assumidas:
+  reserva de jogo 40x20 m, edificio ~49,6x29,2 m, cobertura ~9,9 m.
+- Fonte em `assets/maps/src/galpao_01.map`, oito camadas de TrenchBroom;
+  gerador em `tools/maps/galpao_01.py`, que recusa sobrescrever por padrao.
+- Estrutura com porticos, tesouras e ferragens; chapas, protecoes, redes,
+  bancos cobertos, portas, portao, drenos e instalacoes. 2.395 brushes,
+  28.900 triangulos, 21 materiais e GLB de 3.785.864 bytes.
+- Materiais visuais novos usam os IDs fisicos existentes. UVs agora usam a
+  dimensao real do PNG. Luzes e emissao sao serializadas nas extensoes glTF;
+  o GltfLoader atual ainda nao as instancia no render Vulkan.
+- Oito testes Python passaram, incluindo o volume central livre ate 7,2 m.
+  GltfLoader/Jolt passaram: texturas, winding, materiais, tres nascimentos
+  com esfera apoiada e 396 raios verificando o fechamento.
+- Conferencia visual pelo GLB no Blender; primeira passada estava escura,
+  intensidades corrigidas. A vista da entrada revelou um pilar diante da
+  porta: acessos reposicionados entre pilares e teste do vao acrescentado.
+  A emissao passou a usar a textura para preservar as letras da placa.
+  Previa Cycles usa uma thread CPU: o CUDA 13.4
+  local rejeitou `sm_61` da GTX 1070 Ti. Nenhuma mudanca de driver ou treino.
+- Guia: `docs/MAPA_GALPAO_01.md`. O atalho de mapas abre este primeiro mapa.
+  A aprovacao visual pelo usuario, a integracao in-game, o campo procedural
+  e as medidas de desempenho no jogo permanecem posteriores.
+
+## TrenchBroom preparado para mapas (Codex, 31/10; frente paralela ao RL)
+
+- Perfil **Soccer Fall**, TrenchBroom 2026.2, Valve 220, 32 unidades por metro.
+- Fontes e mapa de prova em `assets/maps/src`; ferramentas em `tools/maps`;
+  guia em `docs/MAPAS_TRENCHBROOM.md` e ponteiros em AGENTS/CLAUDE.
+- Materiais procedurais pequenos com IDs do catalogo fisico, FGD de nascimento,
+  geometria estatica e marcador do futuro campo procedural.
+- Compilador Python sem dependencias para GLB com texturas embutidas, UVs,
+  conversao de eixos/escala e `physical_material`/`collision_mode=static_mesh`.
+- Verificador independente em `build-maps`, ligado as bibliotecas existentes:
+  GltfLoader e Jolt carregaram o mapa de 3 brushes/36 triangulos/3 materiais;
+  raycast e esfera dinamica apoiada por 2 s passaram. Editor aberto e visual
+  conferido com piso, parede, bloco e nascimento, sem avisos na abertura final.
+- Seis testes Python passaram (geometria/rampa/rotacao, contrato, entradas
+  invalidas, preservacao de saida e preferencias). A checagem de arquitetura
+  continua falhando apenas nos includes preexistentes de `AnimatedGetUp3D`.
+- Nenhum arquivo de runtime ou RL foi alterado, nenhum treino foi parado ou
+  build existente recompilado. O laboratorio atual permanece como estava.
+- Limites: nao ha tela in-game para carregar o mapa ainda; o marcador do campo
+  nao gera campo. Faces internas sao preservadas, sem CSG/PVS. A prova e uma
+  bancada de integracao, nao o primeiro mapa real. O proximo trabalho e o
+  desenho desse mapa no editor preparado.
 
 ## O carrinho entre corpos (Claude, 29/10 madrugada, `677346f`)
 
@@ -7720,3 +8263,34 @@ Ao concluir qualquer mudança relevante, atualizar no mínimo:
 4. solução aplicada e trade-offs;
 5. testes executados e resultado;
 6. pendências, limitações e próximo ponto de entrada.
+
+
+Atualização 03/11 — velocidade do rl_final: retomado do checkpoint 1037 com 4 threads (PID 88124), único treino ativo. Amostra na atualização 1040: 4.229 decisões/s contra 3.037 na 1020 com 3 threads (+39%, comparação curta); física 3,74 s contra 5,28 s, PPO ~0,44 s. CPU 68–69 °C. Parâmetros de aprendizado e ajuste da pose IDLE preservados. Guarda configurado para 4 threads, continua desativado.
+
+03/11 — usuário liberou PC exclusivamente para rl_final: aumentado para 6 threads, PID 88513. Primeira amostra atualização 1060: 5.365 decisões/s (+27% sobre 4 threads; +77% sobre 3), CPU 75,5–76 °C; proteção térmica ativa e aprendizado preservado. Esta configuração substitui a de 4 threads acima.
+
+03/11 check rápido: benchmark original r841 (256 episódios/condição) versus r1650 (128/condição), arquivo checagem/saidas/ab_codex/rl_final_evolucao_0311.json. Melhorou equilíbrio/evitar; piorou velocidade para levantar e métrica coluna. Ambientes atuais mais difíceis, não comparação controlada: levantar ambientado caiu ~84% para56%. Nenhum parâmetro alterado neste check.
+
+03/11 — cinco layouts controlados no treino ambientado (geometria de semente fixa por preset; pose inicial/física ainda variam): parede, corredor, rampa, um corpo sobre tronco, dois embaixo + dois por cima. 65% das quedas/levantar em movimento com ambiente, dividido igualmente em cinco presets; evitar mantém 50% ambientado, com parede/corredor/rampa e duas distribuições fixas de corpos ao redor. Sem combinação extra aleatória. Contatos têm 12s para tentar novamente, sem nova terminação por fracasso. Benchmark/evaluation preservam geração antiga. Compilação apenas matter_tracking_native n1 e smoke24mundos/12,2s passaram (finitude/reset/episódio12s); reset não reproduz exatamente estado físico, sem aprovação visual ou garantia de escapabilidade. Retomado6threads PID94777.
+
+03/11 — laboratório atualizado: cinco presets individuais para levantar e cinco para evitar, com nomes visíveis na lista e sobre a imagem. Seleção usa o mesmo gerador controlado do treino; corpos1/4 confirmados nos layouts do levantar, corpos1/2 no evitar. Contatos12s; sem troca para parceira que apagava o cenário. Exercícios antigos rotulados Benchmark; curvas explicitamente agregadas e escala de tempo12s. Build-profile MatterEngine e testes da tela passaram377checks (inclui geometria, corpos e continuidade após6s). Treino PID94777 continua sem reiniciar. Para carregar o novo executável, reabrir pelo tools/run.sh.
+
+Validação visual real: rl_final vivo r1900/PID94777,16exercícios listados; levantar_fixo_pilha abriu e renderizou os quatro corpos em arame. Capturas inspecao/rl/0311_cenarios_controlados/rl_frente_4s.png etc.; captura frontal inspecionada. Check real passou.
+
+03/11 — após desligamento por temperatura relatado pelo usuário: retomado SOMENTE rl_final do checkpoint1989 com5threads, PID3374 (uma thread a menos, pedido explícito). Comando persistido e guarda atualizados5threads; guarda segue desativado. Proteção térmica ativa, CPU antes da retomada~62C. Sem compilação/testes concorrentes nesta retomada.
+
+03/11 — monitor persistente instalado: systemd user monitor-rl-final.timer, OnUnitActiveSec30min, primeira execução02h46 e próxima03h16 (America/Sao_Paulo). Script checagem/monitor_rl_final.py só lê status/log/temperatura; média3avaliações e alertas de parada, falta de progresso, queda>10pp e temperatura>=80C. Histórico checagem/saidas/monitor_rl_final/{latest.json,historico.jsonl}. Sem benchmark concorrente, alterações automáticas de aprendizado, religamento ou rollback. Análise por IA exige novo turno; limitação informada ao usuário. Teste persistido5asserts passou; treino5threads preservado.
+
+03/11 — layouts intensificados conforme usuário: levantar troca parede por4pilares próximos; corredor folga0,08m por lado; rampas dos dois exercícios22graus/0,8m. Evitar:4paredes cardeais com aberturas nos cantos;4corpos tangenciais nos quatro lados a0,72m; último preset trocado por6pilares fixos irregulares (ângulos/folgas/larguras/alturas diferentes). Laboratório com nomes/IDs atualizados, mesmo gerador do treino; benchmark aleatório preservado. Backup ultimo_antes_cenarios_apertados_0311.pt r2147. Build native n1+MatterEngine profile e391checks passaram; smoke24mundos/12s finito passou. Treino pausado durante build por calor, retomado5threads PID5924; sem outras cargas de validação agora. Reabrir app para novo laboratório. Escapabilidade/dificuldade real ainda não validadas visualmente nesta revisão.
+
+03/11 — correção solicitada após inspeção do usuário: pilares afastados (folgas0,85/1,20/1,00/1,40/0,95/1,15m), mantendo desenho irregular e4/6pilares. Mesmo gerador treino/lab; nenhum outro cenário alterado. Native n1+profile compilados,422checks passaram incluindo distância dos centros ao jogador>0,95m e separação entre centros>1m nos dois layouts. Sem nova inspeção visual. Treino retomado r2164 com5threads PID7014.
+
+03/11 — corrigida separação entre exercícios a pedido do usuário: SOMENTE corredor levantar apertado(0,08m), evitar restaurado0,30m;4paredes evitar recuadas1,20m além da extensão corporal e comprimento1,20m independente do recuo para não fechar cantos; pilares levantar próximos0,35/0,50/0,40/0,60m, pilares evitar preservados0,85–1,40m. Mesma geometria treino/lab. Buildn1/profile e428checks passaram incluindo folgas distintas dos corredores e recuo paredes. Treino retomado2255/5threads PID9159; ainda sem nova inspeção visual.
+
+03/11 — dois corredores de levantar, pedido corrigido no meio do trabalho: mais justo20cm por lado e mais folgado35cm por lado (nenhum com8cm). Folga relativa à extensão do corpo, não largura total fixa. Mesmo RNG de geometria entre variantes; só muda folga. Evitar preservado30cm. Sexto preset adicionado apenas ao levantar (sorteio6layouts); evitar segue5layouts. Corrigidos índices/loops UI e12s somente nos dois contatos3/4; corredor leve dura6s. Native n1+MatterEngine profile e432checks passaram incluindo as duas folgas/mesma orientação/espessura eevitar30cm. Treino retomado r2349/5threads PID12367; reabrir laboratório. Sem nova inspeção visual.
+
+03/11 — ajuste fino solicitado: corredores levantar17cm(mais justo) e20cm(mais folgado, antigo justo);4pilares levantar aproximados para folgas25/35/30/45cm. Evitar preservado. Native n1+MatterEngine profile e432checks passaram, inclusive folgas dos corredores. Treino retomado r2385/5threads PID13617. Sem nova inspeção visual; reabrir laboratório.
+
+03/11 — corrigido problema de largura/curvas apontado pelo usuário: corredor levantar agora largura INTERNA ABSOLUTA1,30/1,36m (não depende mais de reachToward/pose), paredes4m de comprimento/2m de altura, orientação segue eixo do corpo inicial. Testado em4sementes/poses. Pilares levantar6 (antes4), folgas15/22/18/28/20/25cm; evitar preservado. Telemetria append-only: coluna27 cenario no finished_episodes, primeiras26 preservadas; treinador grava log.cenarios[drill] com sucesso/tempo/recomposição separados por kind e preset. Curvas controladas leem somente o drill selecionado; cache inclui drill; log ausente limpa curva; sem dado individual viraNaN e não agregado. Histórico antigo não permite reconstituir cenários. Buildn1/profile,450checks C++ (incluindo cache/25%-90%-60% distintos/sem dados e larguras porrodada),6checks Python e smoke24mundos/12s passaram. Retomado r2480/5threads PID15822; falta confirmar primeiro registro real com cenarios e inspeção visual desta revisão.
+
+Validação real concluída: PID15822 r2500 e2520 gravaram11cenários distintos. Em2520: corredorjusto83episódios/95,18%/2,204s, folgado89episódios/96,63%/1,955s, pilareslevantar70episódios/91,43%/2,084s; evitarpilares111episódios/73,87%evitou. CPU73,9C,5threads. Coleta individual começa r2500; sem retropreenchimento de dados antigos.

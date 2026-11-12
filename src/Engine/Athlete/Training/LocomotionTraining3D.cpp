@@ -1132,7 +1132,10 @@ struct LocomotionTraining3D::Impl {
                 ? std::abs(std::remainder(facing - world.lastFacingYaw, 6.28318530718f)) / decisionSeconds : 0.0f;
             world.lastFacingYaw = facing;
             world.lastFacingValid = true;
-            const float settled = (world.seconds - world.lastPushSeconds > 3.0f ? 1.0f : 0.0f)
+            const float after = task.reward.stillAfterPushSeconds;
+            const bool pushOver = !(after > 0.0f)
+                || (world.pushTicks <= 0 && world.seconds - (world.lastPushSeconds + world.pushSeconds) > after);
+            const float settled = (world.seconds - world.lastPushSeconds > 3.0f && pushOver ? 1.0f : 0.0f)
                 * (1.0f - smoothstep(0.3f, 1.0f, facingRate));
             measure.still = quiet * tremor * settled;
             world.quietShake += static_cast<double>(quiet) * tremor;

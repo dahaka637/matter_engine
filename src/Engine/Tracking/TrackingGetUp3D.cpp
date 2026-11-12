@@ -1,6 +1,7 @@
 #include "Engine/Tracking/TrackingGetUp3D.hpp"
 
 #include "Engine/RL/Body/RLBody3D.hpp"
+#include "Engine/Tracking/TrackingBalance3D.hpp"
 #include "Engine/Tracking/TrackingFeatures3D.hpp"
 #include "Engine/Tracking/TrackingScene3D.hpp"
 
@@ -76,13 +77,18 @@ TrackingGetUpContract3D::TrackingGetUpContract3D(const RagdollProfile3D& profile
 }
 
 void TrackingGetUpContract3D::driveTargets(std::span<const float> action, std::vector<RagdollDriveTarget3D>& out) const {
+    driveTargets(action, {}, out);
+}
+
+void TrackingGetUpContract3D::driveTargets(std::span<const float> action, std::span<const float> velocities,
+    std::vector<RagdollDriveTarget3D>& out) const {
     out.clear();
     for (std::size_t k = 0; k < m_axes.size(); ++k) {
         RagdollDriveTarget3D drive;
         drive.linkIndex = m_axes[k].link;
         drive.axis = static_cast<RagdollAxis3D>(m_axes[k].axis);
         drive.positionRadians = k < action.size() && std::isfinite(action[k]) ? action[k] : 0.0f;
-        drive.velocityRadiansPerSecond = 0.0f;
+        drive.velocityRadiansPerSecond = k < velocities.size() && std::isfinite(velocities[k]) ? velocities[k] : 0.0f;
         drive.stiffnessScale = TrackingStiffnessScale;
         drive.dampingScale = TrackingDampingScale;
         out.push_back(drive);
@@ -208,6 +214,44 @@ std::vector<std::string> TrackingGetUpContract3D::environmentObservationNames() 
     return names;
 }
 
+void TrackingGetUpContract3D::observeBalance(std::span<const PhysicsBodyState3D> links,
+    std::span<const RagdollInteraction3D> contacts, float groundHeight, std::span<float> out) const {
+    if (out.size() < BalanceObservationSize) return;
+    std::fill(out.begin(), out.begin() + BalanceObservationSize, 0.0f);
+    if (links.size() <= m_root) return;
+    const TrackingBalance3D b = measureTrackingBalance3D(*m_profile, links, contacts, footLinks(), groundHeight);
+    const float yaw = trackingBodyYaw3D(m_profile->links[m_root], links[m_root]);
+    const float c = std::cos(yaw), s = std::sin(yaw);
+    std::size_t n = 0;
+    const auto put = [&](Vec3 v) {
+        out[n++] = std::clamp(c * v.x + s * v.y, -3.0f, 3.0f);
+        out[n++] = std::clamp(-s * v.x + c * v.y, -3.0f, 3.0f);
+    };
+    put(b.centerOfMass - b.supportCenter);
+    put(b.velocity);
+    put(b.capture - b.supportCenter);
+    put(b.capture - b.sole[0]);
+    put(b.capture - b.sole[1]);
+    out[n++] = std::clamp(b.margin, -0.5f, 0.3f);
+    out[n++] = std::clamp(1.0f - b.margin / 0.08f, 0.0f, 3.0f);
+    out[n++] = b.omega / 3.5f;
+    put(b.sole[0] - b.centerOfMass);
+    put(b.sole[1] - b.centerOfMass);
+    put(b.spin);
+}
+
+std::vector<std::string> TrackingGetUpContract3D::balanceObservationNames() {
+    std::vector<std::string> names;
+    for (const char* v : { "eq.cm_base", "eq.vel_cm", "eq.captura_base", "eq.captura_pe_esq", "eq.captura_pe_dir" })
+        for (const char* axis : { ".frente", ".lado" }) names.push_back(std::string(v) + axis);
+    names.emplace_back("eq.margem");
+    names.emplace_back("eq.ameaca");
+    names.emplace_back("eq.omega");
+    for (const char* v : { "eq.pe_esq_cm", "eq.pe_dir_cm", "eq.giro" })
+        for (const char* axis : { ".frente", ".lado" }) names.push_back(std::string(v) + axis);
+    return names;
+}
+
 std::vector<std::string> TrackingGetUpContract3D::groundObservationNames() {
     std::vector<std::string> names;
     for (const char* frame : { "chao.baixo_pelve", "chao.baixo_peito", "chao.vel_cm_peito" })
@@ -219,6 +263,15 @@ std::vector<std::string> TrackingGetUpContract3D::groundObservationNames() {
     for (const char* link : GroundLinks) names.push_back(std::string("chao.contato.") + link);
     names.emplace_back("chao.contato_outro");
     return names;
+}
+
+void TrackingGetUpContract3D::jointErrors(std::span<const PhysicsBodyState3D> body,
+    const TrackingClipFrame3D& reference, std::span<float> out) const {
+    const std::span<const PhysicsBodyState3D> ref(reference.links);
+    for (std::size_t j = 0; j < m_profile->links.size() && j < out.size() && j < body.size() && j < ref.size(); ++j) {
+        const float angle = rotationAngle(jointOrientation(ref, *m_profile, j).conjugate() * jointOrientation(body, *m_profile, j));
+        out[j] = angle * angle;
+    }
 }
 
 TrackingGetUpContract3D::Terms TrackingGetUpContract3D::reward(std::span<const PhysicsBodyState3D> body,

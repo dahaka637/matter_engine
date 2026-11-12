@@ -127,6 +127,9 @@ struct AnimationClipValidationIssue3D {
 [[nodiscard]] std::vector<AnimationClipValidationIssue3D>
     validateAnimationClipForRagdoll3D(
         const AnimationClip3D& clip, const RagdollProfile3D& profile);
+// (10/11) As juntas acopladas do perfil (RagdollJointCoupling3D) em cada quadro do
+// clipe: a soma do grupo, presa a amplitude dele, nas parcelas - antes de validar.
+void coupleAnimationClipJoints3D(AnimationClip3D& clip, const RagdollProfile3D& profile);
 [[nodiscard]] const AnimationTrack3D* findAnimationTrack3D(
     const AnimationClip3D& clip, std::string_view targetLinkId);
 // Amostra e projeta um clipe na articulação física real. Links filhos não

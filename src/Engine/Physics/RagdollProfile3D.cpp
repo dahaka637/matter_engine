@@ -94,6 +94,51 @@ void prepareHull(RagdollCapsuleDefinition3D& collider) {
     }
 }
 
+// O colisor de um objeto com "hull", "box" ou "capsule" (o principal do link e cada um dos extras).
+RagdollCapsuleDefinition3D readRagdollCollider(const Json& source, const std::string& path, float uniformRadius) {
+    RagdollCapsuleDefinition3D collider;
+    const bool hasHull = source.contains("hull");
+    const bool hasBox = !hasHull && source.contains("box");
+    const std::string kind = hasHull ? "hull" : hasBox ? "box" : "capsule";
+    const Json& shape = source.at(kind);
+    collider.shape = hasHull ? RagdollColliderShape3D::ConvexHull
+        : hasBox                  ? RagdollColliderShape3D::Box
+                                  : RagdollColliderShape3D::Capsule;
+    collider.localPosition = shape.contains("position")
+        ? readVec3(shape.at("position"), path + "." + kind + ".position")
+        : Vec3 {};
+    collider.localOrientation =
+        readQuaternion(shape.at("orientation"), path + "." + kind + ".orientation");
+    if (hasBox) {
+        collider.boxHalfExtents = readVec3(
+            shape.at("halfExtents"), path + ".box.halfExtents");
+    } else if (hasHull) {
+        for (std::size_t p = 0; p < shape.at("points").size(); ++p)
+            collider.hullPoints.push_back(readVec3(shape.at("points").at(p),
+                path + ".hull.points[" + std::to_string(p) + "]"));
+        for (const Json& face : shape.at("faces")) {
+            if (!face.is_array() || face.size() != 3)
+                throw std::runtime_error("Perfil de ragdoll: face invalida em " + path + ".hull.faces");
+            collider.hullFaces.push_back({ face.at(0).get<std::uint16_t>(),
+                face.at(1).get<std::uint16_t>(), face.at(2).get<std::uint16_t>() });
+        }
+        collider.convexRadiusMeters = shape.value("convexRadius", collider.convexRadiusMeters);
+        prepareHull(collider);
+    } else {
+        collider.lengthMeters =
+            shape.at("length").get<float>();
+        collider.radiusMeters = shape.contains("radius")
+            ? shape.at("radius").get<float>()
+            : uniformRadius;
+        collider.radiusAtPositiveXMeters =
+            shape.value("radiusAtPositiveX", 0.0f);
+    }
+    collider.materialId = shape.value("material", "default");
+    collider.contactSensor =
+        shape.value("contactSensor", false);
+    return collider;
+}
+
 // O ponto de um triangulo mais perto de p (Ericson, "Real-Time Collision
 // Detection", 5.1.5).
 Vec3 closestOnTriangle(Vec3 p, Vec3 a, Vec3 b, Vec3 c) {
@@ -191,45 +236,40 @@ RagdollProfile3D loadRagdollProfile3D(std::string_view filePath) {
                     path + ".centerOfMass")
                 : Vec3 {};
 
-            const bool hasHull = source.contains("hull");
-            const bool hasBox = !hasHull && source.contains("box");
-            const std::string kind = hasHull ? "hull" : hasBox ? "box" : "capsule";
-            const Json& shape = source.at(kind);
-            link.collider.shape = hasHull ? RagdollColliderShape3D::ConvexHull
-                : hasBox                  ? RagdollColliderShape3D::Box
-                                          : RagdollColliderShape3D::Capsule;
-            link.collider.localPosition = shape.contains("position")
-                ? readVec3(shape.at("position"), path + "." + kind + ".position")
-                : Vec3 {};
-            link.collider.localOrientation =
-                readQuaternion(shape.at("orientation"), path + "." + kind + ".orientation");
-            if (hasBox) {
-                link.collider.boxHalfExtents = readVec3(
-                    shape.at("halfExtents"), path + ".box.halfExtents");
-            } else if (hasHull) {
-                for (std::size_t p = 0; p < shape.at("points").size(); ++p)
-                    link.collider.hullPoints.push_back(readVec3(shape.at("points").at(p),
-                        path + ".hull.points[" + std::to_string(p) + "]"));
-                for (const Json& face : shape.at("faces")) {
-                    if (!face.is_array() || face.size() != 3)
-                        throw std::runtime_error("Perfil de ragdoll: face invalida em " + path + ".hull.faces");
-                    link.collider.hullFaces.push_back({ face.at(0).get<std::uint16_t>(),
-                        face.at(1).get<std::uint16_t>(), face.at(2).get<std::uint16_t>() });
+            link.collider = readRagdollCollider(source, path, profile.uniformRadiusMeters);
+            // Os ossos que movem colisores (os dedos da mao): pais antes dos filhos, o pai pelo nome ("" e o link).
+            if (source.contains("posableBones")) {
+                for (const Json& entry : source.at("posableBones")) {
+                    RagdollPosableBone3D bone;
+                    bone.name = entry.at("name").get<std::string>();
+                    const std::string bonePath = path + ".posableBones[" + bone.name + "]";
+                    const std::string parent = entry.value("parent", std::string {});
+                    for (std::size_t b = 0; b < link.posableBones.size() && !parent.empty(); ++b)
+                        if (link.posableBones[b].name == parent) bone.parent = static_cast<int>(b);
+                    if (!parent.empty() && bone.parent < 0)
+                        throw std::runtime_error(bonePath + ".parent desconhecido (o pai vem antes): " + parent);
+                    bone.localPosition = readVec3(entry.at("position"), bonePath + ".position");
+                    bone.localOrientation = readQuaternion(entry.at("orientation"), bonePath + ".orientation");
+                    bone.restRotation = entry.contains("restRotation")
+                        ? readQuaternion(entry.at("restRotation"), bonePath + ".restRotation") : Quaternion {};
+                    link.posableBones.push_back(std::move(bone));
                 }
-                link.collider.convexRadiusMeters = shape.value("convexRadius", link.collider.convexRadiusMeters);
-                prepareHull(link.collider);
-            } else {
-                link.collider.lengthMeters =
-                    shape.at("length").get<float>();
-                link.collider.radiusMeters = shape.contains("radius")
-                    ? shape.at("radius").get<float>()
-                    : profile.uniformRadiusMeters;
-                link.collider.radiusAtPositiveXMeters =
-                    shape.value("radiusAtPositiveX", 0.0f);
             }
-            link.collider.materialId = shape.value("material", "default");
-            link.collider.contactSensor =
-                shape.value("contactSensor", false);
+            if (source.contains("extraColliders")) {
+                const Json& extras = source.at("extraColliders");
+                if (!extras.is_array()) throw std::runtime_error(path + ".extraColliders precisa ser um array");
+                for (std::size_t k = 0; k < extras.size(); ++k) {
+                    const std::string extraPath = path + ".extraColliders[" + std::to_string(k) + "]";
+                    RagdollCapsuleDefinition3D extra = readRagdollCollider(extras.at(k), extraPath, profile.uniformRadiusMeters);
+                    if (extras.at(k).contains("bone")) {
+                        const std::string name = extras.at(k).at("bone").get<std::string>();
+                        for (std::size_t b = 0; b < link.posableBones.size(); ++b)
+                            if (link.posableBones[b].name == name) extra.bone = static_cast<int>(b);
+                        if (extra.bone < 0) throw std::runtime_error(extraPath + ".bone desconhecido: " + name);
+                    }
+                    link.extraColliders.push_back(std::move(extra));
+                }
+            }
 
             if (link.parentIndex >= 0) {
                 const Json& joint = source.at("joint");
@@ -311,6 +351,33 @@ RagdollProfile3D loadRagdollProfile3D(std::string_view filePath) {
             const Json& t = root.at("limitTension");
             RagdollLimitTension3D& tension = profile.limitTension;
             tension.enabled = t.value("enabled", tension.enabled);
+        }
+        if (root.contains("jointCouplings")) {
+            for (const Json& entry : root.at("jointCouplings")) {
+                RagdollJointCoupling3D coupling;
+                coupling.axis = static_cast<RagdollAxis3D>(
+                    axisIndex(entry.at("axis").get<std::string>()));
+                const Json& ids = entry.at("links");
+                const Json& weights = entry.at("weights");
+                if (ids.size() != weights.size()) {
+                    throw std::runtime_error(
+                        "jointCouplings: links e weights com tamanhos diferentes");
+                }
+                float total = 0.0f;
+                for (std::size_t k = 0; k < ids.size(); ++k) {
+                    const std::string id = ids.at(k).get<std::string>();
+                    const auto link = std::find_if(profile.links.begin(), profile.links.end(),
+                        [&](const RagdollLinkDefinition3D& candidate) { return candidate.id == id; });
+                    if (link == profile.links.end()) {
+                        throw std::runtime_error("jointCouplings: link desconhecido " + id);
+                    }
+                    coupling.links.push_back(static_cast<std::uint32_t>(link - profile.links.begin()));
+                    coupling.shares.push_back(weights.at(k).get<float>());
+                    total += coupling.shares.back();
+                }
+                for (float& share : coupling.shares) share /= total;
+                profile.jointCouplings.push_back(std::move(coupling));
+            }
         }
     } catch (const Json::exception& error) {
         throw std::runtime_error("Perfil de ragdoll incompleto em "
@@ -493,60 +560,75 @@ std::vector<RagdollProfileValidationIssue3D> validateRagdollProfile3D(
         } else {
             massSum += link.massFraction;
         }
-        if (link.collider.shape == RagdollColliderShape3D::Capsule) {
-            const float endRadius =
-                ragdollCapsuleRadiusAtPositiveX3D(link.collider);
-            if (!std::isfinite(link.collider.lengthMeters)
-                || link.collider.lengthMeters
-                    <= link.collider.radiusMeters + endRadius) {
-                addIssue(issues, path + ".capsule.length",
-                    "precisa exceder a soma dos raios das duas pontas");
-            }
-            if (!std::isfinite(link.collider.radiusAtPositiveXMeters)
-                || (link.collider.radiusAtPositiveXMeters != 0.0f
-                    && link.collider.radiusAtPositiveXMeters < 0.005f)) {
-                addIssue(issues, path + ".capsule.radiusAtPositiveX",
-                    "raio da ponta +X precisa ter ao menos 5 mm");
-            }
-            if (!std::isfinite(link.collider.radiusMeters)
-                || link.collider.radiusMeters < 0.005f) {
-                addIssue(issues, path + ".capsule.radius",
-                    "raio precisa ser finito e ter ao menos 5 mm");
-            }
-        } else if (link.collider.shape == RagdollColliderShape3D::ConvexHull) {
-            const RagdollCapsuleDefinition3D& hull = link.collider;
-            if (hull.hullPoints.size() < 4 || hull.hullPoints.size() > 256)
-                addIssue(issues, path + ".hull.points", "precisa de 4 a 256 pontos");
-            if (hull.hullFaces.size() < 4 || hull.hullPlanes.size() != hull.hullFaces.size())
-                addIssue(issues, path + ".hull.faces", "precisa de ao menos 4 faces");
-            for (const Vec3& point : hull.hullPoints)
-                if (!finite(point)) {
-                    addIssue(issues, path + ".hull.points", "precisa de pontos finitos");
-                    break;
+        const auto checkCollider = [&](const RagdollCapsuleDefinition3D& collider, const std::string& where) {
+            if (collider.shape == RagdollColliderShape3D::Capsule) {
+                const float endRadius =
+                    ragdollCapsuleRadiusAtPositiveX3D(collider);
+                if (!std::isfinite(collider.lengthMeters)
+                    || collider.lengthMeters
+                        <= collider.radiusMeters + endRadius) {
+                    addIssue(issues, where + ".capsule.length",
+                        "precisa exceder a soma dos raios das duas pontas");
                 }
-            // Convexa: nenhum ponto passa de um plano de face (1 mm de folga).
-            bool convex = true, degenerate = false;
-            for (const auto& plane : hull.hullPlanes) {
-                if (plane[0] == 0.0f && plane[1] == 0.0f && plane[2] == 0.0f) degenerate = true;
+                if (!std::isfinite(collider.radiusAtPositiveXMeters)
+                    || (collider.radiusAtPositiveXMeters != 0.0f
+                        && collider.radiusAtPositiveXMeters < 0.005f)) {
+                    addIssue(issues, where + ".capsule.radiusAtPositiveX",
+                        "raio da ponta +X precisa ter ao menos 5 mm");
+                }
+                if (!std::isfinite(collider.radiusMeters)
+                    || collider.radiusMeters < 0.005f) {
+                    addIssue(issues, where + ".capsule.radius",
+                        "raio precisa ser finito e ter ao menos 5 mm");
+                }
+            } else if (collider.shape == RagdollColliderShape3D::ConvexHull) {
+                const RagdollCapsuleDefinition3D& hull = collider;
+                if (hull.hullPoints.size() < 4 || hull.hullPoints.size() > 256)
+                    addIssue(issues, where + ".hull.points", "precisa de 4 a 256 pontos");
+                if (hull.hullFaces.size() < 4 || hull.hullPlanes.size() != hull.hullFaces.size())
+                    addIssue(issues, where + ".hull.faces", "precisa de ao menos 4 faces");
                 for (const Vec3& point : hull.hullPoints)
-                    if (plane[0] * point.x + plane[1] * point.y + plane[2] * point.z - plane[3] > 0.001f) convex = false;
+                    if (!finite(point)) {
+                        addIssue(issues, where + ".hull.points", "precisa de pontos finitos");
+                        break;
+                    }
+                // Convexa: nenhum ponto passa de um plano de face (1 mm de folga).
+                bool convex = true, degenerate = false;
+                for (const auto& plane : hull.hullPlanes) {
+                    if (plane[0] == 0.0f && plane[1] == 0.0f && plane[2] == 0.0f) degenerate = true;
+                    for (const Vec3& point : hull.hullPoints)
+                        if (plane[0] * point.x + plane[1] * point.y + plane[2] * point.z - plane[3] > 0.001f) convex = false;
+                }
+                if (degenerate) addIssue(issues, where + ".hull.faces", "tem face degenerada ou indice fora dos pontos");
+                if (!convex) addIssue(issues, where + ".hull", "nao e convexa");
+                const float smallest = std::min({ hull.boxHalfExtents.x, hull.boxHalfExtents.y, hull.boxHalfExtents.z });
+                if (!std::isfinite(hull.convexRadiusMeters) || hull.convexRadiusMeters < 0.0f
+                    || hull.convexRadiusMeters > 0.5f * smallest)
+                    addIssue(issues, where + ".hull.convexRadius", "precisa ficar entre 0 e metade da menor medida");
+            } else if (!finite(collider.boxHalfExtents)
+                || collider.boxHalfExtents.x <= 0.0f
+                || collider.boxHalfExtents.y <= 0.0f
+                || collider.boxHalfExtents.z <= 0.0f) {
+                addIssue(issues, where + ".box.halfExtents",
+                    "precisa conter três semiextensões positivas e finitas");
             }
-            if (degenerate) addIssue(issues, path + ".hull.faces", "tem face degenerada ou indice fora dos pontos");
-            if (!convex) addIssue(issues, path + ".hull", "nao e convexa");
-            const float smallest = std::min({ hull.boxHalfExtents.x, hull.boxHalfExtents.y, hull.boxHalfExtents.z });
-            if (!std::isfinite(hull.convexRadiusMeters) || hull.convexRadiusMeters < 0.0f
-                || hull.convexRadiusMeters > 0.5f * smallest)
-                addIssue(issues, path + ".hull.convexRadius", "precisa ficar entre 0 e metade da menor medida");
-        } else if (!finite(link.collider.boxHalfExtents)
-            || link.collider.boxHalfExtents.x <= 0.0f
-            || link.collider.boxHalfExtents.y <= 0.0f
-            || link.collider.boxHalfExtents.z <= 0.0f) {
-            addIssue(issues, path + ".box.halfExtents",
-                "precisa conter três semiextensões positivas e finitas");
+            if (!finite(collider.localPosition) || !finite(collider.localOrientation))
+                addIssue(issues, where + ".capsule", "transform inválido");
+        };
+        checkCollider(link.collider, path);
+        for (std::size_t k = 0; k < link.extraColliders.size(); ++k) {
+            checkCollider(link.extraColliders[k], path + ".extraColliders[" + std::to_string(k) + "]");
+            if (link.extraColliders[k].bone >= static_cast<int>(link.posableBones.size()))
+                addIssue(issues, path + ".extraColliders[" + std::to_string(k) + "].bone", "osso fora de posableBones");
         }
-        if (!finite(link.collider.localPosition)
-            || !finite(link.collider.localOrientation)
-            || !finite(link.centerOfMassLocal)) {
+        for (std::size_t b = 0; b < link.posableBones.size(); ++b) {
+            const RagdollPosableBone3D& bone = link.posableBones[b];
+            if (bone.parent >= static_cast<int>(b))
+                addIssue(issues, path + ".posableBones[" + bone.name + "].parent", "o pai precisa vir antes");
+            if (!finite(bone.localPosition) || !finite(bone.localOrientation) || !finite(bone.restRotation))
+                addIssue(issues, path + ".posableBones[" + bone.name + "]", "repouso invalido");
+        }
+        if (!finite(link.centerOfMassLocal)) {
             addIssue(issues, path + ".capsule",
                 "transform ou centro de massa inválido");
         }
@@ -623,6 +705,24 @@ std::vector<RagdollProfileValidationIssue3D> validateRagdollProfile3D(
             addIssue(issues, path, "par precisa de dois links diferentes");
         }
     }
+    for (std::size_t index = 0; index < profile.jointCouplings.size(); ++index) {
+        const RagdollJointCoupling3D& coupling = profile.jointCouplings[index];
+        const std::string path = "jointCouplings[" + std::to_string(index) + "]";
+        float total = 0.0f;
+        bool valid = coupling.links.size() >= 2 && coupling.links.size() == coupling.shares.size();
+        for (std::size_t k = 0; valid && k < coupling.links.size(); ++k) {
+            const std::uint32_t link = coupling.links[k];
+            valid = link > 0 && link < profile.links.size() && std::isfinite(coupling.shares[k])
+                && coupling.shares[k] > 0.0f
+                && profile.links[link].inboundJoint.axes[static_cast<std::size_t>(coupling.axis)].enabled
+                && std::count(coupling.links.begin(), coupling.links.end(), link) == 1;
+            total += coupling.shares[k];
+        }
+        if (!valid || std::abs(total - 1.0f) > 0.001f) {
+            addIssue(issues, path,
+                "precisa de 2+ juntas distintas com o eixo habilitado e parcelas positivas somando 1");
+        }
+    }
     return issues;
 }
 
@@ -635,6 +735,32 @@ void validateRagdollProfileOrThrow3D(const RagdollProfile3D& profile) {
     }
     throw std::runtime_error(message);
 }
+
+void coupleRagdollJointCoordinates3D(const RagdollProfile3D& profile, std::span<Vec3> coordinates) {
+    const auto axis = [](Vec3& v, RagdollAxis3D a) -> float& {
+        return a == RagdollAxis3D::Twist ? v.x : a == RagdollAxis3D::Swing1 ? v.y : v.z;
+    };
+    for (const RagdollJointCoupling3D& coupling : profile.jointCouplings) {
+        if (std::any_of(coupling.links.begin(), coupling.links.end(),
+                [&](std::uint32_t link) { return link >= coordinates.size(); })) continue;
+        // (A soma presa a amplitude do grupo - a soma dos limites -, e cada junta a dela: o pedido fica dentro da coluna.)
+        float sum = 0.0f, low = 0.0f, high = 0.0f;
+        for (const std::uint32_t link : coupling.links) {
+            const RagdollAxisDefinition3D& limit = profile.links[link].inboundJoint.axes[static_cast<std::size_t>(coupling.axis)];
+            sum += axis(coordinates[link], coupling.axis);
+            low += limit.minimumRadians;
+            high += limit.maximumRadians;
+        }
+        sum = std::clamp(sum, low, high);
+        for (std::size_t k = 0; k < coupling.links.size(); ++k) {
+            const RagdollAxisDefinition3D& limit =
+                profile.links[coupling.links[k]].inboundJoint.axes[static_cast<std::size_t>(coupling.axis)];
+            axis(coordinates[coupling.links[k]], coupling.axis) =
+                std::clamp(coupling.shares[k] * sum, limit.minimumRadians, limit.maximumRadians);
+        }
+    }
+}
+
 
 void prepareRagdollConvexHull3D(RagdollCapsuleDefinition3D& collider) {
     collider.shape = RagdollColliderShape3D::ConvexHull;
@@ -652,6 +778,31 @@ std::size_t ragdollDegreesOfFreedom3D(const RagdollProfile3D& profile) {
             }));
     }
     return count;
+}
+
+std::vector<RagdollBoneFrame3D> ragdollPosableBoneFrames3D(const RagdollLinkDefinition3D& link, std::span<const Quaternion> rotations) {
+    std::vector<RagdollBoneFrame3D> frames(link.posableBones.size());
+    for (std::size_t i = 0; i < frames.size(); ++i) {
+        const RagdollPosableBone3D& bone = link.posableBones[i];
+        const Quaternion rotation = i < rotations.size() ? rotations[i] : bone.restRotation;
+        const RagdollBoneFrame3D parent = bone.parent >= 0 && static_cast<std::size_t>(bone.parent) < i
+            ? frames[static_cast<std::size_t>(bone.parent)] : RagdollBoneFrame3D {};
+        frames[i].position = parent.position + parent.orientation.rotate(bone.localPosition);
+        frames[i].orientation = (parent.orientation * (bone.localOrientation * rotation)).normalized();
+    }
+    return frames;
+}
+
+RagdollCapsuleDefinition3D ragdollExtraColliderInLink3D(const RagdollLinkDefinition3D& link, std::size_t extra,
+    std::span<const RagdollBoneFrame3D> frames) {
+    RagdollCapsuleDefinition3D collider = link.extraColliders.at(extra);
+    if (collider.bone >= 0 && static_cast<std::size_t>(collider.bone) < frames.size()) {
+        const RagdollBoneFrame3D& frame = frames[static_cast<std::size_t>(collider.bone)];
+        collider.localPosition = frame.position + frame.orientation.rotate(collider.localPosition);
+        collider.localOrientation = (frame.orientation * collider.localOrientation).normalized();
+        collider.bone = -1;
+    }
+    return collider;
 }
 
 } // namespace MatterEngine

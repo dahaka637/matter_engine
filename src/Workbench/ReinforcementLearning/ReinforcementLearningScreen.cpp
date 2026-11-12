@@ -134,23 +134,159 @@ constexpr std::array<double, 4> BandTestSpeeds { 1.11, 2.62, 4.33, 6.0 };
 // Os exercicios do levantar v2 depois do "Levantar do chao", na ordem da lista. (01/11, ele: o levantar volta a ser so
 // levantar e evitar quedas - "dele tiramos o de locomocao": os da locomocao nele sairam da lista, o codigo deles fica; e
 // o equilibrio parado tambem, de pe quem fica e a rede da locomocao, a do levantar so assume na queda iminente.)
-std::vector<std::array<const char*, 2>> getUpDrillList() {
-    std::vector<std::array<const char*, 2>> list { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
-        { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" }, { TrackingViewer3D::SceneryDrill, "Levantar nos ambientes" },
-        { TrackingViewer3D::AvoidSceneryDrill, "Evitar a queda nos ambientes" } };
+std::vector<std::array<const char*, 2>> getUpDrillList(const std::filesystem::path& runDirectory = {}) {
+    // (07/11, ele: "vamos treinar o levantar de costas e de brucos e... o de levantar correndo": com o v2.deitado, o levantar
+    // em movimento comeca deitado e vira o "Levantar correndo"; o deitado de costas e de brucos, cada um pela avaliacao dele.)
+    std::vector<std::array<const char*, 2>> list { { TrackingViewer3D::MovingGetUpDrill, "Levantar correndo" },
+        { TrackingViewer3D::LyingBackDrill, "Levantar de costas" }, { TrackingViewer3D::LyingFrontDrill, "Levantar de bruços" },
+        { TrackingViewer3D::RunGetUpBackDrill, "Levantar correndo de costas" },
+        { TrackingViewer3D::RunGetUpFrontDrill, "Levantar correndo de bruços" },
+        { TrackingViewer3D::RollGetUpDrill, "Levantar de costas rolando" },
+        { TrackingViewer3D::AvoidFallDrill, "Evitar queda" }, { TrackingViewer3D::BalanceDrill, "Parado" },
+        { TrackingViewer3D::EquilibriumDrill, "Equilíbrio (empurrões)" },
+        { TrackingViewer3D::SceneryDrill, "Bench: levantar" },
+        { TrackingViewer3D::AvoidSceneryDrill, "Bench: evitar" } };
+    constexpr const char* getUpNames[6] { "Lev: pilares", "Lev: corredor", "Lev: rampa", "Lev: corpo no tronco", "Lev: corpos em cima", "Lev: corredor largo" };
+    constexpr const char* avoidNames[5] { "Evit: paredes", "Evit: corredor", "Evit: rampa", "Evit: corpos", "Evit: pilares" };
+    for (std::size_t k = 0; k < TrackingViewer3D::ControlledGetUpDrills.size(); ++k) list.push_back({ TrackingViewer3D::ControlledGetUpDrills[k], getUpNames[k] });
+    for (std::size_t k = 0; k < 5; ++k) list.push_back({ TrackingViewer3D::ControlledAvoidDrills[k], avoidNames[k] });
     // (01/11, a rl_final: a locomocao volta - as faixas primeiro, depois o parado, o giro e os rumos no trote. As quedas
     // da locomocao - as do B21 - sairam; ele, 23h30: "nao vejo distincao para ele existir".)
-    if (TrackingViewer3D::getUpLocomotion()) {
+    std::ifstream curriculumFile(runDirectory / "run.json");
+    const auto curriculum = nlohmann::json::parse(curriculumFile, nullptr, false);
+    // (03/11, o rastreio dos clipes: os 8 rumos do trote - as diagonais com o clipe da frente ou de costas, como o modo
+    // padrao - e o giro parado.)
+    if (!curriculum.is_discarded() && curriculum.contains("v2") && curriculum["v2"].value("rastreio", false)) {
+        constexpr const char* ids[8] { "lev_trote_0", "lev_trote_1", "lev_trote_2", "lev_trote_3", "lev_trote_4", "lev_trote_5", "lev_trote_6", "lev_trote_7" };
+        constexpr const char* names[8] { "Trote: frente", "Trote: diag. fr. esq.", "Trote: esq.", "Trote: diag. cost. esq.",
+            "Trote: costas", "Trote: diag. cost. dir.", "Trote: dir.", "Trote: diag. fr. dir." };
+        for (std::size_t k = 0; k < 8; ++k) list.push_back({ ids[k], names[k] });
+        // (04/11, ele: "adicionar os treinos de CORRIDA nas 8 direcoes".)
+        if (curriculum["v2"].value("corrida", 0.0) > 0.0) {
+            constexpr const char* runIds[8] { "lev_corrida_0", "lev_corrida_1", "lev_corrida_2", "lev_corrida_3", "lev_corrida_4",
+                "lev_corrida_5", "lev_corrida_6", "lev_corrida_7" };
+            constexpr const char* runNames[8] { "Corrida: frente", "Corrida: diag. fr. esq.", "Corrida: esq.",
+                "Corrida: diag. cost. esq.", "Corrida: costas", "Corrida: diag. cost. dir.", "Corrida: dir.", "Corrida: diag. fr. dir." };
+            for (std::size_t k = 0; k < 8; ++k) list.push_back({ runIds[k], runNames[k] });
+        }
+        // (05/11, ele: "vamos fazer um treino de SPRINT com a velocidade meta de 8 m/s".)
+        if (curriculum["v2"].value("sprint", 0.0) > 0.0) list.push_back({ "lev_sprint", "Sprint: frente" });
+        // (04/11, ele: "adaptar os treinos de TROCAS de direcoes e curvas do b21" - no trote.)
+        if (curriculum["v2"].value("manobras", 0.0) > 0.0) {
+            constexpr const char* moveIds[7] { "lev_troca_suave", "lev_troca_media", "lev_troca_forte", "lev_troca_livre",
+                "lev_curva_suave", "lev_curva_s", "lev_curva_fechada" };
+            constexpr const char* moveNames[7] { "Troca suave", "Troca média", "Troca forte", "Troca livre", "Curva suave", "Curva em S", "Curva fechada" };
+            for (std::size_t k = 0; k < 7; ++k) list.push_back({ moveIds[k], moveNames[k] });
+            // (04/11 11h50, ele: "adicionar os exercicios das curvas agora em corridas".)
+            if (curriculum["v2"].value("corrida", 0.0) > 0.0) {
+                list.push_back({ "lev_curva_suave_corrida", "Corrida: curva suave" });
+                list.push_back({ "lev_curva_s_corrida", "Corrida: curva em S" });
+                list.push_back({ "lev_curva_fechada_corrida", "Corrida: curva fechada" });
+            }
+        }
+        list.push_back({ TrackingViewer3D::LocomotionDrills[1], "Giro parado" });
+        // (08/11, ele: "6 exercicios novos, da estrela de oito pontas... bem elaborados e visualmente organizados no laboratorio":
+        // a estrela no treino - "estrela" no v2 do run.json.)
+        // (08/11 14h40: o comando - o jogador emulado.)
+        if (curriculum["v2"].value("comando", 0.0) > 0.0) list.push_back({ "lev_comando", "Comando (jogador emulado)" });
+        if (curriculum["v2"].value("estrela", 0.0) > 0.0) {
+            constexpr const char* starNames[6] { "Estrela trote: peito fixo", "Estrela trote: peito livre",
+                "Estrela trote: peito girando", "Estrela corrida: peito fixo", "Estrela corrida: peito livre",
+                "Estrela corrida: peito girando" };
+            for (std::size_t k = 0; k < TrackingViewer3D::StarDrills.size(); ++k)
+                list.push_back({ TrackingViewer3D::StarDrills[k], starNames[k] });
+        }
+        // (07/11, ele: os compostos - a estrela de 8 pontas. 07/11 06h20, ele: "pode ocultar os treinos da estrela... eles nao
+        // entram agora": so com os compostos no treino - "compostos" no v2 do run.json.)
+        if (curriculum["v2"].value("compostos", 0.0) > 0.0) {
+            constexpr const char* compositeNames[4] { "Estrela: trote, peito fixo", "Estrela: trote, peito livre",
+                "Estrela: corrida, peito fixo", "Estrela: corrida, peito livre" };
+            for (std::size_t k = 0; k < TrackingViewer3D::CompositeDrills.size(); ++k)
+                list.push_back({ TrackingViewer3D::CompositeDrills[k], compositeNames[k] });
+        }
+    } else if (TrackingViewer3D::getUpLocomotion(runDirectory)) {
         // (Sem o andar: o jogo so usa trote, corrida e sprint - ele, 01/11 19h.)
-        constexpr std::size_t Order[11] { 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7 };
-        for (std::size_t k : Order) list.push_back({ TrackingViewer3D::LocomotionDrills[k], LocomotionNames[k] });
+        // (03/11 17h50, ele: "por que botou trote corrida sprint como treino? ja temos os trote nas 8 direcoes" - so os
+        // 8 rumos do trote, o parado e o giro.)
+        constexpr const char* ids[8] { "lev_trote_0", "lev_trote_1", "lev_trote_2", "lev_trote_3", "lev_trote_4", "lev_trote_5", "lev_trote_6", "lev_trote_7" };
+        constexpr const char* names[8] { "Trote: frente", "Trote: diagonal frente esquerda", "Trote: esquerda", "Trote: diagonal costas esquerda",
+            "Trote: costas", "Trote: diagonal costas direita", "Trote: direita", "Trote: diagonal frente direita" };
+        for (std::size_t k = 0; k < 8; ++k) list.push_back({ ids[k], names[k] });
+        list.push_back({ TrackingViewer3D::LocomotionDrills[0], LocomotionNames[0] });
+        list.push_back({ TrackingViewer3D::LocomotionDrills[1], "Giro parado" });
+    }
+    // (04/11 07h05, ele: "deixar ativo apenas o levantar e o evitar queda, ambos sem ambiente": com os cenarios e o levantar
+    // andando fora do treino - o v2 do run.json -, os botoes deles saem.)
+    if (!curriculum.is_discarded() && curriculum.contains("v2") && curriculum["v2"].is_object()) {
+        const auto& v2 = curriculum["v2"];
+        bool scenery = v2.value("evitar_ambientes", 0.0) > 0.0;
+        if (v2.contains("ambientes") && v2["ambientes"].is_array())
+            for (const auto& share : v2["ambientes"]) scenery = scenery || (share.is_number() && share.get<double>() > 0.0);
+        const bool moving = v2.value("movimento", 0.0) > 0.0;
+        std::erase_if(list, [&](const std::array<const char*, 2>& item) {
+            const std::string id = item[0];
+            const bool sceneryDrill = TrackingViewer3D::sceneryPresetOf(id) >= 0 || TrackingViewer3D::isAvoidSceneryDrill(id)
+                || id == TrackingViewer3D::SceneryDrill || id == TrackingViewer3D::AvoidSceneryDrill;
+            const bool lyingDrill = id == TrackingViewer3D::LyingBackDrill || id == TrackingViewer3D::LyingFrontDrill;
+            // (11/11 14h: o levantar pelo clipe - os quatro exercicios dele com o v2.levantar_unreal.)
+            const bool clipGetUp = v2.value("levantar_unreal", 0.0) > 0.0;
+            const bool runGetUpDrill = id == TrackingViewer3D::RunGetUpBackDrill || id == TrackingViewer3D::RunGetUpFrontDrill
+                || id == TrackingViewer3D::RollGetUpDrill;
+            return (sceneryDrill && !scenery) || (id == TrackingViewer3D::MovingGetUpDrill && !moving)
+                || (lyingDrill && !v2.value("deitado", false) && !clipGetUp) || (runGetUpDrill && !clipGetUp)
+                // (07/11, ele: "pode tirar o equilibrio empurroes... sera so no futuro... e sera na locomocao": so com a fatia.)
+                || (id == TrackingViewer3D::EquilibriumDrill && (!v2.value("equilibrio", false) || v2.value("equilibrio_fatia", 0.0) <= 0.0))
+                // (05/11 04h55, ele: "o treino do evitar queda agora sai, fica inativo; vou idealizar melhor ele futuramente".)
+                || (id == TrackingViewer3D::AvoidFallDrill && v2.value("evitar", 0.0) <= 0.0);
+        });
     }
     return list;
+}
+
+// Os rumos do trote e da corrida (os graficos por rumo).
+bool headingDrill(const std::string& drill) {
+    return drill.starts_with("lev_trote_") || drill.starts_with("lev_corrida_") || TrackingViewer3D::maneuverOf(drill) > 0
+        || drill == "lev_giro" || drill == TrackingViewer3D::BalanceDrill || drill == "lev_sprint";
+}
+// (12/11 16h50) O grupo do fogo da locomocao de um exercicio (FIRE_GROUPS do levantar_amp.py): os rumos retos pela direcao, o giro, o
+// parado e o resto (as manobras e a estrela).
+const char* locoFireGroup(const std::string& drill) {
+    if (drill == "lev_giro") return "giro";
+    if (drill == TrackingViewer3D::BalanceDrill || drill == "lev_parado") return "parado";
+    if ((drill.starts_with("lev_trote_") || drill.starts_with("lev_corrida_")) && TrackingViewer3D::maneuverOf(drill) <= 0
+        && drill.back() >= '0' && drill.back() <= '9') {
+        const int h = drill.back() - '0';
+        return h == 2 || h == 6 ? "lado" : h >= 3 && h <= 5 ? "costas" : "frente";
+    }
+    return "outros";
+}
+// A chave do exercicio nas estatisticas por exercicio do log (o parado em alerta e "lev_parado" la).
+const char* scenarioKey(const std::string& drill) {
+    // (05/11: o levantar do chao, com o levantar pelo clipe, tem a forca dele - lev_levantar.)
+    if (drill == TrackingViewer3D::GetUpDrill) return "lev_levantar";
+    if (drill == TrackingViewer3D::LyingBackDrill) return "lev_levantar_costas";
+    if (drill == TrackingViewer3D::LyingFrontDrill) return "lev_levantar_brucos";
+    if (drill == TrackingViewer3D::MovingGetUpDrill) return "lev_levantar_correndo";
+    if (drill == TrackingViewer3D::RunGetUpBackDrill) return "lev_levantar_correndo_costas";
+    if (drill == TrackingViewer3D::RunGetUpFrontDrill) return "lev_levantar_correndo_brucos";
+    if (drill == TrackingViewer3D::RollGetUpDrill) return "lev_levantar_costas_rolando";
+    return drill == TrackingViewer3D::BalanceDrill ? "lev_parado" : drill.c_str();
 }
 
 // A velocidade-alvo de um exercicio do levantar: o em movimento 5, os rumos 2,5 (o teste), os outros parados.
 double getUpGoalSpeed(const std::string& drill) {
     if (drill == TrackingViewer3D::MovingGetUpDrill) return 5.0;
+    // (07/11, ele: as velocidades pedidas "os originais [dos clipes da Unreal] para nao contrapor com o juiz": o trote 4,5 na
+    // frente e nas diagonais da frente, 3,9 de lado e 3,35 de costas; a corrida 7,7 (o sprint deles) na frente e nas
+    // diagonais da frente e, sem sprint de lado e de costas, a corrida deles - 3,9 e 3,35.)
+    if (drill == "lev_sprint") return 8.0;
+    if (drill.starts_with("lev_trote_") || drill.starts_with("lev_corrida_")) {
+        const char h = drill.back();
+        const bool front = h == '0' || h == '1' || h == '7';
+        // (07/11, ele: "a corrida a 6 m/s, sendo 5,5 para lateral e costas".)
+        if (drill.starts_with("lev_corrida_")) return front ? 6.0 : 5.5;
+        return front ? 4.5 : h == '2' || h == '6' ? 3.9 : 3.35;
+    }
     if (const int band = TrackingViewer3D::locomotionBandOf(drill); band >= 0) return BandTestSpeeds[static_cast<std::size_t>(band)];
     return TrackingViewer3D::locomotionHeadingOf(drill) >= 0 ? 2.5 : 0.0;
 }
@@ -195,6 +331,10 @@ Highlight cross(Vec3 at, float radius, Color color) {
 }
 
 // A cor de uma fase (1: verde, 2: ambar, 3: violeta, 4: rosa, 5: ciano; 0 ou alem: sem cor).
+// (11/11, ele: "se o exercicio esta nao ativo, a cor do botao dele fica CINZA... faca detectar se esta ativo ou nao") O cinza
+// de quem o treino ao vivo nao esta treinando (drawDrills decide pelo processo, pelos episodios e pela cabeca congelada).
+constexpr int InactivePhase = 99;
+
 bool phaseColor(int phase, ImVec4& color) {
     switch (phase) {
     case 1: color = { 0.25f, 0.78f, 0.52f, 1.0f }; return true;
@@ -202,7 +342,50 @@ bool phaseColor(int phase, ImVec4& color) {
     case 3: color = { 0.66f, 0.50f, 0.96f, 1.0f }; return true;
     case 4: color = { 0.94f, 0.44f, 0.66f, 1.0f }; return true;
     case 5: color = { 0.30f, 0.80f, 0.92f, 1.0f }; return true;
+    // (04/11, ele: "os botoes dos exercicios com cores diferentes para cada categoria" - as da rl_final, ver drillCategory.)
+    case 10: color = { 0.66f, 0.50f, 0.96f, 1.0f }; return true; // levantar
+    case 11: color = { 0.95f, 0.38f, 0.35f, 1.0f }; return true; // evitar a queda
+    case 12: color = { 0.30f, 0.80f, 0.80f, 1.0f }; return true; // parado
+    case 13: color = { 0.25f, 0.78f, 0.45f, 1.0f }; return true; // trote
+    case 14: color = { 0.96f, 0.62f, 0.20f, 1.0f }; return true; // corrida
+    case 15: color = { 0.94f, 0.44f, 0.70f, 1.0f }; return true; // trocas de direcao
+    case 16: color = { 0.40f, 0.58f, 0.98f, 1.0f }; return true; // curvas
+    case 17: color = { 0.92f, 0.84f, 0.30f, 1.0f }; return true; // giro
+    case 18: color = { 0.95f, 0.27f, 0.27f, 1.0f }; return true; // sprint (05/11)
+    case 19: color = { 0.30f, 0.86f, 0.70f, 1.0f }; return true; // compostos (07/11)
+    case InactivePhase: color = { 0.46f, 0.47f, 0.49f, 1.0f }; return true; // fora do treino (11/11)
     default: return false;
+    }
+}
+
+// A categoria de um exercicio da rl_final (a cor do botao e o nome dela).
+int drillCategory(const std::string& id) {
+    // (12/11 17h30, ele: "corrige o problema dele indicar treinos como inativos quando em tese estariam ativos": o comando e a estrela
+    // caiam no padrao "Levantar" - no grupo dos levantares, na cor deles e com o ativo pela cabeca do levantar. Sao compostos da locomocao.)
+    if (id.starts_with("comp_") || id.starts_with("lev_estrela_") || id == "lev_comando") return 19;
+    if (id.starts_with("lev_trote_")) return 13;
+    if (id == "lev_sprint") return 18;
+    if (id.starts_with("lev_corrida_")) return 14;
+    if (id.starts_with("lev_troca_")) return 15;
+    if (id.starts_with("lev_curva_")) return 16;
+    if (id.find("giro") != std::string::npos) return 17;
+    if (id.find("parado") != std::string::npos) return 12;
+    if (id.find("evitar") != std::string::npos) return 11;
+    return 10;
+}
+const char* categoryName(int phase) {
+    switch (phase) {
+    case 10: return "Levantar";
+    case 11: return "Evitar a queda";
+    case 12: return "Parado";
+    case 13: return "Trote";
+    case 14: return "Corrida";
+    case 15: return "Troca de direção";
+    case 16: return "Curva";
+    case 17: return "Giro";
+    case 18: return "Sprint";
+    case 19: return "Compostos";
+    default: return nullptr;
     }
 }
 
@@ -349,13 +532,20 @@ std::pair<float, float> niceRange(std::initializer_list<const std::vector<float>
 void lineChart(const char* id, const std::vector<ChartSeries>& series, float minimum, float maximum, ImVec2 size,
     const char* valueText, const char* unit, const std::vector<double>* times = nullptr, bool timeLabels = false,
     const char* emptyText = "sem dados") {
+    // (06/11 05h35, ele: "os graficos precisam ter LIMITES de quanto eles expandem, para nao virarem essas aberracoes": no
+    // maximo 16 linhas de texto de altura e 55% da largura - o espaco que sobra fica vazio embaixo.)
+    size.y = std::min(size.y, std::min(16.0f * ImGui::GetFontSize(), 0.55f * size.x));
     ImGui::InvisibleButton(id, size);
     const bool hovered = ImGui::IsItemHovered();
     const ImVec2 low = ImGui::GetItemRectMin(), high = ImGui::GetItemRectMax();
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddRectFilled(low, high, IM_COL32(10, 17, 25, 255), 5.0f);
     draw->AddRect(low, high, IM_COL32(40, 62, 84, 255), 5.0f);
-    const ImVec2 inner0 { low.x + 8.0f, low.y + 8.0f }, inner1 { high.x - 8.0f, high.y - 8.0f };
+    // (05/11 20h: a faixa de cima com o valor e a de baixo com as horas ficam fora da area das linhas - a 99% a linha passava
+    // por cima do texto, e perto de zero por cima das horas.)
+    const float band = ImGui::GetTextLineHeight() + 8.0f;
+    const ImVec2 inner0 { low.x + 8.0f, low.y + 8.0f + (valueText[0] ? band : 0.0f) },
+        inner1 { high.x - 8.0f, high.y - 8.0f - (timeLabels && times && times->size() > 1 ? band : 0.0f) };
     const float span = std::max(maximum - minimum, 1e-6f);
     const auto yOf = [&](float v) {
         return inner1.y - (std::clamp(v, minimum, maximum) - minimum) / span * (inner1.y - inner0.y);
@@ -369,13 +559,39 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
     std::size_t hoverCount = 0;
     for (const ChartSeries& item : series) hoverCount = std::max(hoverCount, item.values->size());
     const auto drawn = [](const ChartSeries& item) { return !item.hidden && anyFinite(*item.values); };
+    // (06/11 04h, ele: "quando nao ha dados... eles precisam ficar bonitinhos e nao cortados nunca": o trecho do grafico vai
+    // do primeiro ponto com dado de qualquer serie desenhada ate o agora - antes o eixo comecava na primeira linha do log e,
+    // com o exercicio sem dado no comeco, a linha nascia no meio do grafico. Em fracao do historico, 0 = a primeira linha.)
+    // (Pelas series principais: a linha vermelha do exigido tem dado desde o comeco e nao manda no recorte.)
+    const auto firstAt = [&](bool references) {
+        float at = 1.0f;
+        for (const ChartSeries& item : series) {
+            if (!drawn(item) || item.reference != references || item.values->size() < 2) continue;
+            const std::vector<float>& v = *item.values;
+            for (std::size_t i = 0; i < v.size(); ++i)
+                if (std::isfinite(v[i])) {
+                    at = std::min(at, static_cast<float>(i) / static_cast<float>(v.size() - 1));
+                    break;
+                }
+        }
+        return at;
+    };
+    float start = firstAt(false);
+    if (start > 0.999f) start = firstAt(true);
+    if (start > 0.999f) start = 0.0f;
+    const auto frameAt = [start](float at) { return std::clamp((at - start) / (1.0f - start), 0.0f, 1.0f); };
     if (hovered && hoverCount > 1)
         hoverAt = std::clamp((ImGui::GetIO().MousePos.x - inner0.x) / std::max(inner1.x - inner0.x, 1.0f), 0.0f, 1.0f);
-    const auto indexAt = [hoverAt](std::size_t size) {
-        return static_cast<std::size_t>(std::lround(hoverAt * static_cast<float>(size - 1)));
+    const auto indexAt = [hoverAt, start](std::size_t size) {
+        return static_cast<std::size_t>(std::lround((start + hoverAt * (1.0f - start)) * static_cast<float>(size - 1)));
     };
     // As areas, as referencias e as linhas, nessa ordem: nenhuma linha fica por baixo da area de outra.
+    // (05/11 20h, ele: "corrija esses malditos graficos do levantar quando expandido... isso e horrivel": com duas ou mais
+    // series cheias as areas se somavam num bloco solido - a area so com uma serie cheia.)
+    const std::size_t filled = static_cast<std::size_t>(std::count_if(series.begin(), series.end(),
+        [&](const ChartSeries& item) { return !item.reference && drawn(item); }));
     for (int pass = 0; pass < 3; ++pass) {
+        if (pass == 0 && filled > 1) continue;
         for (const ChartSeries& item : series) {
             if (item.hidden || (pass == 1) != item.reference) continue;
             const std::vector<float>& v = *item.values;
@@ -383,29 +599,42 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
             const auto has = [&v](std::size_t i) { return std::isfinite(v[i]); };
             // (Um ponto so - a primeira avaliacao - fica na ponta direita.)
             const auto point = [&](std::size_t i) {
-                const float at = v.size() < 2 ? 1.0f : static_cast<float>(i) / static_cast<float>(v.size() - 1);
+                const float at = v.size() < 2 ? 1.0f : frameAt(static_cast<float>(i) / static_cast<float>(v.size() - 1));
                 return ImVec2 { inner0.x + (inner1.x - inner0.x) * at, yOf(v[i]) };
             };
+            // (04/11, ele: "quando ha lacunas de dados, interligar com o mais proximo, para nao ficar feio" - os pontos com
+            // dado ligados por cima dos buracos; depois do ultimo, o valor dele segue reto ate o agora (a borda direita);
+            // antes do primeiro, nada.)
+            std::vector<ImVec2> joined;
+            const auto inside = [&](std::size_t i) {
+                return v.size() < 2 || static_cast<float>(i) / static_cast<float>(v.size() - 1) >= start - 1e-6f;
+            };
+            for (std::size_t i = 0; i < v.size(); ++i)
+                if (has(i) && inside(i)) joined.push_back(point(i));
+            if (joined.empty()) continue;
+            std::size_t lastFinite = v.size();
+            while (lastFinite-- > 0 && !has(lastFinite)) {}
+            if (lastFinite + 1 < v.size() && v.size() > 1) joined.push_back({ inner1.x, joined.back().y });
+            // (06/11: um ponto so vira uma linha reta na largura toda, no valor dele - nao um pontinho solto no canto.)
+            if (joined.size() == 1 && !item.reference) joined.insert(joined.begin(), ImVec2 { inner0.x, joined.front().y });
             if (pass == 0) {
+                // (05/11 20h: a area num poligono so - a linha e o fundo -; em quadrilateros, as emendas faziam faixas
+                // verticais.)
+                if (joined.size() < 2) continue;
                 ImVec4 fill = item.color;
                 fill.w = 0.16f;
-                const ImU32 fillColor = ImGui::ColorConvertFloat4ToU32(fill);
-                for (std::size_t i = 0; i + 1 < v.size(); ++i) {
-                    if (!has(i) || !has(i + 1)) continue;
-                    const ImVec2 a = point(i), b = point(i + 1);
-                    draw->AddQuadFilled(a, b, { b.x, inner1.y }, { a.x, inner1.y }, fillColor);
-                }
+                std::vector<ImVec2> area = joined;
+                area.push_back({ joined.back().x, inner1.y });
+                area.push_back({ joined.front().x, inner1.y });
+                draw->AddConcavePolyFilled(area.data(), static_cast<int>(area.size()), ImGui::ColorConvertFloat4ToU32(fill));
                 continue;
             }
             ImVec4 line = item.color;
             if (item.reference) line.w = 0.8f;
             const ImU32 lineColor = ImGui::ColorConvertFloat4ToU32(line);
-            for (std::size_t i = 0; i + 1 < v.size(); ++i)
-                if (has(i) && has(i + 1)) draw->AddLine(point(i), point(i + 1), lineColor, item.reference ? 1.2f : 2.0f);
-            // (Um ponto sozinho entre buracos vira um pingo; o ultimo com dado, o ponto de agora.)
-            for (std::size_t i = 0; i < v.size(); ++i)
-                if (has(i) && (i == 0 || !has(i - 1)) && (i + 1 == v.size() || !has(i + 1)))
-                    draw->AddCircleFilled(point(i), 1.8f, lineColor);
+            for (std::size_t k = 0; k + 1 < joined.size(); ++k)
+                draw->AddLine(joined[k], joined[k + 1], lineColor, item.reference ? 1.2f : 2.0f);
+            if (joined.size() == 1) draw->AddCircleFilled(joined.front(), 1.8f, lineColor);
             if (!item.reference)
                 for (std::size_t i = v.size(); i-- > 0;)
                     if (has(i)) {
@@ -421,9 +650,20 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
         if (times && !times->empty()) ImGui::TextDisabled("%s", clockText((*times)[indexAt(times->size())]).c_str());
         for (const ChartSeries& item : series) {
             if (item.values->empty() || !anyFinite(*item.values)) continue;
-            const float v = (*item.values)[indexAt(item.values->size())];
+            // (Numa lacuna, o ponto com dado mais proximo.)
+            const std::vector<float>& values = *item.values;
+            const std::size_t at = indexAt(values.size());
+            float v = values[at];
+            // (06/11 08h15, ele: a dica mostrava a capacidade antes da primeira medicao - a linha de referencia (uma medicao que vale
+            // ate a seguinte) so olha para tras.)
+            for (std::size_t d = 1; !std::isfinite(v) && d < values.size(); ++d) {
+                if (at >= d && std::isfinite(values[at - d])) v = values[at - d];
+                else if (!item.reference && at + d < values.size() && std::isfinite(values[at + d])) v = values[at + d];
+            }
             const std::string name = !item.label.empty() ? item.label + "  " : item.reference ? "clássico  " : "";
             if (!std::isfinite(v)) {
+                // (Uma referencia sem medicao ainda - a capacidade antes da primeira - nao aparece na dica.)
+                if (item.reference) continue;
                 ImGui::TextColored(item.color, "%s—", name.c_str());
                 continue;
             }
@@ -447,7 +687,8 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
     }
     if (timeLabels && times && times->size() > 1) {
         // O comeco e o fim do trecho, embaixo nos cantos.
-        const std::string first = clockText(times->front()), last = clockText(times->back());
+        const std::size_t firstIndex = static_cast<std::size_t>(std::lround(start * static_cast<float>(times->size() - 1)));
+        const std::string first = clockText((*times)[firstIndex]), last = clockText(times->back());
         const float y = high.y - ImGui::GetTextLineHeight() - 6.0f;
         draw->AddText({ low.x + 60.0f, y }, IM_COL32(100, 120, 140, 200), first.c_str());
         draw->AddText({ high.x - ImGui::CalcTextSize(last.c_str()).x - 10.0f, y }, IM_COL32(100, 120, 140, 200),
@@ -458,6 +699,203 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
         draw->AddText({ (low.x + high.x - extent.x) * 0.5f, (low.y + high.y - extent.y) * 0.5f },
             IM_COL32(100, 120, 140, 200), emptyText);
     }
+}
+
+// (12/11 05h30, o fogo do levantar no laboratorio) A cor pela intensidade (0 ciano, 0,5 ambar, 1 vermelho), a intensidade do
+// continuo (5% a 55% do peso) e da pancada (0,5 a 3,5 m/s), de onde vem (o lado oposto ao rumo da forca, a partir da frente do
+// corpo) e o momento da pancada.
+std::array<int, 3> fireRgb(float t) {
+    t = std::clamp(t, 0.0f, 1.0f);
+    const auto mix = [](float a, float b, float u) { return static_cast<int>(std::lround(a + (b - a) * u)); };
+    if (t < 0.5f) {
+        const float u = t / 0.5f;
+        return { mix(80.0f, 250.0f, u), mix(205.0f, 185.0f, u), mix(235.0f, 60.0f, u) };
+    }
+    const float u = (t - 0.5f) / 0.5f;
+    return { mix(250.0f, 240.0f, u), mix(185.0f, 64.0f, u), mix(60.0f, 52.0f, u) };
+}
+
+Color fireColor(float t, float alpha) {
+    const std::array<int, 3> c = fireRgb(t);
+    return rgb(c[0], c[1], c[2], std::clamp(alpha, 0.0f, 1.0f));
+}
+
+float holdIntensity(float shareOfWeight) { return std::clamp((shareOfWeight - 0.05f) / 0.50f, 0.0f, 1.0f); }
+float shoveIntensity(float speed) { return std::clamp((speed - 0.5f) / 3.0f, 0.0f, 1.0f); }
+
+const char* fireSource(int direction) {
+    static constexpr const char* Names[8] { "de frente", "da frente-esquerda", "da esquerda", "de trás-esquerda", "de trás",
+        "de trás-direita", "da direita", "da frente-direita" };
+    return Names[((direction % 8) + 4) % 8];
+}
+
+const char* fireMoment(int timing) {
+    return timing == 1 ? "no começo" : timing == 2 ? "no meio" : timing == 3 ? "quase no fim" : "";
+}
+
+// O cartao do fogo (canto de cima, a direita da imagem): o cenario e o momento, a rosa dos 8 rumos em volta do corpo visto de cima (a
+// frente para cima) com a seta de onde a forca chega, a forca (a barra da fracao sorteada do nivel e os numeros), a linha do tempo do
+// episodio (a pancada, o chao, o firme) e o desfecho.
+void drawFireCard(ImDrawList* draw, ImVec2 origin, ImVec2 image, const GetUpFireView3D& f) {
+    const float s = ImGui::GetFontSize();
+    ImFont* font = ImGui::GetFont();
+    const float w = s * 31.0f, h = s * 17.0f;
+    const ImVec2 a { origin.x + image.x - w - s * 0.9f, origin.y + s * 0.9f }, b { a.x + w, a.y + h };
+    draw->AddRectFilled(a, b, IM_COL32(11, 15, 23, 222), s * 0.7f);
+    draw->AddRect(a, b, IM_COL32(255, 255, 255, 36), s * 0.7f, 0, 1.0f);
+    const bool hold = f.kind == 2 || f.kind == 3, shove = f.kind == 1 || f.kind == 3, above = f.direction >= 8;
+    const float tHold = hold ? holdIntensity(f.size) : 0.0f, tShove = shove ? shoveIntensity(f.shoveSize) : 0.0f;
+    const std::array<int, 3> c = fireRgb(std::max(tHold, tShove));
+    const ImU32 accent = IM_COL32(c[0], c[1], c[2], 255), soft = IM_COL32(c[0], c[1], c[2], 70);
+    const ImU32 gray = IM_COL32(150, 160, 175, 215), white = IM_COL32(235, 238, 245, 255);
+    const auto text = [&](ImVec2 at, float size, ImU32 color, const std::string& value) {
+        draw->AddText(font, size, at, color, value.c_str());
+    };
+    // O titulo, o "de cima" e de onde vem.
+    // (12/11 16h45, o fogo da locomocao: o titulo pela adversidade de agora - o agarrao, o continuo, a pancada ou nenhuma ainda.)
+    const bool grab = f.locomotion && f.grabLink >= 0;
+    const std::string title = grab && f.kind == 0 ? "AGARRÃO · " + std::to_string(static_cast<int>(std::lround(f.grabForce.length()))) + " N"
+        : f.kind == 3 ? "EMPURRÃO + PANCADA" : f.kind == 2 ? "EMPURRÃO CONTÍNUO" : f.kind == 1 ? "PANCADA" : "FOGO DA LOCOMOÇÃO";
+    text({ a.x + s * 0.9f, a.y + s * 0.6f }, s * 1.25f, accent,
+        UI::FontAwesome::icon(shove ? UI::FontAwesome::HandFist : UI::FontAwesome::Hand) + "  " + title);
+    if (above) {
+        const char* chip = "DE CIMA";
+        const ImVec2 extent = font->CalcTextSizeA(s * 0.9f, FLT_MAX, 0.0f, chip);
+        const ImVec2 lo { b.x - s * 0.9f - extent.x - s * 0.9f, a.y + s * 0.7f }, hi { b.x - s * 0.9f, a.y + s * 0.7f + s * 1.35f };
+        draw->AddRectFilled(lo, hi, soft, s * 0.6f);
+        draw->AddRect(lo, hi, accent, s * 0.6f, 0, 1.2f);
+        text({ lo.x + s * 0.45f, lo.y + (hi.y - lo.y - extent.y) * 0.5f }, s * 0.9f, accent, chip);
+    }
+    std::string sub = above ? std::string("vem de cima") : std::string("vem ") + fireSource(f.direction);
+    if (shove && !f.locomotion) sub += std::string(" · pancada ") + fireMoment(f.timing);
+    // (12/11 16h30, o fogo da locomocao: o nivel L do grupo - 0 o comeco sutil, 1 o fogo do levantar.)
+    if (f.locomotion) sub += " · fogo da locomoção, nível " + decimal(f.locoLevel, 2);
+    text({ a.x + s * 0.9f, a.y + s * 2.15f }, s * 0.95f, gray, sub);
+    // A rosa: o corpo visto de cima, a frente para cima; a seta chega de onde a forca vem.
+    const ImVec2 center { a.x + s * 5.3f, a.y + s * 8.0f };
+    const float R = s * 3.1f;
+    draw->AddCircleFilled(center, R, IM_COL32(255, 255, 255, 12), 48);
+    draw->AddCircle(center, R, IM_COL32(255, 255, 255, 70), 48, 1.5f);
+    const auto screen = [&](float degrees, float radius) {
+        const float r = degrees * 3.14159265f / 180.0f;
+        return ImVec2 { center.x - std::sin(r) * radius, center.y - std::cos(r) * radius };
+    };
+    for (int k = 0; k < 8; ++k)
+        draw->AddLine(screen(45.0f * k, R * (k % 2 == 0 ? 0.80f : 0.88f)), screen(45.0f * k, R),
+            IM_COL32(255, 255, 255, k % 2 == 0 ? 120 : 70), k % 2 == 0 ? 2.0f : 1.2f);
+    const auto tag = [&](const char* value, float degrees) {
+        const ImVec2 extent = font->CalcTextSizeA(s * 0.8f, FLT_MAX, 0.0f, value);
+        const ImVec2 p = screen(degrees, R + s * 0.85f);
+        draw->AddText(font, s * 0.8f, { p.x - extent.x * 0.5f, p.y - extent.y * 0.5f }, gray, value);
+    };
+    tag("frente", 0.0f);
+    tag("costas", 180.0f);
+    tag("esq", 90.0f);
+    tag("dir", 270.0f);
+    draw->AddLine({ center.x - s * 0.8f, center.y + s * 0.15f }, { center.x + s * 0.8f, center.y + s * 0.15f }, white, s * 0.34f);
+    draw->AddCircleFilled({ center.x, center.y - s * 0.05f }, s * 0.4f, white, 20);
+    draw->AddTriangleFilled({ center.x, center.y - s * 0.78f }, { center.x - s * 0.2f, center.y - s * 0.4f },
+        { center.x + s * 0.2f, center.y - s * 0.4f }, white);
+    const float push = 45.0f * static_cast<float>(f.direction % 8);
+    const float thick = s * (0.18f + 0.24f * std::max(tHold, tShove));
+    const ImVec2 from = screen(push + 180.0f, R + s * 0.2f), to = screen(push + 180.0f, s * 1.05f);
+    draw->AddLine(from, to, accent, thick);
+    {
+        const float r = push * 3.14159265f / 180.0f;
+        const ImVec2 dir { -std::sin(r), -std::cos(r) }, side { -dir.y, dir.x };
+        const float head = s * 0.6f + thick;
+        const ImVec2 tip { to.x + dir.x * head * 0.6f, to.y + dir.y * head * 0.6f };
+        draw->AddTriangleFilled(tip,
+            { to.x - dir.x * head * 0.4f + side.x * head * 0.55f, to.y - dir.y * head * 0.4f + side.y * head * 0.55f },
+            { to.x - dir.x * head * 0.4f - side.x * head * 0.55f, to.y - dir.y * head * 0.4f - side.y * head * 0.55f }, accent);
+        draw->AddCircleFilled(from, s * 0.36f, soft, 16);
+    }
+    if (above)
+        for (int k = 0; k < 2; ++k) {
+            const float y = center.y + s * (0.95f + 0.5f * k);
+            draw->AddLine({ center.x - s * 0.5f, y - s * 0.32f }, { center.x, y }, accent, 2.5f);
+            draw->AddLine({ center.x + s * 0.5f, y - s * 0.32f }, { center.x, y }, accent, 2.5f);
+        }
+    // A forca: o texto, a barra (a fracao sorteada do nivel; o traco em 40%, o minimo do sorteio) e o nivel.
+    const float x0 = a.x + s * 11.2f, barWidth = b.x - s * 1.0f - x0;
+    float y = a.y + s * 3.7f;
+    text({ x0, y }, s * 0.8f, gray, "FORÇA");
+    y += s * 1.15f;
+    const auto block = [&](const std::string& line, float t, const std::string& level) {
+        const std::array<int, 3> k = fireRgb(t);
+        text({ x0, y }, s * 0.95f, white, line);
+        const float barY = y + s * 1.35f;
+        draw->AddRectFilled({ x0, barY }, { x0 + barWidth, barY + s * 0.5f }, IM_COL32(255, 255, 255, 22), s * 0.25f);
+        draw->AddRectFilled({ x0, barY }, { x0 + barWidth * std::clamp(f.fraction, 0.0f, 1.0f), barY + s * 0.5f },
+            IM_COL32(k[0], k[1], k[2], 235), s * 0.25f);
+        draw->AddLine({ x0 + barWidth * 0.4f, barY - s * 0.12f }, { x0 + barWidth * 0.4f, barY + s * 0.62f }, IM_COL32(255, 255, 255, 70), 1.0f);
+        text({ x0, barY + s * 0.7f }, s * 0.8f, gray, level);
+        y += s * 3.3f;
+    };
+    const std::string draw_ = f.locomotion ? std::string("nível L ") + decimal(f.locoLevel, 2)
+        : "sorteio " + std::to_string(static_cast<int>(std::lround(100.0f * f.fraction))) + "% do nível";
+    if (hold)
+        block("Empurrão  " + std::to_string(static_cast<int>(std::lround(100.0f * f.size))) + "% do peso · "
+                  + std::to_string(static_cast<int>(std::lround(f.size * f.weight))) + " N",
+            tHold, "nível " + std::to_string(static_cast<int>(std::lround(100.0f * f.levelHold))) + "% do peso · " + draw_);
+    if (shove)
+        block("Pancada  " + decimal(f.shoveSize, 1) + " m/s"
+                  + (f.shoveDone ? " · ~" + std::to_string(static_cast<int>(std::lround(f.shoveForce.length()))) + " N" : std::string()),
+            tShove, "nível " + decimal(f.levelShove, 1) + " m/s · " + draw_);
+    // A linha do tempo do episodio: a pancada (o triangulo), o chao (vermelho) e o firme (verde).
+    const float span = std::max(0.5f, f.budget);
+    const auto atTime = [&](float t) { return x0 + barWidth * std::clamp(t / span, 0.0f, 1.0f); };
+    y = b.y - s * 5.1f;
+    text({ x0, y }, s * 0.8f, gray, "TEMPO");
+    const float lineY = y + s * 1.35f;
+    draw->AddRectFilled({ x0, lineY }, { x0 + barWidth, lineY + s * 0.3f }, IM_COL32(255, 255, 255, 25), s * 0.15f);
+    draw->AddRectFilled({ x0, lineY }, { atTime(f.time), lineY + s * 0.3f }, IM_COL32(255, 255, 255, 80), s * 0.15f);
+    if (shove && f.shoveAt >= 0.0f) {
+        const float x = atTime(f.shoveAt);
+        draw->AddTriangleFilled({ x, lineY - s * 0.05f }, { x - s * 0.34f, lineY - s * 0.62f }, { x + s * 0.34f, lineY - s * 0.62f },
+            f.shoveDone ? accent : soft);
+    }
+    if (f.downAt >= 0.0f) draw->AddCircleFilled({ atTime(f.downAt), lineY + s * 0.15f }, s * 0.32f, IM_COL32(235, 70, 60, 255), 14);
+    if (f.deliveredAt >= 0.0f) {
+        const float x = atTime(f.upAt >= 0.0f ? f.upAt : f.deliveredAt);
+        draw->AddLine({ x, lineY - s * 0.5f }, { x, lineY + s * 0.8f }, IM_COL32(80, 225, 130, 255), 2.5f);
+    }
+    text({ x0, lineY + s * 0.5f }, s * 0.75f, gray, "0 s");
+    {
+        const std::string last = decimal(span, 1) + " s";
+        const ImVec2 extent = font->CalcTextSizeA(s * 0.75f, FLT_MAX, 0.0f, last.c_str());
+        text({ x0 + barWidth - extent.x, lineY + s * 0.5f }, s * 0.75f, gray, last);
+    }
+    // O desfecho, embaixo da rosa.
+    std::string outcome;
+    ImU32 tone = white;
+    if (f.locomotion) {
+        // (12/11 16h30) Na locomocao: caiu, firme ate o fim, ou ainda sob fogo.
+        if (f.downAt >= 0.0f) {
+            outcome = UI::FontAwesome::icon(UI::FontAwesome::Xmark) + "  Caiu aos " + decimal(f.downAt, 1) + " s";
+            tone = IM_COL32(235, 70, 60, 255);
+        } else if (f.time >= span - 0.05f) {
+            outcome = UI::FontAwesome::icon(UI::FontAwesome::Check) + "  Firme até o fim";
+            tone = IM_COL32(80, 225, 130, 255);
+        } else {
+            outcome = "Sob fogo · " + decimal(f.time, 1) + " s";
+        }
+    } else if (f.deliveredAt >= 0.0f) {
+        const float up = f.upAt >= 0.0f ? f.upAt : f.deliveredAt;
+        const bool recovered = f.downAt >= 0.0f && f.downAt < f.deliveredAt;
+        outcome = UI::FontAwesome::icon(UI::FontAwesome::Check) + (recovered ? "  Recuperou · firme aos " : "  Firme de pé aos ")
+            + decimal(up, 2) + " s";
+        tone = recovered ? IM_COL32(120, 255, 160, 255) : IM_COL32(80, 225, 130, 255);
+    } else if (f.time >= span - 0.05f) {
+        outcome = UI::FontAwesome::icon(UI::FontAwesome::Xmark) + "  Não levantou";
+        tone = IM_COL32(235, 70, 60, 255);
+    } else if (f.downAt >= 0.0f) {
+        outcome = "Foi ao chão aos " + decimal(f.downAt, 1) + " s";
+        tone = IM_COL32(245, 120, 70, 255);
+    } else {
+        outcome = "Levantando · " + decimal(f.time, 1) + " s";
+    }
+    text({ a.x + s * 0.9f, b.y - s * 1.65f }, s * 1.05f, tone, outcome);
 }
 
 } // namespace
@@ -499,6 +937,12 @@ void ReinforcementLearningScreen::scanRuns() {
         const nlohmann::json config = nlohmann::json::parse(file, nullptr, false);
         return !config.is_discarded() && config.is_object() && config.value("principal", false);
     });
+    std::stable_partition(found.begin(), found.end(), [&](const auto& item) {
+        std::ifstream file(m_paths.run(item.second) / "status.json");
+        const auto status = nlohmann::json::parse(file, nullptr, false);
+        return !status.is_discarded() && status.is_object()
+            && trainerProcessAlive3D(status.value("pid", 0), item.second);
+    });
     const bool hasMotor = std::any_of(found.begin(), found.end(), [&](const auto& item) {
         return MotorViewer3D::isMotorTask(m_paths.run(item.second) / "tarefa.json");
     });
@@ -514,6 +958,8 @@ void ReinforcementLearningScreen::selectRun(const std::string& run) {
     m_run = run;
     m_link = std::make_unique<TrainerLink3D>(m_paths, m_run);
     m_historyRun.clear();
+    m_getUpCurve = {};
+    m_getUpLive = {};
 }
 
 std::string ReinforcementLearningScreen::activeRun() const {
@@ -530,6 +976,11 @@ std::filesystem::path ReinforcementLearningScreen::taskPath() const {
     if (status.task == "motor_basico")
         return m_options.sourceRoot / "assets" / "rl" / "motor" / "basico.json";
     return m_options.sourceRoot / "assets" / "rl" / "tasks" / (status.task + ".json");
+}
+
+std::filesystem::path ReinforcementLearningScreen::getUpRunDirectory() const {
+    const auto task = taskPath();
+    return TrackingViewer3D::isGetUpTask(task) ? task.parent_path() : TrackingViewer3D::getUpLog().parent_path();
 }
 
 std::filesystem::path ReinforcementLearningScreen::policyPath() const {
@@ -551,13 +1002,24 @@ void ReinforcementLearningScreen::loadDrills() {
     if (path.empty() || !std::filesystem::exists(path)) return;
     if (TrackingViewer3D::isGetUpTask(path)) {
         // A rede do levantar, a principal: os exercicios dela, ativos (em roxo) enquanto ela treina.
-        std::vector<std::array<const char*, 2>> all { { TrackingViewer3D::GetUpDrill, "Levantar do chão" } };
-        const auto rest = getUpDrillList();
+        std::vector<std::array<const char*, 2>> all { { TrackingViewer3D::GetUpDrill, "Levantar" } };
+        // (07/11, ele: "vai ter 3 exercicios de levantar so: de costas, de brucos, correndo - apenas esses": com os deitados,
+        // o levantar das quedas sorteadas sai da lista.)
+        {
+            std::ifstream runFile(path.parent_path() / "run.json");
+            const auto runJson = nlohmann::json::parse(runFile, nullptr, false);
+            // (12/11 17h10, ele: "tem um exercicio antigo chamado Levantar... e obsoleto, remova": com o levantar pelo clipe da Unreal, as
+            // quedas sorteadas sairam do treino - o botao tambem.)
+            if (!runJson.is_discarded() && runJson.contains("v2") && runJson["v2"].is_object()
+                && (runJson["v2"].value("deitado", false) || runJson["v2"].value("levantar_unreal", 0.0) > 0.0))
+                all.clear();
+        }
+        const auto rest = getUpDrillList(path.parent_path());
         all.insert(all.end(), rest.begin(), rest.end());
         for (const auto& [id, name] : all) {
             m_drillIds.push_back(id);
             m_drillNames.push_back(name);
-            m_drillPhases.push_back(3);
+            m_drillPhases.push_back(drillCategory(id));
             m_drillCategories.push_back("levantar");
             m_drillWeights.push_back(0.0f);
             m_drillInfo.push_back({ id, 0.0, getUpGoalSpeed(id), true });
@@ -629,17 +1091,17 @@ void ReinforcementLearningScreen::loadDrills() {
     // O levantar v2 (31/10 17h): o levantar em movimento e o evitar a queda, da mesma rede do levantar (o treino a
     // parte levantar_v2), logo depois do "Levantar do chao" (fora da tarefa da locomocao: ela nao muda).
     if (const auto at = std::find(m_drillIds.begin(), m_drillIds.end(), std::string(TrackingViewer3D::GetUpDrill));
-        at != m_drillIds.end() && TrackingViewer3D::getUpVersion2() && !TrackingViewer3D::isGetUpTask(path)) {
+        at != m_drillIds.end() && TrackingViewer3D::getUpVersion2(getUpRunDirectory()) && !TrackingViewer3D::isGetUpTask(path)) {
         const std::size_t i = static_cast<std::size_t>(at - m_drillIds.begin());
         const std::string category = i < m_drillCategories.size() ? m_drillCategories[i] : std::string();
-        const int phase = i < m_drillPhases.size() ? m_drillPhases[i] : 1;
         // (A locomocao na rede do levantar, 31/10 22h35: os basicos do B21, depois dos outros.)
         const std::vector<std::array<const char*, 2>> all = getUpDrillList();
         for (std::size_t k = 0; k < all.size(); ++k) {
             const std::size_t where = i + 1 + k;
             m_drillIds.insert(m_drillIds.begin() + static_cast<std::ptrdiff_t>(where), all[k][0]);
             m_drillNames.insert(m_drillNames.begin() + static_cast<std::ptrdiff_t>(where), all[k][1]);
-            if (m_drillPhases.size() >= where) m_drillPhases.insert(m_drillPhases.begin() + static_cast<std::ptrdiff_t>(where), phase);
+            if (m_drillPhases.size() >= where)
+                m_drillPhases.insert(m_drillPhases.begin() + static_cast<std::ptrdiff_t>(where), drillCategory(all[k][0]));
             if (m_drillCategories.size() >= where)
                 m_drillCategories.insert(m_drillCategories.begin() + static_cast<std::ptrdiff_t>(where), category);
             if (m_drillWeights.size() >= where) m_drillWeights.insert(m_drillWeights.begin() + static_cast<std::ptrdiff_t>(where), 0.0f);
@@ -699,9 +1161,10 @@ void ReinforcementLearningScreen::ensureViewer() {
                     TrackingViewer3D::conditionsOf(task));
             else if (getUpTask
                 || (TrackingViewer3D::isGetUpDrill(m_viewerDrill)
-                    && (TrackingViewer3D::getUpReady() || TrackingViewer3D::getUpTraining())))
+                    && (TrackingViewer3D::getUpReady(getUpRunDirectory()) || TrackingViewer3D::getUpTraining(getUpRunDirectory()))))
                 // (O levantar do chao e a rede propria dele, a do treino a parte, nao a deste.)
-                m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed, m_viewerDrill);
+                m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed, m_viewerDrill,
+                    std::filesystem::path {}, 1.0f, 0.2f, TrackingViewerConditions3D {}, getUpRunDirectory());
             else
                 m_locomotion = std::make_unique<LocomotionViewer3D>(task, m_options.sourceRoot / "assets", m_viewerDrill,
                     seed);
@@ -780,6 +1243,13 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
     } catch (const std::exception& error) {
         m_policy.reset();
         m_policyText = error.what();
+    }
+}
+
+void ReinforcementLearningScreen::setViewerPushes(bool on) {
+    if (auto* viewer = dynamic_cast<TrackingViewer3D*>(m_locomotion.get())) {
+        viewer->setPushes(on);
+        m_dirty = true;
     }
 }
 
@@ -1014,8 +1484,20 @@ void ReinforcementLearningScreen::update(float deltaSeconds) {
     stepViewer(deltaSeconds);
     if ((m_policyWatch -= deltaSeconds) <= 0.0f) {
         m_policyWatch = 2.0f;
+        // (03/11, ele: "o laboratorio SEMPRE deve mostrar o atual que esta sendo treinado": o treino vivo - a lista poe os
+        // vivos primeiro - assume a tela, mesmo que ela tenha aberto com o treino parado ou com outro.)
+        if (m_options.run.empty()) {
+            scanRuns();
+            if (!m_runs.empty() && m_runs.front() != m_run) {
+                std::ifstream file(m_paths.run(m_runs.front()) / "status.json");
+                const auto status = nlohmann::json::parse(file, nullptr, false);
+                if (!status.is_discarded() && status.is_object()
+                    && trainerProcessAlive3D(status.value("pid", 0), m_runs.front()))
+                    selectRun(m_runs.front());
+            }
+        }
         reloadPolicy(false);
-        m_getUpTraining = TrackingViewer3D::getUpTraining();
+        m_getUpTraining = TrackingViewer3D::getUpTraining(getUpRunDirectory());
         refreshGetUpLive();
         if (TrackingViewer3D::isGetUpDrill(m_viewerDrill)) refreshGetUpCurve();
     }
@@ -1072,6 +1554,23 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         com.segments.push_back({ m_skeleton->toSkeleton(center), m_skeleton->toSkeleton({ center.x, center.y, 0.0f }) });
         highlights.push_back(std::move(com));
         highlights.push_back(cross(m_skeleton->toSkeleton({ center.x, center.y, 0.0f }), 0.04f, Palette::Focus));
+    }
+    if (!view.walls.empty()) {
+        // (12/11 09h15, ele: as paredes do levantar "visiveis no laboratorio") Em grade, numa cor de parede: o contorno, os postes a
+        // cada 2 m e a linha do meio.
+        Highlight walls;
+        walls.color = rgb(235, 170, 95);
+        walls.occluded = true;
+        for (const auto& [a, b] : view.walls) walls.segments.push_back({ m_skeleton->toSkeleton(a), m_skeleton->toSkeleton(b) });
+        highlights.push_back(std::move(walls));
+    }
+    if (!view.wet.empty()) {
+        // (12/11 12h50, a fase 2) O chao escorregadio: a placa de grama molhada em grade azul.
+        Highlight wet;
+        wet.color = rgb(80, 170, 255);
+        wet.occluded = true;
+        for (const auto& [a, b] : view.wet) wet.segments.push_back({ m_skeleton->toSkeleton(a), m_skeleton->toSkeleton(b) });
+        highlights.push_back(std::move(wet));
     }
     if (!view.scenery.empty()) {
         // (O cenario do levantar nos ambientes: as caixas e os corpos soltos em arame.)
@@ -1142,6 +1641,238 @@ bool ReinforcementLearningScreen::render(int width, int height) {
             m_pushLabel.fade = fade;
         }
     }
+    // (12/11 05h30, ele: "um visual muito mais bonito (seja criativo) que mostra de onde vem a pancada/empurrao, a forca, direcao") O
+    // fogo do levantar: o continuo como um feixe de tres setas com divisas correndo para o corpo e o empurrador no chao, de onde vem;
+    // a pancada avisada antes (o tracejado chegando e o alvo pulsando), a seta grossa no impacto, o anel e os raios no ponto que leva;
+    // os rotulos e o desfecho (foi ao chao, levantou firme, recuperou) por cima, projetados depois com a camera.
+    struct FireAnchor {
+        Vec3 at;
+        FireLabel label;
+    };
+    std::vector<FireAnchor> fireAnchors;
+    std::vector<InspectionBeam> beams;
+    m_fireCard = view.fire;
+    if (view.fire.active && positions.size() > 3) {
+        const GetUpFireView3D& f = view.fire;
+        const auto S = [&](Vec3 p) { return m_skeleton->toSkeleton(p); };
+        const Vec3 trunk = positions[0] * 0.20f + positions[2] * 0.32f + positions[3] * 0.48f;
+        const auto frameOf = [](Vec3 d, Vec3& side, Vec3& up) {
+            side = cross(d, Vec3 { 0.0f, 0.0f, 1.0f });
+            if (side.length() < 0.2f) side = cross(d, Vec3 { 1.0f, 0.0f, 0.0f });
+            side = side.normalized();
+            up = cross(side, d).normalized();
+        };
+        const auto ring = [&](Vec3 c, Vec3 d, float radius, Color color) {
+            Vec3 side, up;
+            frameOf(d, side, up);
+            Highlight h;
+            h.color = color;
+            constexpr int Count = 32;
+            for (int k = 0; k < Count; ++k) {
+                const float a0 = 6.2831853f * static_cast<float>(k) / Count, a1 = 6.2831853f * static_cast<float>(k + 1) / Count;
+                h.segments.push_back({ S(c + (side * std::cos(a0) + up * std::sin(a0)) * radius),
+                    S(c + (side * std::cos(a1) + up * std::sin(a1)) * radius) });
+            }
+            highlights.push_back(std::move(h));
+        };
+        const auto anchor = [&](Vec3 at, std::string text, std::array<int, 3> color, float alpha, bool big) {
+            FireAnchor a;
+            a.at = S(at);
+            a.label.text = std::move(text);
+            a.label.color = color;
+            a.label.alpha = alpha;
+            a.label.big = big;
+            fireAnchors.push_back(std::move(a));
+        };
+        const bool above = f.direction >= 8;
+        const float holdNewtons = f.hold.length();
+        if (holdNewtons > 1.0f && f.weight > 0.0f) {
+            // (05h55, ele: "ficou bem poluido isso, so uma seta simples e a forca seriam suficientes para essa parte") O continuo: uma
+            // seta so, chegando ao tronco, e a forca.
+            const Vec3 d = f.hold / holdNewtons;
+            const float t = holdIntensity(f.size), ramp = f.size > 0.0f ? std::clamp(holdNewtons / (f.size * f.weight), 0.0f, 1.0f) : 1.0f;
+            const float length = 0.5f + 0.6f * t;
+            InspectionBeam arrow;
+            arrow.to = S(trunk - d * 0.2f);
+            arrow.from = S(trunk - d * (0.2f + length));
+            arrow.color = fireColor(t, 0.95f * ramp);
+            arrow.width = 0.035f + 0.02f * t;
+            arrow.glow = 0.0f;
+            beams.push_back(arrow);
+            anchor(trunk - d * (0.2f + length) + Vec3 { 0.0f, 0.0f, 0.12f },
+                std::to_string(static_cast<int>(std::lround(f.size * f.weight))) + " N · "
+                    + std::to_string(static_cast<int>(std::lround(100.0f * f.size))) + "% do peso" + (above ? " · de cima" : ""),
+                fireRgb(t), ramp, false);
+        }
+        if (f.grabLink >= 0 && static_cast<std::size_t>(f.grabLink) < positions.size() && f.grabForce.length() > 1.0f && f.weight > 0.0f) {
+            // (12/11 12h50, a fase 2) O agarrao: uma faixa roxa saindo da mao no rumo do puxao, e a forca.
+            const Vec3 hand = positions[static_cast<std::size_t>(f.grabLink)];
+            const float newtons = f.grabForce.length();
+            const Vec3 d = f.grabForce / newtons;
+            InspectionBeam rope;
+            rope.from = S(hand);
+            rope.to = S(hand + d * 0.9f);
+            rope.color = rgb(190, 110, 255, 235);
+            rope.width = 0.03f;
+            rope.glow = 0.0f;
+            rope.head = false;
+            beams.push_back(rope);
+            anchor(hand + d * 0.9f + Vec3 { 0.0f, 0.0f, 0.1f },
+                "agarrão · " + std::to_string(static_cast<int>(std::lround(newtons))) + " N", { 190, 110, 255 }, 1.0f, false);
+        }
+        if (f.kind == 1 || f.kind == 3) {
+            const std::size_t link = f.shoveLink >= 0 && static_cast<std::size_t>(f.shoveLink) < positions.size()
+                ? static_cast<std::size_t>(f.shoveLink) : 3u;
+            const Vec3 hit = positions[link];
+            const float t = shoveIntensity(f.shoveSize), since = f.time - f.shoveAt;
+            if (!f.shoveDone && f.shoveAt >= 0.0f && since > -0.8f && since < 0.0f) {
+                const float near = 1.0f + since / 0.8f;
+                const Vec3 d = f.aim.length() > 0.5f ? f.aim.normalized() : Vec3 { 1.0f, 0.0f, 0.0f };
+                Highlight dash;
+                dash.color = fireColor(t, 0.25f + 0.65f * near);
+                for (int k = 0; k < 7; ++k) {
+                    const float u0 = 0.32f + 0.28f * static_cast<float>(k), u1 = u0 + 0.15f;
+                    dash.segments.push_back({ S(hit - d * u1), S(hit - d * u0) });
+                }
+                highlights.push_back(std::move(dash));
+                InspectionBeam head;
+                head.from = S(hit - d * 0.42f);
+                head.to = S(hit - d * 0.12f);
+                head.color = fireColor(t, 0.3f + 0.6f * near);
+                head.width = 0.03f;
+                head.glow = 0.4f;
+                beams.push_back(head);
+                ring(hit, d, 0.14f + 0.04f * std::sin(f.time * 20.0f), fireColor(t, 0.35f + 0.55f * near));
+                anchor(hit - d * 2.4f + Vec3 { 0.0f, 0.0f, 0.15f }, "PANCADA CHEGANDO · " + decimal(f.shoveSize, 1) + " m/s", fireRgb(t),
+                    0.4f + 0.6f * near, false);
+            }
+            if (f.shoveDone && since >= 0.0f && since < 1.2f) {
+                const float newtons = f.shoveForce.length();
+                const Vec3 d = newtons > 1.0f ? f.shoveForce / newtons : f.aim;
+                const float fade = since <= f.shoveSeconds ? 1.0f : std::clamp(1.0f - (since - f.shoveSeconds) / 1.0f, 0.0f, 1.0f);
+                const float reach = 0.85f + 1.0f * t;
+                InspectionBeam fist;
+                fist.to = S(hit - d * 0.10f);
+                fist.from = S(hit - d * (0.10f + reach));
+                fist.color = fireColor(t, fade);
+                fist.width = 0.08f + 0.06f * t;
+                fist.glow = 1.3f;
+                beams.push_back(fist);
+                if (since < 0.7f) {
+                    const float g = since / 0.7f;
+                    ring(hit, d, 0.08f + 0.6f * g, fireColor(t, 1.0f - g));
+                    ring(hit, d, 0.05f + 0.32f * g, rgb(255, 255, 255, 0.75f * (1.0f - g)));
+                    if (since < 0.3f) {
+                        Vec3 side, up;
+                        frameOf(d, side, up);
+                        Highlight rays;
+                        rays.color = rgb(255, 240, 200, 1.0f - since / 0.3f);
+                        for (int k = 0; k < 12; ++k) {
+                            const float a = 6.2831853f * static_cast<float>(k) / 12.0f;
+                            const Vec3 r = side * std::cos(a) + up * std::sin(a);
+                            rays.segments.push_back({ S(hit + r * 0.10f), S(hit + r * (0.18f + 0.5f * since / 0.3f)) });
+                        }
+                        highlights.push_back(std::move(rays));
+                    }
+                }
+                anchor(hit - d * (0.10f + reach) + Vec3 { 0.0f, 0.0f, 0.18f },
+                    std::string("PANCADA ") + (above ? "DE CIMA" : fireSource(f.direction)) + " · " + decimal(f.shoveSize, 1) + " m/s · ~"
+                        + std::to_string(static_cast<int>(std::lround(newtons))) + " N",
+                    fireRgb(t), fade, true);
+            }
+        }
+        std::size_t head = 0;
+        for (std::size_t i = 0; i < profile.links.size() && i < positions.size(); ++i)
+            if (profile.links[i].id == "Head") head = i;
+        const Vec3 top = positions[head] + Vec3 { 0.0f, 0.0f, 0.45f };
+        if (f.deliveredAt >= 0.0f && f.time - f.deliveredAt < 2.0f) {
+            const bool recovered = f.downAt >= 0.0f && f.downAt < f.deliveredAt;
+            anchor(top, (recovered ? "RECUPEROU · firme aos " : "LEVANTOU FIRME · ") + decimal(f.upAt >= 0.0f ? f.upAt : f.deliveredAt, 2) + " s",
+                recovered ? std::array<int, 3> { 120, 255, 160 } : std::array<int, 3> { 80, 225, 130 },
+                1.0f - 0.5f * (f.time - f.deliveredAt) / 2.0f, true);
+        } else if (f.downAt >= 0.0f && f.time - f.downAt < 1.6f) {
+            anchor(top, "FOI AO CHÃO", { 235, 70, 60 }, 1.0f - 0.5f * (f.time - f.downAt) / 1.6f, true);
+        }
+    }
+    // (08/11, a estrela de 8 pontas no treino) As linhas do centro as pontas (azul claro), a perna de agora (verde, com o texto
+    // dela em cima do ponto), o ponto seguinte (verde fraco) e o rastro da pelve pela velocidade (azul trote, laranja corrida,
+    // vermelho acima de 6,5 m/s), que recomeca no episodio novo.
+    if (!view.starLines.empty()) {
+        Highlight lines;
+        lines.color = rgb(120, 170, 235, 0.55f);
+        for (const auto& [a, b] : view.starLines)
+            lines.segments.push_back({ m_skeleton->toSkeleton({ a.x, a.y, 0.01f }), m_skeleton->toSkeleton({ b.x, b.y, 0.01f }) });
+        highlights.push_back(std::move(lines));
+    }
+    if (view.hasStarLeg) {
+        Highlight leg;
+        leg.color = rgb(70, 220, 120);
+        const auto& [a, b] = view.starLeg;
+        // (12/11 17h20: o caminho de verdade - o arco nas pernas em curva; e o da perna seguinte, em verde fraco.)
+        if (view.starLegPoints.size() >= 2) {
+            for (std::size_t k = 1; k < view.starLegPoints.size(); ++k) {
+                const Vec3 p = view.starLegPoints[k - 1], q = view.starLegPoints[k];
+                leg.segments.push_back({ m_skeleton->toSkeleton({ p.x, p.y, 0.02f }), m_skeleton->toSkeleton({ q.x, q.y, 0.02f }) });
+            }
+        } else {
+            leg.segments.push_back({ m_skeleton->toSkeleton({ a.x, a.y, 0.02f }), m_skeleton->toSkeleton({ b.x, b.y, 0.02f }) });
+        }
+        if (view.starNextPoints.size() >= 2) {
+            Highlight next;
+            next.color = rgb(70, 220, 120, 0.35f);
+            for (std::size_t k = 1; k < view.starNextPoints.size(); ++k) {
+                const Vec3 p = view.starNextPoints[k - 1], q = view.starNextPoints[k];
+                next.segments.push_back({ m_skeleton->toSkeleton({ p.x, p.y, 0.015f }), m_skeleton->toSkeleton({ q.x, q.y, 0.015f }) });
+            }
+            highlights.push_back(std::move(next));
+        }
+        if (!view.starCaption.empty()) {
+            leg.label = view.starCaption;
+            leg.labelAt = m_skeleton->toSkeleton({ b.x, b.y, 0.9f });
+            leg.hasLabel = true;
+        }
+        highlights.push_back(std::move(leg));
+    }
+    // (08/11 14h40: o comando - o texto em cima do corpo.)
+    if (!view.hasStarLeg && !view.starCaption.empty() && !positions.empty()) {
+        Highlight caption;
+        caption.color = rgb(230, 230, 240);
+        caption.label = view.starCaption;
+        caption.labelAt = m_skeleton->toSkeleton({ positions[0].x, positions[0].y, positions[0].z + 1.2f });
+        caption.hasLabel = true;
+        caption.points.push_back(caption.labelAt);
+        highlights.push_back(std::move(caption));
+    }
+    if (view.hasNextTarget) {
+        InspectionMarker next;
+        next.center = m_skeleton->toSkeleton({ view.nextTarget.x, view.nextTarget.y, 0.0f });
+        next.radius = 0.3f;
+        next.color = rgb(60, 210, 120);
+        next.strength = 0.35f;
+        markers.push_back(next);
+    }
+    if (!view.starPoints.empty() && !positions.empty()) {
+        const Vec3 pelvis { positions[0].x, positions[0].y, 0.03f };
+        const float speed = std::hypot(view.velocity.x, view.velocity.y);
+        if (!m_starTrail.empty() && std::hypot(pelvis.x - m_starTrail.back().first.x, pelvis.y - m_starTrail.back().first.y) > 3.0f)
+            m_starTrail.clear();
+        if (m_starTrail.empty() || std::hypot(pelvis.x - m_starTrail.back().first.x, pelvis.y - m_starTrail.back().first.y) > 0.05f)
+            m_starTrail.push_back({ pelvis, speed });
+        if (m_starTrail.size() > 900) m_starTrail.erase(m_starTrail.begin(), m_starTrail.begin() + 100);
+        Highlight bands[3];
+        bands[0].color = rgb(90, 160, 255);
+        bands[1].color = rgb(250, 150, 40);
+        bands[2].color = rgb(235, 60, 50);
+        for (std::size_t k = 1; k < m_starTrail.size(); ++k) {
+            const float v = m_starTrail[k].second;
+            bands[v < 4.6f ? 0 : v < 6.5f ? 1 : 2].segments.push_back(
+                { m_skeleton->toSkeleton(m_starTrail[k - 1].first), m_skeleton->toSkeleton(m_starTrail[k].first) });
+        }
+        for (Highlight& band : bands)
+            if (!band.segments.empty()) highlights.push_back(std::move(band));
+    } else {
+        m_starTrail.clear();
+    }
     // Os pontos da estrela no chao (azuis); o de agora vai por cima, em verde (laranja: ele espera la).
     for (const Vec3& point : view.starPoints) {
         InspectionMarker mark;
@@ -1195,6 +1926,7 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     scene.highlights = highlights;
     scene.markers = markers;
     scene.arrows = arrows;
+    scene.beams = beams;
     InspectionStyle style;
     style.surface = m_display == Display::Full ? SurfaceMode::Solid : SurfaceMode::Hidden;
     style.skeleton = m_display == Display::Skeleton;
@@ -1232,6 +1964,15 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         m_headingDrill = m_viewerDrill;
         m_headingValid = true;
         camera.yaw = headingTerm + m_camera.yaw;
+    }
+    m_fireLabels.clear();
+    for (const FireAnchor& anchor : fireAnchors) {
+        const ScreenPoint at = Projector(camera, width, height).project(anchor.at);
+        if (!at.visible) continue;
+        FireLabel label = anchor.label;
+        label.x = at.x / static_cast<float>(width);
+        label.y = at.y / static_cast<float>(height);
+        m_fireLabels.push_back(std::move(label));
     }
     if (m_pushLabel.newtons > 0.0f) {
         const ScreenPoint label = Projector(camera, width, height).project(pushLabelPoint);
@@ -1300,7 +2041,21 @@ void ReinforcementLearningScreen::draw(CanvasTarget& canvas, float uiScale) {
         // Expandido: so os graficos. Na linha do titulo, no canto, o recolher e o periodo (o mesmo do recolhido).
         sectionLabel("GRÁFICOS");
         const float back = ui(124.0f), window = ui(150.0f), gap = ui(8.0f);
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - back - gap - window));
+        // (04/11 12h40, ele: "ao lado do botao de recolher, um checkbox de mostrar exigencias" - nos exercicios com a forca
+        // dinamica.)
+        const bool demands = headingDrill(m_viewerDrill);
+        const char* demandLabel = "Mostrar exigências";
+        const float demand = demands ? ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x
+                + ImGui::CalcTextSize(demandLabel).x + gap : 0.0f;
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - demand - back - gap - window));
+        if (demands) {
+            const float rowY = ImGui::GetCursorPosY();
+            ImGui::SetCursorPosY(rowY + std::max(0.0f, (ui(28.0f) - ImGui::GetFrameHeight()) * 0.5f));
+            ImGui::Checkbox(demandLabel, &m_showRequirements);
+            tooltip("O mínimo exigido para descer a força auxiliar, em vermelho.");
+            ImGui::SameLine(0.0f, gap);
+            ImGui::SetCursorPosY(rowY);
+        }
         if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::ArrowLeft, "Recolher").c_str(), { back, ui(28.0f) })) {
             m_chartsExpanded = false;
             m_historyWatch = 0.0f;
@@ -1345,21 +2100,14 @@ void ReinforcementLearningScreen::drawTrainer() {
         ImGui::TextColored(MutedText, "· %s", status.device == "cuda" ? "GPU" : "CPU");
     }
     ImGui::Dummy({ 1.0f, ui(2.0f) });
-    // O treino mostrado: com um treinador aberto, o dele.
+    // Trocar a visualizacao nao altera os treinos em andamento.
     const std::string shown = activeRun();
-    ImGui::BeginDisabled(status.alive);
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::BeginCombo("##RLRun", shown.empty() ? "—" : shown.c_str())) {
-        scanRuns();
-        for (const std::string& run : m_runs)
-            if (ImGui::Selectable(run.c_str(), run == shown)) selectRun(run);
-        ImGui::EndCombo();
-    }
-    ImGui::EndDisabled();
-    tooltip(status.alive ? "O treino aberto no PC (só um por vez)." : "O treino mostrado e que \"Continuar treino\" abre.");
+    ImGui::TextWrapped("%s", shown.c_str());
     if (status.known) {
         infoRow("Tarefa", status.taskName.empty() ? status.task : status.taskName);
         infoRow("Rodada", std::to_string(status.iteration));
+        if (m_getUpLive.run == shown && m_getUpLive.assist > 0.0)
+            infoRow("Força auxiliar", assistText(m_getUpLive));
         const double decisions = static_cast<double>(status.steps);
         infoRow("Decisões", decisions >= 1e9 ? decimal(decisions / 1e9, 2) + " bi" : decimal(decisions / 1e6, 1) + " M");
         if (status.alive) infoRow("Velocidade", decimal(status.sps, 0) + " /s");
@@ -1466,6 +2214,23 @@ void ReinforcementLearningScreen::drawModes(const TrainerStatus3D& status) {
     tooltip("Se o PC desligar com o treino aberto, ele volta sozinho no próximo login. Um \"Parar\" seu não volta.");
 }
 
+// A forca auxiliar de agora num exercicio da rl_final: o trote e o giro a do rumo, a corrida e as manobras as delas (ou a do
+// rumo); o resto (levantar, evitar, parado) nao tem mao.
+std::string ReinforcementLearningScreen::drillAssist(const std::string& id) const {
+    const GetUpLive& g = m_getUpLive;
+    const int category = drillCategory(id);
+    // (A forca dinamica, por exercicio, quando existe.)
+    if (const auto it = g.drillAssist.find(scenarioKey(id)); it != g.drillAssist.end()) {
+        const double percent = it->second * 100.0;
+        return decimal(percent, std::abs(percent - std::round(percent)) > 0.05 ? 1 : 0) + "%";
+    }
+    const double value = category == 13 || category == 17 ? g.assist
+        : category == 14 ? (g.runAssist >= 0.0 ? g.runAssist : g.assist)
+        : category == 15 || category == 16 ? (g.maneuverAssist >= 0.0 ? g.maneuverAssist : g.assist) : 0.0;
+    const double percent = value * 100.0;
+    return decimal(percent, std::abs(percent - std::round(percent)) > 0.05 ? 1 : 0) + "%";
+}
+
 void ReinforcementLearningScreen::drawDrills() {
     if (m_drillIds.empty()) return;
     ImGui::Dummy({ 1.0f, ui(8.0f) });
@@ -1478,23 +2243,50 @@ void ReinforcementLearningScreen::drawDrills() {
         // Os ativos (no treino agora) juntos e os inativos a parte (pedido do usuario, 31/10; eram as
         // categorias Basico e Compostos).
         const bool getUpMain = TrackingViewer3D::isGetUpTask(m_viewerTask);
+        // (04/11 03h45, ele: "duas categorias, uma para locomocao e outra para queda, e entre parenteses a porcentagem
+        // destinada" - na rede principal; nos outros treinos, os ativos e os inativos como antes.)
+        const double locomotionShare = std::clamp(m_getUpLive.locomotionShare, 0.0, 1.0);
+        const std::string groups[2] { "Locomoção (" + decimal(locomotionShare * 100.0, 0) + "%)##grupo_locomocao",
+            "Levantares (" + decimal((1.0 - locomotionShare) * 100.0, 0) + "%)##grupo_quedas" };
         for (const bool active : { true, false }) {
-            if (!ImGui::CollapsingHeader(active ? "Ativos" : "Inativos", active ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
+            const char* header = getUpMain && m_getUpLive.known ? groups[active ? 0 : 1].c_str() : active ? "Ativos" : "Inativos";
+            if (!ImGui::CollapsingHeader(header, active || getUpMain ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
             for (std::size_t i = 0; i < m_drillIds.size(); ++i) {
+                if (getUpMain && m_getUpLive.known) {
+                    // (Locomocao: o parado, os rumos, a corrida, as manobras e o giro; quedas: o levantar e o evitar.)
+                    const bool locomotion = drillCategory(m_drillIds[i]) >= 12;
+                    if (locomotion != active) continue;
+                }
                 // (O levantar e outra rede, a do treino a parte levantar_v2: ativo enquanto aquele treino roda, em roxo -
                 // 31/10, ele: "os exercicios que fazem parte da outra rede neural... cor roxa ao inves de verde".)
                 const bool getUp = !motor && i < m_drillInfo.size() && m_drillInfo[i].getUp;
                 const bool training = getUp ? m_getUpTraining : (i >= m_drillWeights.size() || m_drillWeights[i] > 0.0f);
-                if (training != active) continue;
-                const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, m_drillNames[i].c_str())
-                    + "##drill" + m_drillIds[i];
-                const bool apart = getUp && !m_getUpTraining && !TrackingViewer3D::getUpReady();
+                // (11/11) Na rede principal, ativo e o que o treino ao vivo esta treinando agora: o processo vivo, o exercicio
+                // com episodios na ultima linha do treino e a cabeca dele (o levantar e o evitar: a recuperacao; o resto: a
+                // locomocao) sem congelar. Nada escrito a mao: tudo do status.json, do log e do run.json do treino.
+                // (A chave do exercicio no log - nos levantares nao e o id do botao: levantar_costas -> lev_levantar_costas.)
+                const bool liveTrained = m_getUpLive.alive && m_getUpLive.drillsRun.contains(scenarioKey(m_drillIds[i]))
+                    && !(drillCategory(m_drillIds[i]) >= 12 ? m_getUpLive.frozenLocomotion : m_getUpLive.frozenRecovery);
+                if (!(getUpMain && m_getUpLive.known) && training != active) continue;
+                // (04/11, ele: "bota entre parenteses de cada um a forca auxiliar que esta atuando naquele exercicio".)
+                // (07/11: sem mao, o "(0%)" sumiu.)
+                const std::string force = getUpMain && getUp && m_getUpLive.known ? drillAssist(m_drillIds[i]) : "0%";
+                const std::string shown = m_drillNames[i] + (force != "0%" ? " (" + force + ")" : std::string());
+                const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, shown.c_str()) + "##drill" + m_drillIds[i];
+                const bool apart = getUp && !m_getUpTraining && !TrackingViewer3D::getUpReady(getUpRunDirectory());
                 ImGui::BeginDisabled(apart);
+                // (04/11, ele: "ta tudo roxo os botao" - a cor da categoria, quando o exercicio tem uma.)
+                const int category = i < m_drillPhases.size() && m_drillPhases[i] >= 10 ? m_drillPhases[i] : getUp ? 3 : 1;
+                const bool shownActive = getUpMain && m_getUpLive.known ? liveTrained : training;
                 if (phaseButton(label.c_str(), m_drillIds[i] == m_viewerDrill, { -1.0f, ui(30.0f) },
-                        training ? (getUp ? 3 : 1) : 0))
+                        shownActive ? category : InactivePhase))
                     showDrill(m_drillIds[i]);
                 ImGui::EndDisabled();
-                tooltip(apart ? "Desligado: a rede do levantar treina à parte e ainda não tem rede exportada."
+                tooltip(getUpMain && m_getUpLive.known && !liveTrained
+                    ? (!m_getUpLive.alive ? "Cinza: o treino não está rodando."
+                        : !m_getUpLive.drillsRun.contains(scenarioKey(m_drillIds[i])) ? "Cinza: o treino não rodou episódios deste exercício."
+                        : "Cinza: a cabeça que treina este exercício está congelada.")
+                    : apart ? "Desligado: a rede do levantar treina à parte e ainda não tem rede exportada."
                     : getUp && getUpMain ? "Mostra este exercício no mundo, com a rede do levantar (a principal)."
                     : getUp ? "Outra rede (roxo): a do levantar, que treina à parte. Mostra este exercício com ela."
                     : training ? "Mostra este exercício no mundo (o treino sorteia todos pelos pesos)."
@@ -1510,7 +2302,8 @@ void ReinforcementLearningScreen::drawDrills() {
         const int phase = i < m_drillPhases.size() ? m_drillPhases[i] : 0;
         if (phaseButton(label.c_str(), m_drillIds[i] == m_viewerDrill, { -1.0f, ui(30.0f) }, phase))
             showDrill(m_drillIds[i]);
-        const std::string hint = (phase > 0 ? "Fase " + std::to_string(phase) + ": m" : std::string("M"))
+        const char* category = categoryName(phase);
+        const std::string hint = (category ? std::string(category) + ": m" : phase > 0 ? "Fase " + std::to_string(phase) + ": m" : std::string("M"))
             + "ostra este exercício no mundo (o treino sorteia todos pelos pesos).";
         tooltip(motor
             ? "Mostra este exercício. Os exercícios do Básico treinam juntos na mesma política."
@@ -1584,6 +2377,44 @@ void ReinforcementLearningScreen::drawToolbar() {
     ImGui::SameLine();
     if (ImGui::Checkbox("Contatos", &m_showContacts)) m_dirty = true;
     ImGui::SameLine();
+    // (07/11, temporario - ele: "so para eu ver na pratica como o Motion Matching estaria operando") Os exercicios de forma
+    // cinematica: o corpo no quadro que o Motion Matching do juiz escolhe a cada decisao, sem fisica.
+    // (07/11, ele: "vamos fazer os clipes tipo nos faziamos antes... so ver no laboratorio": a sequencia de clipes da Unreal
+    // de cada exercicio, sem fisica.)
+    if (auto* sequencing = dynamic_cast<TrackingViewer3D*>(m_locomotion.get()); sequencing != nullptr && TrackingViewer3D::isGetUpDrill(m_viewerDrill)) {
+        bool on = sequencing->clipSequence();
+        if (ImGui::Checkbox("Clipes do exercício", &on)) {
+            sequencing->setClipSequence(on);
+            m_dirty = true;
+        }
+        tooltip("A pose alvo que o treino segue a cada momento (o clipe de referência do exercício: a passada, o idle alerta "
+                "depois de parar, o parado), no lugar do corpo da rede. Desmarcado: a rede, como no treino.");
+        if (!sequencing->kinematicError().empty()) ImGui::TextColored(WarningText, "%s", sequencing->kinematicError().c_str());
+        ImGui::SameLine();
+        // (08/11 18h05, ele: "um checkbox ao lado do Clipes do exercicio, chamado empurroes".)
+        bool pushes = sequencing->pushes();
+        if (ImGui::Checkbox("Empurrões", &pushes)) {
+            sequencing->setPushes(pushes);
+            m_dirty = true;
+        }
+        tooltip("As pancadas e os empurrões do treino, no nível de agora de cada grupo, em todo episódio. No treino, só uma "
+                "parte dos episódios tem empurrão.");
+        ImGui::SameLine();
+    }
+    // (07/11: arquivado - ele: "esse Motion Matching esta muito problematico, entao ele fica arquivado por hora".)
+    constexpr bool MotionMatchingArchived = true;
+    if (auto* matching = dynamic_cast<TrackingViewer3D*>(m_locomotion.get());
+        !MotionMatchingArchived && matching != nullptr && TrackingViewer3D::isGetUpDrill(m_viewerDrill)) {
+        bool kinematic = matching->kinematicMotionMatching();
+        if (ImGui::Checkbox("Motion Matching (cinemático)", &kinematic)) {
+            matching->setKinematicMotionMatching(kinematic);
+            m_dirty = true;
+        }
+        tooltip("Temporário: o boneco no quadro que o Motion Matching escolhe a cada decisão para o pedido do exercício "
+                "(os bancos densos do Game Animation Sample), sem física e sem a rede - o que o juiz compara.");
+        if (!matching->kinematicError().empty()) ImGui::TextColored(WarningText, "%s", matching->kinematicError().c_str());
+        ImGui::SameLine();
+    }
     struct DisplayOption {
         Display display;
         const char* label;
@@ -1698,6 +2529,21 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
         drawList->AddText(ImGui::GetFont(), textSize, { at.x + 1.0f, at.y + 1.0f }, IM_COL32(0, 0, 0, alpha), text.c_str());
         drawList->AddText(ImGui::GetFont(), textSize, at, color, text.c_str());
     }
+    // (12/11 05h30) Os rotulos do fogo do levantar (numa pilula escura, na cor da forca) e o cartao dele.
+    for (const FireLabel& label : m_fireLabels) {
+        const float textSize = ImGui::GetFontSize() * (label.big ? 1.25f : 1.0f);
+        const ImVec2 extent = ImGui::GetFont()->CalcTextSizeA(textSize, FLT_MAX, 0.0f, label.text.c_str());
+        const float pad = textSize * 0.4f;
+        const ImVec2 at { std::clamp(origin.x + label.x * size.x - extent.x * 0.5f, origin.x + pad * 2.0f, end.x - extent.x - pad * 2.0f),
+            std::clamp(origin.y + label.y * size.y - extent.y, origin.y + pad * 2.0f, end.y - extent.y - pad * 2.0f) };
+        const int alpha = static_cast<int>(255.0f * std::clamp(label.alpha, 0.0f, 1.0f));
+        drawList->AddRectFilled({ at.x - pad, at.y - pad * 0.55f }, { at.x + extent.x + pad, at.y + extent.y + pad * 0.55f },
+            IM_COL32(10, 13, 20, alpha * 3 / 4), textSize * 0.6f);
+        drawList->AddRect({ at.x - pad, at.y - pad * 0.55f }, { at.x + extent.x + pad, at.y + extent.y + pad * 0.55f },
+            IM_COL32(label.color[0], label.color[1], label.color[2], alpha * 4 / 5), textSize * 0.6f, 0, 1.5f);
+        drawList->AddText(ImGui::GetFont(), textSize, at, IM_COL32(label.color[0], label.color[1], label.color[2], alpha), label.text.c_str());
+    }
+    if (m_fireCard.active) drawFireCard(drawList, origin, size, m_fireCard);
     // A politica que esta no corpo (canto de cima), o pedido e a velocidade dele; no levantar, as quedas levantadas.
     std::string label = m_policyText + "\npedido " + decimal(viewerRequestedSpeed(), 1) + " m/s · ele "
         + decimal(viewerSpeed(), 1) + " m/s";
@@ -1708,10 +2554,12 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
         if (m_viewerDrill == TrackingViewer3D::MovingGetUpDrill)
             label = m_policyText + "\nchegou ao alvo " + count + " · pedido " + decimal(viewerRequestedSpeed(), 1)
                 + " m/s · ele " + decimal(viewerSpeed(), 1) + " m/s";
-        else if (m_viewerDrill == TrackingViewer3D::AvoidFallDrill)
+        else if (m_viewerDrill == TrackingViewer3D::AvoidFallDrill || TrackingViewer3D::isAvoidSceneryDrill(m_viewerDrill))
             label = m_policyText + "\nevitou a queda " + count + " empurrões";
         else if (m_viewerDrill == TrackingViewer3D::BalanceDrill)
             label = m_policyText + "\nnão caiu " + count + " empurrões";
+        else if (m_viewerDrill == TrackingViewer3D::EquilibriumDrill)
+            label = m_policyText + "\nnão caiu " + count + " episódios com empurrões";
         else if (TrackingViewer3D::locomotionHeadingOf(m_viewerDrill) >= 0)
             label = m_policyText + "\npedido " + decimal(viewerRequestedSpeed(), 1) + " m/s · ele "
                 + decimal(viewerSpeed(), 1) + " m/s · não caiu " + count;
@@ -1724,6 +2572,10 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
         const std::string who = tracking->drivingLocomotion() ? "rede da locomoção · " + tracking->partnerText()
                                                               : "rede do levantar · " + m_policyText;
         label = who + (cut == std::string::npos ? std::string() : label.substr(cut));
+        if (TrackingViewer3D::sceneryPresetOf(m_viewerDrill) >= 0 || headingDrill(m_viewerDrill)) {
+            const auto at = std::find(m_drillIds.begin(), m_drillIds.end(), m_viewerDrill);
+            if (at != m_drillIds.end()) label += "\n" + m_drillNames[static_cast<std::size_t>(at - m_drillIds.begin())];
+        }
     }
     // (A interligacao das redes, 01/11: na queda do B21, quem dirige ate a troca.)
     if (const auto* locomotion = dynamic_cast<const LocomotionViewer3D*>(m_locomotion.get());
@@ -1876,9 +2728,33 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         drawLegacyCharts(height);
 }
 
+// A forca auxiliar e o que a mao faz de verdade: a sustentacao media e o pico (p90) em % do peso do corpo do treino.
+std::string ReinforcementLearningScreen::assistText(const GetUpLive& g) {
+    constexpr double Weight = 75.0 * 9.81;
+    if (!g.drillAssist.empty()) {
+        double low = 1.0, high = 0.0, sum = 0.0;
+        for (const auto& [id, value] : g.drillAssist) {
+            low = std::min(low, value);
+            high = std::max(high, value);
+            sum += value;
+        }
+        std::string text = "dinâmica, média " + decimal(100.0 * sum / static_cast<double>(g.drillAssist.size()), 0) + "% (de "
+            + decimal(100.0 * low, 0) + " a " + decimal(100.0 * high, 0) + "%)";
+        if (g.handMean >= 0.0 && g.handPeak >= 0.0)
+            text += " · sustenta " + decimal(100.0 * g.handMean / (75.0 * 9.81), 0) + "% do peso (pico " + decimal(100.0 * g.handPeak / (75.0 * 9.81), 0) + "%)";
+        return text;
+    }
+    std::string text = decimal(g.assist * 100.0, 0) + "%";
+    if (g.runAssist >= 0.0) text += " · corrida " + decimal(g.runAssist * 100.0, 0) + "%";
+    if (g.maneuverAssist >= 0.0) text += " · manobras " + decimal(g.maneuverAssist * 100.0, 0) + "%";
+    if (g.handMean >= 0.0 && g.handPeak >= 0.0)
+        text += " · sustenta " + decimal(100.0 * g.handMean / Weight, 0) + "% do peso (pico " + decimal(100.0 * g.handPeak / Weight, 0) + "%)";
+    return text;
+}
+
 void ReinforcementLearningScreen::refreshGetUpLive() {
     GetUpLive live;
-    const std::filesystem::path log = TrackingViewer3D::getUpLog();
+    const std::filesystem::path log = TrackingViewer3D::getUpLog(getUpRunDirectory());
     live.run = log.parent_path().filename().string();
     std::ifstream statusFile(log.parent_path() / "status.json");
     const nlohmann::json status = nlohmann::json::parse(statusFile, nullptr, false);
@@ -1889,6 +2765,25 @@ void ReinforcementLearningScreen::refreshGetUpLive() {
         live.sps = status.value("sps", 0.0);
         live.alive = trainerProcessAlive3D(status.value("pid", 0), live.run);
     }
+    {
+        std::ifstream runFile(log.parent_path() / "run.json");
+        const nlohmann::json run = nlohmann::json::parse(runFile, nullptr, false);
+        // (04/11 12h50: sem as chaves, so a primeira linha ficava no if - sem o run.json, ou lido no meio de uma gravacao do
+        // treinador, o run["v2"] de um json descartado derrubava a tela.)
+        if (!run.is_discarded() && run.is_object() && run.contains("v2") && run["v2"].is_object()) {
+            const nlohmann::json& v2 = run["v2"];
+            live.assist = v2.value("ajuda_locomocao", 0.0);
+            live.runAssist = v2.value("ajuda_corrida", -1.0);
+            live.maneuverAssist = v2.value("ajuda_manobra", -1.0);
+            if (const auto drills = v2.find("ajuda_exercicios"); drills != v2.end() && drills->is_object())
+                for (const auto& [id, value] : drills->items())
+                    if (value.is_number()) live.drillAssist[id] = value.get<double>();
+            // (A fatia da locomocao no treino: os rumos, o giro e o parado; o resto sao as quedas.)
+            live.locomotionShare = v2.value("locomocao", 0.0) + v2.value("giro", 0.0) + v2.value("comeco_de_pe", 0.0);
+            live.frozenRecovery = v2.value("congelar_recuperacao", false);
+            live.frozenLocomotion = v2.value("congelar_locomocao", false);
+        }
+    }
     // (O ultimo teste: a ultima linha "aval" nos ultimos ~256 kB do log.)
     std::ifstream file(log, std::ios::binary | std::ios::ate);
     if (file) {
@@ -1896,11 +2791,47 @@ void ReinforcementLearningScreen::refreshGetUpLive() {
         file.seekg(std::max<std::streamoff>(0, size - 262144));
         std::string line;
         nlohmann::json last;
-        while (std::getline(file, line))
+        // (12/11 17h10, ele: "porque alguns treinos da estrela e corrida em curva S nao estao ativos": treinavam, mas raros - cada variante
+        // da estrela tem ~0,4% dos episodios e muitas janelas de 20 atualizacoes vinham sem nenhum; o ativo piscava. Agora: com episodios em
+        // alguma das ultimas RecentRows linhas do treino.)
+        constexpr std::size_t RecentRows = 15;
+        std::vector<std::set<std::string>> recentRuns;
+        while (std::getline(file, line)) {
             if (line.find("\"aval\": true") != std::string::npos || line.find("\"aval\":true") != std::string::npos) {
                 const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
                 if (!row.is_discarded() && row.is_object()) last = row;
+            } else if (line.find("\"cenarios\"") != std::string::npos) {
+                // (11/11: os exercicios com episodios na ultima linha do treino - o que ele esta treinando de verdade.)
+                const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
+                if (!row.is_discarded() && row.is_object() && row.contains("cenarios") && row["cenarios"].is_object()) {
+                    std::set<std::string>& run = recentRuns.emplace_back();
+                    if (recentRuns.size() > RecentRows) recentRuns.erase(recentRuns.begin());
+                    // (Cada exercicio vem como o resumo dele, com "episodios"; um numero tambem vale.)
+                    for (const auto& [id, entry] : row["cenarios"].items()) {
+                        const double episodes = entry.is_number() ? entry.get<double>()
+                            : entry.is_object() && entry.contains("episodios") && entry["episodios"].is_number()
+                            ? entry["episodios"].get<double>() : 0.0;
+                        if (episodes > 0.0) run.insert(id);
+                    }
+                    // (12/11 17h10: a fatia de verdade - a das amostras na cabeca da locomocao, quando o log tem.)
+                    if (row.contains("cabeca_locomocao") && row["cabeca_locomocao"].is_number())
+                        live.locomotionShare = row["cabeca_locomocao"].get<double>();
+                }
+                if (line.find("rastreio_mao_sustenta_p90") != std::string::npos && !row.is_discarded() && row.is_object()) {
+                    live.handMean = row.value("rastreio_mao_sustenta_n", -1.0);
+                    live.handPeak = row.value("rastreio_mao_sustenta_p90", -1.0);
+                }
+            } else if (line.find("rastreio_mao_sustenta_p90") != std::string::npos) {
+                // (A mao de verdade: a ultima linha do treino que a mediu.)
+                const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
+                if (!row.is_discarded() && row.is_object()) {
+                    live.handMean = row.value("rastreio_mao_sustenta_n", -1.0);
+                    live.handPeak = row.value("rastreio_mao_sustenta_p90", -1.0);
+                }
             }
+        }
+        live.drillsRun.clear();
+        for (const std::set<std::string>& run : recentRuns) live.drillsRun.insert(run.begin(), run.end());
         const auto number = [&](const char* key) {
             return last.contains(key) && last[key].is_number() ? last[key].get<double>() : -1.0;
         };
@@ -1924,10 +2855,16 @@ void ReinforcementLearningScreen::refreshGetUpLive() {
 std::string ReinforcementLearningScreen::getUpLiveText() const {
     const GetUpLive& g = m_getUpLive;
     if (!g.known) return "sem o treino do levantar";
+    std::string scenario;
+    if (TrackingViewer3D::sceneryPresetOf(m_viewerDrill) >= 0 || headingDrill(m_viewerDrill)) {
+        const float rate = lastFinite(TrackingViewer3D::isAvoidSceneryDrill(m_viewerDrill)
+            ? m_getUpCurve.sceneryAvoided : m_getUpCurve.sceneryStood);
+        scenario = ", cenário " + (std::isfinite(rate) ? decimal(rate, 0) + "%" : std::string("sem dados"));
+    }
     return g.run + " " + (g.alive ? g.state : std::string("parado")) + ", rodada " + std::to_string(g.iteration)
         + ", levantou " + decimal(g.stood * 100.0, 0) + "% em " + decimal(g.seconds, 2) + " s, em movimento "
         + decimal(g.moving * 100.0, 0) + "%, evitou " + (g.avoided >= 0.0 ? decimal(g.avoided * 100.0, 0) + "%" : "-")
-        + " (teste " + g.testTime + ")" + (g.run == activeRun() ? " [o treino de cima]" : " [bloco proprio]");
+        + " (teste " + g.testTime + ")" + (g.assist > 0.0 ? ", força auxiliar " + assistText(g) : std::string()) + (g.run == activeRun() ? " [o treino de cima]" : " [bloco proprio]") + scenario;
 }
 
 void ReinforcementLearningScreen::drawGetUpLive() {
@@ -1953,16 +2890,21 @@ void ReinforcementLearningScreen::drawGetUpLive() {
 
 void ReinforcementLearningScreen::refreshGetUpCurve() {
     std::error_code error;
-    const auto write = std::filesystem::last_write_time(TrackingViewer3D::getUpLog(), error);
-    if (error || (write == m_getUpCurve.write && m_getUpCurve.window == m_chartWindow)) return;
+    const auto write = std::filesystem::last_write_time(TrackingViewer3D::getUpLog(getUpRunDirectory()), error);
+    if (error) {
+        m_getUpCurve = {};
+        return;
+    }
+    if (write == m_getUpCurve.write && m_getUpCurve.window == m_chartWindow && m_getUpCurve.drill == m_viewerDrill) return;
     GetUpCurve curve;
+    curve.drill = m_viewerDrill;
     curve.write = write;
     curve.window = m_chartWindow;
     // (01/11, ele: "nao consigo filtrar por temporalidade, nem mostra a hora do dado": a janela do periodo, contada da
     // linha mais nova, e no maximo maxPoints pontos - um a cada passo; as avaliacoes de antes da janela seguem valendo.)
     std::vector<std::string> lines;
     {
-        std::ifstream all(TrackingViewer3D::getUpLog());
+        std::ifstream all(TrackingViewer3D::getUpLog(getUpRunDirectory()));
         for (std::string line; std::getline(all, line);) lines.push_back(std::move(line));
     }
     double newest = 0.0;
@@ -1994,31 +2936,95 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
         const auto it = row.find(key);
         return it == row.end() || !it->is_number() ? none : it->get<float>();
     };
-    float test = none, seconds = none, movingTest = none, movingSpeedTest = none, avoidTest = none, recomposeTest = none,
-          balanceTest = none, poseTest = none;
-    float spineTest = none, locoFallTest = none, locoFallSecondsTest = none;
+    float movingTest = none, movingSpeedTest = none, spineTest = none, capacityZero = none, capacitySpeed = none;
+    // (06/11) O levantar pela avaliacao fixa (64 quedas, a rede do levantar sozinha, sem clipe e sem mao), repetida ate a seguinte.
+    float evalStood = none, evalRose = none, evalSeconds = none, evalPose = none, judgeValue = none;
+    float evalRiseSeconds = none, evalHandSpeed = none, evalRecovered = none;
+    const std::string capacityKey = scenarioKey(m_viewerDrill);
+    // (07/11) O treino dos levantares: de costas e de brucos separados; o correndo e o "mov_" do treino.
+    // (11/11 14h: o levantar pelo clipe - os resumos dele, lu_*, com os mesmos nomes.)
+    const bool clipGetUp = TrackingViewer3D::clipGetUpRun(getUpRunDirectory());
+    curve.clipGetUp = clipGetUp;
+    const std::string clipPrefix = m_viewerDrill == TrackingViewer3D::LyingBackDrill ? "lu_costas_"
+        : m_viewerDrill == TrackingViewer3D::LyingFrontDrill ? "lu_brucos_"
+        : m_viewerDrill == TrackingViewer3D::RunGetUpBackDrill ? "lu_correndo_costas_"
+        : m_viewerDrill == TrackingViewer3D::RunGetUpFrontDrill ? "lu_correndo_brucos_"
+        : m_viewerDrill == TrackingViewer3D::RollGetUpDrill ? "lu_costas_rolando_" : "";
+    const std::string trainPrefix = clipGetUp && !clipPrefix.empty() ? "treino_" + clipPrefix
+        : m_viewerDrill == TrackingViewer3D::LyingBackDrill ? "treino_costas_"
+        : m_viewerDrill == TrackingViewer3D::LyingFrontDrill                       ? "treino_brucos_"
+        : m_viewerDrill == TrackingViewer3D::MovingGetUpDrill                      ? "mov_"
+                                                                                   : "";
+    const auto capacityOf = [&](const nlohmann::json& row, const char* tag, const char* field) {
+        const auto all = row.find("capacidade");
+        if (all == row.end() || !all->is_object() || !all->contains(tag) || !(*all)[tag].is_object()) return none;
+        const nlohmann::json& part = (*all)[tag];
+        return part.contains(capacityKey) && part[capacityKey].is_object() ? percent(part[capacityKey], field) : none;
+    };
     std::array<float, LocomotionLogKeys.size()> locoMainTest, locoUpTest;
     locoMainTest.fill(none);
     locoUpTest.fill(none);
+    std::uint64_t plottedIteration = 0;
     for (std::string line; std::getline(file, line);) {
         const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
         if (row.is_discarded() || !row.is_object() || !row.contains("atualizacao")) continue;
         if (row.value("aval", false)) {
-            test = percent(row, "de_pe");
-            seconds = percent(row, "tempo") / 100.0f;
             movingTest = percent(row, "mov_chegou");
             movingSpeedTest = plain(row, "mov_vel_rumo");
-            avoidTest = percent(row, "evitar_evitou");
-            recomposeTest = plain(row, "evitar_recompos_s");
-            balanceTest = percent(row, "equil_sem_cair");
-            poseTest = percent(row, "pose");
             spineTest = percent(row, "parado_coluna");
-            locoFallTest = percent(row, "quedas_loco_levantou");
-            locoFallSecondsTest = plain(row, "quedas_loco_tempo");
+            if (row.contains("capacidade")) {
+                capacityZero = capacityOf(row, "0", "de_pe");
+                capacitySpeed = capacityOf(row, "0", "vel");
+            }
+            // (07/11: o levantar deitado pela avaliacao dele - costas_ e brucos_; o levantar do chao pela das quedas.)
+            const std::string evalPrefix = clipGetUp && !clipPrefix.empty() ? clipPrefix
+                : m_viewerDrill == TrackingViewer3D::LyingBackDrill ? "costas_"
+                : m_viewerDrill == TrackingViewer3D::LyingFrontDrill ? "brucos_"
+                : m_viewerDrill == TrackingViewer3D::MovingGetUpDrill ? "mov_" : "";
+            // (A nota do juiz no exercicio, de -1 a 1 - parece clipe perto de 1 -, em %.)
+            if (const auto j = row.find("juiz_exercicios");
+                j != row.end() && j->is_object() && j->contains(capacityKey) && (*j)[capacityKey].is_number())
+                judgeValue = 50.0f * ((*j)[capacityKey].get<float>() + 1.0f);
+            if (row.contains(evalPrefix + "de_pe")) {
+                // (12/11 07h55: sob fogo, o firme dos cenarios com fogo - levantou e continuou de pe.)
+                evalStood = percent(row, (evalPrefix + (row.contains(evalPrefix + "firme_sob_fogo") ? "firme_sob_fogo" : "de_pe")).c_str());
+                const bool fire = row.contains(evalPrefix + "sob_fogo");
+                curve.getUpFire = curve.getUpFire || fire;
+                evalRose = percent(row, (evalPrefix + (fire ? "sob_fogo" : "levantou")).c_str());
+                evalSeconds = plain(row, (evalPrefix + "tempo").c_str());
+                evalPose = percent(row, (evalPrefix + "pose").c_str());
+                // (Com o fogo, o estilo: a nota do juiz da recuperacao no exercicio, de -1 a 1, em %.)
+                if (fire && row.contains(evalPrefix + "juiz") && row[evalPrefix + "juiz"].is_number())
+                    evalPose = 50.0f * (row[evalPrefix + "juiz"].get<float>() + 1.0f);
+                evalRecovered = percent(row, (evalPrefix + "recuperou").c_str());
+                // (O levantar pelo clipe: o tempo para levantar e a velocidade na troca - sem troca, sem o numero.)
+                evalRiseSeconds = plain(row, (evalPrefix + "levantar_s").c_str());
+                evalHandSpeed = plain(row, (evalPrefix + "vel_troca").c_str());
+            }
             for (std::size_t k = 0; k < LocomotionLogKeys.size(); ++k) {
                 const LocomotionLogKeys3D& keys = LocomotionLogKeys[k];
                 locoMainTest[k] = keys.percent ? percent(row, keys.mainTest) : plain(row, keys.mainTest);
                 locoUpTest[k] = percent(row, keys.upTest);
+            }
+            // A avaliacao vem depois da linha de treino da mesma atualizacao.
+            if (!curve.times.empty() && row.value("atualizacao", std::uint64_t { 0 }) == plottedIteration) {
+                curve.reachedTest.back() = movingTest;
+                curve.towardSpeedTest.back() = movingSpeedTest;
+                curve.spineTest.back() = spineTest;
+                curve.capacityZero.back() = capacityZero;
+                curve.capacitySpeed.back() = capacitySpeed;
+                curve.evalStood.back() = evalStood;
+                curve.judge.back() = judgeValue;
+                curve.evalRose.back() = evalRose;
+                curve.evalSeconds.back() = evalSeconds;
+                curve.evalPose.back() = evalPose;
+                curve.evalRiseSeconds.back() = evalRiseSeconds;
+                curve.evalHandSpeed.back() = evalHandSpeed;
+                curve.evalRecovered.back() = evalRecovered;
+                for (std::size_t k = 0; k < LocomotionLogKeys.size(); ++k) {
+                    curve.locoMainTest[k].back() = locoMainTest[k];
+                    curve.locoUpTest[k].back() = locoUpTest[k];
+                }
             }
             continue;
         }
@@ -2029,14 +3035,128 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
             const bool lastInside = ++seen == inside;
             if ((seen - 1) % stride != 0 && !lastInside) continue;
             curve.times.push_back(hour);
+            plottedIteration = row.value("atualizacao", std::uint64_t { 0 });
         }
-        curve.standing.push_back(percent(row, "queda_de_pe"));
-        curve.kept.push_back(percent(row, "de_pe_de_pe"));
-        curve.prone.push_back(percent(row, "queda_brucos"));
-        curve.supine.push_back(percent(row, "queda_costas"));
-        curve.side.push_back(percent(row, "queda_lado"));
-        curve.test.push_back(test);
-        curve.seconds.push_back(seconds);
+        {
+            const nlohmann::json none = nlohmann::json::object();
+            const auto scenarios = row.find("cenarios");
+            const auto& pushed = scenarios != row.end() && scenarios->is_object() && scenarios->contains("lev_evitar")
+                && (*scenarios)["lev_evitar"].is_object() ? (*scenarios)["lev_evitar"] : none;
+            curve.avoidStill.push_back(percent(pushed, "estabilidade"));
+        }
+        curve.avoidStanding.push_back(percent(row, "evitar_de_pe"));
+        curve.capacityZero.push_back(capacityZero);
+        curve.capacitySpeed.push_back(capacitySpeed);
+        curve.evalStood.push_back(evalStood);
+        curve.judge.push_back(judgeValue);
+        curve.trainStood.push_back(trainPrefix.empty() ? none
+            : percent(row, (trainPrefix + (row.contains(trainPrefix + "firme_sob_fogo") ? "firme_sob_fogo" : "de_pe")).c_str()));
+        curve.trainSeconds.push_back(trainPrefix.empty() ? none : plain(row, (trainPrefix + "tempo").c_str()));
+        const bool trainFire = !trainPrefix.empty() && row.contains(trainPrefix + "sob_fogo");
+        curve.trainRose.push_back(trainPrefix.empty() ? none : percent(row, (trainPrefix + (trainFire ? "sob_fogo" : "levantou")).c_str()));
+        curve.trainRecovered.push_back(trainPrefix.empty() ? none : percent(row, (trainPrefix + "recuperou").c_str()));
+        curve.evalRecovered.push_back(evalRecovered);
+        curve.evalRose.push_back(evalRose);
+        curve.evalSeconds.push_back(evalSeconds);
+        curve.evalPose.push_back(evalPose);
+        curve.trainPose.push_back(trainPrefix.empty() || trainFire ? none : percent(row, (trainPrefix + "pose").c_str()));
+        curve.trainRiseSeconds.push_back(trainPrefix.empty() ? none : plain(row, (trainPrefix + "levantar_s").c_str()));
+        curve.trainHandSpeed.push_back(trainPrefix.empty() ? none : plain(row, (trainPrefix + "vel_troca").c_str()));
+        curve.evalRiseSeconds.push_back(evalRiseSeconds);
+        curve.evalHandSpeed.push_back(evalHandSpeed);
+        if (TrackingViewer3D::sceneryPresetOf(m_viewerDrill) >= 0 || headingDrill(m_viewerDrill)) {
+            const nlohmann::json empty = nlohmann::json::object();
+            const auto scenarios = row.find("cenarios");
+            const std::string key = scenarioKey(m_viewerDrill);
+            const auto& selected = scenarios != row.end() && scenarios->is_object() && scenarios->contains(key)
+                && (*scenarios)[key].is_object() ? (*scenarios)[key] : empty;
+            // (04/11: nos rumos, a fracao que chega ao fim - o fim antes da hora sem queda, o corpo virado, nao aparecia no sem cair.)
+            curve.sceneryStood.push_back(percent(selected, headingDrill(m_viewerDrill) ? "ate_o_fim" : "levantou"));
+            curve.scenerySeconds.push_back(plain(selected, headingDrill(m_viewerDrill) ? "vel_rumo" : TrackingViewer3D::isAvoidSceneryDrill(m_viewerDrill) ? "recompos_s" : "tempo"));
+            curve.sceneryAvoided.push_back(percent(selected, "evitou"));
+            curve.sceneryImitation.push_back(percent(selected, "semelhanca"));
+            curve.sceneryStability.push_back(percent(selected, "estabilidade"));
+            const auto assists = row.find("ajuda_exercicios");
+            curve.sceneryAssist.push_back(assists != row.end() && assists->is_object() ? percent(*assists, scenarioKey(m_viewerDrill))
+                                                                                    : std::numeric_limits<float>::quiet_NaN());
+            curve.sceneryRatio.push_back(percent(selected, "vel_pedido"));
+            const auto demands = row.find("exigencias");
+            const auto& demand = demands != row.end() && demands->is_object() && demands->contains(key)
+                && (*demands)[key].is_object() ? (*demands)[key] : empty;
+            curve.requiredStood.push_back(percent(demand, "fim"));
+            curve.requiredRatio.push_back(percent(demand, "vel"));
+            curve.requiredImitation.push_back(percent(demand, "semelhanca"));
+            curve.requiredStability.push_back(percent(demand, "estabilidade"));
+            curve.requiredSeconds.push_back(none);
+        } else if (m_viewerDrill == TrackingViewer3D::GetUpDrill || m_viewerDrill == TrackingViewer3D::EquilibriumDrill) {
+            // (06/11 05h30, ele: os graficos do levantar e do equilibrio "iguais aos outros, com as mesmas informacoes porem
+            // voltadas ao caso": as cinco medidas do modulo unico. O levantar pelo dominio do treino - o que o portao usa -, com as
+            // exigencias; o equilibrio pelas medidas dele, e no lugar da forca o nivel dos empurroes do curriculo.)
+            const nlohmann::json empty = nlohmann::json::object();
+            const auto pick = [&row, &empty](const char* section) -> const nlohmann::json& {
+                const auto it = row.find(section);
+                return it != row.end() && it->is_object() && it->contains("lev_levantar") && (*it)["lev_levantar"].is_object()
+                    ? (*it)["lev_levantar"] : empty;
+            };
+            if (m_viewerDrill == TrackingViewer3D::GetUpDrill) {
+                const nlohmann::json &domain = pick("dominio"), &demand = pick("exigencias");
+                const auto assists = row.find("ajuda_exercicios");
+                curve.sceneryStood.push_back(percent(domain, "fim"));
+                curve.scenerySeconds.push_back(plain(domain, "tempo"));
+                curve.sceneryImitation.push_back(percent(domain, "semelhanca"));
+                curve.sceneryStability.push_back(percent(domain, "estabilidade"));
+                curve.sceneryAssist.push_back(assists != row.end() && assists->is_object() ? percent(*assists, "lev_levantar") : none);
+                curve.requiredStood.push_back(percent(demand, "fim"));
+                curve.requiredSeconds.push_back(plain(demand, "tempo"));
+                curve.requiredImitation.push_back(percent(demand, "semelhanca"));
+                curve.requiredStability.push_back(percent(demand, "estabilidade"));
+            } else {
+                curve.sceneryStood.push_back(percent(row, "equilibrio_sem_cair"));
+                curve.scenerySeconds.push_back(plain(row, "equilibrio_passos_rec"));
+                curve.sceneryImitation.push_back(percent(row, "equilibrio_pose"));
+                curve.sceneryStability.push_back(percent(row, "equilibrio_quietou"));
+                curve.sceneryAssist.push_back(percent(row, "equilibrio_nivel"));
+                for (std::vector<float>* v : { &curve.requiredStood, &curve.requiredSeconds, &curve.requiredImitation, &curve.requiredStability })
+                    v->push_back(none);
+            }
+            curve.sceneryAvoided.push_back(none);
+            curve.sceneryRatio.push_back(none);
+            curve.requiredRatio.push_back(none);
+        } else {
+            curve.sceneryStood.push_back(percent(row, "queda_sujo_levantou"));
+            curve.scenerySeconds.push_back(plain(row, "queda_sujo_tempo"));
+            curve.sceneryAvoided.push_back(percent(row, "evitar_evitou_ambientes"));
+            // (05/11: o levantar pelo clipe - a forca e a semelhanca dele, lev_levantar.)
+            const nlohmann::json empty = nlohmann::json::object();
+            const auto assists = row.find("ajuda_exercicios");
+            const auto domains = row.find("dominio");
+            const auto demands = row.find("exigencias");
+            const bool getUp = m_viewerDrill == TrackingViewer3D::GetUpDrill;
+            const auto& domain = getUp && domains != row.end() && domains->is_object() && domains->contains("lev_levantar")
+                && (*domains)["lev_levantar"].is_object() ? (*domains)["lev_levantar"] : empty;
+            const auto& demand = getUp && demands != row.end() && demands->is_object() && demands->contains("lev_levantar")
+                && (*demands)["lev_levantar"].is_object() ? (*demands)["lev_levantar"] : empty;
+            curve.sceneryImitation.push_back(percent(domain, "semelhanca"));
+            curve.sceneryStability.push_back(std::numeric_limits<float>::quiet_NaN());
+            curve.sceneryAssist.push_back(getUp && assists != row.end() && assists->is_object() ? percent(*assists, "lev_levantar")
+                                                                                              : std::numeric_limits<float>::quiet_NaN());
+            curve.requiredImitation.push_back(percent(demand, "semelhanca"));
+            for (std::vector<float>* v : { &curve.sceneryRatio, &curve.requiredStood, &curve.requiredRatio, &curve.requiredStability,
+                     &curve.requiredSeconds })
+                v->push_back(std::numeric_limits<float>::quiet_NaN());
+        }
+        {
+            // (12/11 16h50, o fogo da locomocao: o grupo do exercicio mostrado - em toda linha, para os graficos ficarem alinhados.)
+            const nlohmann::json blank = nlohmann::json::object();
+            const auto fire = row.find("fogo_locomocao");
+            const char* group = locoFireGroup(m_viewerDrill);
+            const nlohmann::json& groups = fire != row.end() && fire->is_object() && fire->contains("grupos") ? (*fire)["grupos"] : blank;
+            const nlohmann::json& mine = groups.is_object() && groups.contains(group) && groups[group].is_object() ? groups[group] : blank;
+            curve.locoFireStood.push_back(percent(mine, "sem_cair"));
+            curve.locoFireFirm.push_back(percent(mine, "firme"));
+            const nlohmann::json& levels = fire != row.end() && fire->is_object() && fire->contains("niveis") ? (*fire)["niveis"] : blank;
+            curve.locoFireLevel.push_back(plain(levels, group));
+        }
         // (O levantar v2: o em movimento e o evitar a queda, no treino e, tracejado, nas avaliacoes fixas.)
         curve.reached.push_back(percent(row, "mov_chegou"));
         curve.reachedTest.push_back(movingTest);
@@ -2044,23 +3164,10 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
         curve.towardSpeed.push_back(plain(row, "mov_vel_rumo"));
         curve.towardSpeedTest.push_back(movingSpeedTest);
         curve.avoided.push_back(percent(row, "evitar_evitou"));
-        curve.avoidedTest.push_back(avoidTest);
-        curve.recomposed.push_back(percent(row, "evitar_recompos"));
         curve.recomposeSeconds.push_back(plain(row, "evitar_recompos_s"));
-        curve.recomposeSecondsTest.push_back(recomposeTest);
         // (O equilibrio parado e a pose de pe perto do parado em alerta.)
-        curve.balance.push_back(percent(row, "de_pe_sem_cair"));
-        curve.balanceTest.push_back(balanceTest);
-        curve.pose.push_back(percent(row, "queda_pose"));
-        curve.poseStanding.push_back(percent(row, "de_pe_pose"));
-        curve.poseTest.push_back(poseTest);
         curve.spine.push_back(percent(row, "de_pe_coluna"));
         curve.spineTest.push_back(spineTest);
-        curve.locoFall.push_back(percent(row, "quedas_loco_levantou"));
-        curve.locoFallTest.push_back(locoFallTest);
-        curve.locoFallSeconds.push_back(plain(row, "quedas_loco_tempo"));
-        curve.locoFallSecondsTest.push_back(locoFallSecondsTest);
-        curve.handoffSeconds.push_back(plain(row, "quedas_loco_troca_s"));
         for (std::size_t k = 0; k < LocomotionLogKeys.size(); ++k) {
             const LocomotionLogKeys3D& keys = LocomotionLogKeys[k];
             curve.locoMain[k].push_back(keys.percent ? percent(row, keys.main) : plain(row, keys.main));
@@ -2093,35 +3200,207 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         const std::string t = last(test, format), r = last(train, format);
         return t.empty() ? r : "teste " + t + (r.empty() ? std::string() : " · treino " + r);
     };
-    if (m_viewerDrill == TrackingViewer3D::MovingGetUpDrill) {
+    // (06/11 05h30, ele: "deveria ter um so modulo de grafico para tudo, nao gambiarra assim") O modulo dos exercicios: o
+    // "ate o fim" e o segundo grafico do caso lado a lado; no expandido, a semelhanca e a estabilidade e, na largura toda, a
+    // forca (ou o nivel do curriculo). Cada grafico com a linha vermelha do exigido no expandido, quando ha.
+    // (04/11, ele: "mais dois graficos nos expandidos"; 12h40, "mostrar exigencias"; 05h, a escala da forca pelos dados.)
+    struct Panel {
+        const char* title;
+        const std::vector<float>* values;
+        const std::vector<float>* required;
+        ImVec4 color;
+        const char* label;
+        const char* format;
+        const char* unit;
+        float high; // > 0: de 0 a este; 0: pelos dados (de 0 a um numero redondo logo acima do maior)
+        const char* empty;
+        // (07/11) O teste sem ruido do mesmo numero, tracejado na mesma cor. (07/11 06h, ele: "porque estamos dizendo coisas de
+        // professor sendo que ele saiu do jogo?... mostrasse a evolucao REAL do treino": so o treino e o teste - sem a
+        // professora, a forca auxiliar e a capacidade a 15%.)
+        const std::vector<float>* test = nullptr;
+    };
+    const ImVec4 pink { 0.95f, 0.55f, 0.80f, 1.0f };
+    const auto panels = [&](const std::vector<Panel>& p) {
+        // (06/11 05h40, ele: "era preferivel um abaixo do outro, com alturas padronizadas, do que lado a lado": cada grafico na
+        // largura toda, todos da mesma altura - o espaco dividido entre eles, entre 5 e 11 linhas de texto.)
+        // (No recolhido, embaixo do visualizador, a faixa e baixa: os dois lado a lado - empilhados ficavam achatados.)
+        const int count = m_chartsExpanded ? static_cast<int>(p.size()) : std::min(2, static_cast<int>(p.size()));
+        const float title = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+        const float font = ImGui::GetFontSize();
+        const int rows = m_chartsExpanded ? count : 1;
+        const ImVec2 cell { m_chartsExpanded ? ImGui::GetContentRegionAvail().x : size.x,
+            std::clamp((height - static_cast<float>(rows) * title) / static_cast<float>(rows), 5.0f * font, 11.0f * font) };
+        const float top = ImGui::GetCursorPosY();
+        const bool demand = m_chartsExpanded && m_showRequirements;
+        const ImVec4 red { 0.95f, 0.38f, 0.38f, 1.0f };
+        for (int k = 0; k < count; ++k) {
+            const Panel& item = p[static_cast<std::size_t>(k)];
+            std::vector<ChartSeries> series { { item.values, item.color, false, item.label } };
+            if (demand && item.required) series.push_back({ item.required, red, true, "exigido" });
+            if (item.test && anyFinite(*item.test)) series.push_back({ item.test, item.color, true, "teste sem ruído" });
+            float low = 0.0f, high = item.high;
+            // (Pelos dados com o teto minimo de 1: a forca toda em 0 nao vira uma escala de 0,001.)
+            if (high <= 0.0f)
+                std::tie(low, high) = item.required && demand ? niceRange({ item.values, item.required }, 1.0f, 0.0f)
+                                                              : niceRange({ item.values }, 1.0f, 0.0f);
+            if (!m_chartsExpanded && k == 1) {
+                ImGui::SameLine();
+                ImGui::SetCursorPosY(top);
+            }
+            ImGui::BeginGroup();
+            ImGui::TextColored(InfoText, "%s", item.title);
+            const std::string id = "##modulo" + std::to_string(k);
+            // (06/11 18h25, ele: "nao sei exatamente o que estou vendo": primeiro o teste - o que importa -, depois o treino.)
+            std::string headline = last(*item.values, item.format);
+            if (item.test && anyFinite(*item.test))
+                headline = "teste " + last(*item.test, item.format) + (anyFinite(*item.values) ? " · treino " + headline : std::string());
+            lineChart(id.c_str(), series, low, high, cell, headline.c_str(), item.unit, &c.times, true, item.empty);
+            ImGui::EndGroup();
+        }
+    };
+    if (headingDrill(m_viewerDrill)) {
+        // (04/11 12h40, ele: "o grafico de velocidade dizer o quanto % ele atendeu da velocidade pedida, e nao o m/s cru" - a
+        // media da fracao de cada episodio, ate 100%: a medida da regua da forca.)
+        const bool still = m_viewerDrill == "lev_giro" || m_viewerDrill == TrackingViewer3D::BalanceDrill;
+        // (O teste: o fixo de cada exercicio, sem ruido e sem forca - "capacidade" a 0% das avaliacoes.)
+        std::vector<Panel> shown { Panel { "Até o fim neste exercício (%)", &c.sceneryStood, &c.requiredStood, green, "treino",
+                                       "%.0f%%", "%", 100.0f, "sem dados deste exercício", &c.capacityZero },
+            Panel { "Velocidade neste exercício (% do pedido)", &c.sceneryRatio, &c.requiredRatio, cyan, "treino", "%.0f%%",
+                "%", 100.0f, still ? "sem pedido de velocidade" : "sem dados deste exercício", &c.capacitySpeed },
+            Panel { "Estabilidade (%)", &c.sceneryStability, &c.requiredStability, amber, "estabilidade", "%.0f%%", "%", 100.0f,
+                "sem dados deste exercício" },
+            Panel { "Parecido com os clipes, para o juiz (%)", &c.judge, nullptr, pink, "juiz (teste)", "%.0f%%", "%", 100.0f,
+                "sem a nota do juiz ainda (sai nas avaliações)" } };
+        // (07/11 06h25, ele: "ha dois graficos, semelhanca com o clipe e parecido com os clipes para o juiz... deixe so o que
+        // estamos usando de fato": andando, a nota do rastreio v14 nao tem a semelhanca - a forma e so do juiz; no parado e no
+        // giro ela vale 65% da nota.)
+        if (still)
+            shown.insert(shown.begin() + 2, Panel { "Semelhança com o clipe (%)", &c.sceneryImitation, &c.requiredImitation,
+                                                    violet, "semelhança", "%.0f%%", "%", 100.0f, "sem dados deste exercício" });
+        // (12/11 16h50, ele: o fogo da locomocao "ate as mesmas caracteristicas e visual da fase de fogo") O fogo do grupo deste exercicio:
+        // nao caiu e firme sob fogo (o treino) e o nivel L dele (0 o comeco sutil, 1 o fogo do levantar).
+        if (anyFinite(c.locoFireStood)) {
+            shown.push_back(Panel { "Sob fogo: não caiu (%)", &c.locoFireStood, nullptr, green, "treino", "%.0f%%", "%", 100.0f,
+                                    "sem episódios com fogo ainda" });
+            shown.push_back(Panel { "Firme sob fogo: não caiu e seguiu a tarefa (%)", &c.locoFireFirm, nullptr, cyan, "treino", "%.0f%%", "%",
+                                    100.0f, "sem episódios com fogo ainda" });
+            shown.push_back(Panel { "Nível do fogo do grupo (0 sutil, 1 o do levantar)", &c.locoFireLevel, nullptr, blue, "nível", "%.2f", "",
+                                    1.0f, "sem nível ainda" });
+        }
+        panels(shown);
+        return;
+    }
+    // (11/11 15h, ele: "os graficos nao aparecem nos exercicios de levantares correndo, nos 2 - garanta que os dados existem e os
+    // graficos aparecam adequadamente") O levantar pelo clipe, os quatro: o treino cheio e o teste fixo (16 deitados no quadro 0)
+    // tracejado, com as medidas dele (TrackingClipGetUp3D; os resumos lu_* e treino_lu_* do log).
+    const bool clipGetUpDrill = m_viewerDrill == TrackingViewer3D::LyingBackDrill || m_viewerDrill == TrackingViewer3D::LyingFrontDrill
+        || m_viewerDrill == TrackingViewer3D::RunGetUpBackDrill || m_viewerDrill == TrackingViewer3D::RunGetUpFrontDrill
+        || m_viewerDrill == TrackingViewer3D::RollGetUpDrill;
+    if (c.clipGetUp && clipGetUpDrill) {
+        const bool running = m_viewerDrill == TrackingViewer3D::RunGetUpBackDrill || m_viewerDrill == TrackingViewer3D::RunGetUpFrontDrill;
+        if (c.getUpFire) {
+            // (12/11 04h40, a fase de fogo do levantar: a prova de fogo tracejada - 4 limpos, 6 continuos e 6 pancadas nos niveis de partida.)
+            panels({ Panel { "Levantou sob fogo, a média dos cenários com fogo (%)", &c.trainRose, nullptr, green, "treino", "%.0f%%", "%", 100.0f,
+                         "sem dados deste levantar", &c.evalRose },
+                Panel { "Levantou de novo depois de ir ao chão (%)", &c.trainRecovered, nullptr, blue, "treino", "%.0f%%", "%", 100.0f,
+                    "ainda não foi ao chão", &c.evalRecovered },
+                Panel { "Firme sob fogo: levantou e continuou de pé (%)", &c.trainStood, nullptr, cyan, "treino", "%.0f%%", "%", 100.0f,
+                    "sem dados deste levantar", &c.evalStood },
+                Panel { "Estilo, o juiz (%)", &c.evalPose, nullptr, violet, "teste", "%.0f%%", "%", 100.0f, "sem a nota do juiz ainda" },
+                Panel { "Tempo para levantar, limpo (s)", &c.trainRiseSeconds, nullptr, pink, "treino", "%.2f s", "s", 0.0f,
+                    "sem dados deste levantar", &c.evalRiseSeconds },
+                Panel { running ? "Velocidade na troca, o impulso (m/s)" : "Velocidade na troca (m/s)", &c.trainHandSpeed, nullptr,
+                    amber, "treino", "%.2f m/s", "m/s", running ? 5.0f : 1.0f, "sem troca ainda", &c.evalHandSpeed } });
+            return;
+        }
+        panels({ Panel { "Chegou ao fim do clipe e trocou (%)", &c.trainRose, nullptr, green, "treino", "%.0f%%", "%", 100.0f,
+                     "sem dados deste levantar", &c.evalRose },
+            Panel { "De pé com a locomoção depois da troca (%)", &c.trainStood, nullptr, cyan, "treino", "%.0f%%", "%", 100.0f,
+                "sem dados deste levantar", &c.evalStood },
+            Panel { "Semelhança com o clipe (%)", &c.trainPose, nullptr, violet, "treino", "%.0f%%", "%", 100.0f,
+                "sem dados deste levantar", &c.evalPose },
+            Panel { "Tempo para levantar (s)", &c.trainRiseSeconds, nullptr, pink, "treino", "%.2f s", "s", 0.0f,
+                "sem dados deste levantar", &c.evalRiseSeconds },
+            Panel { running ? "Velocidade na troca, o impulso (m/s)" : "Velocidade na troca (m/s)", &c.trainHandSpeed, nullptr,
+                amber, "treino", "%.2f m/s", "m/s", running ? 5.0f : 1.0f, "sem troca ainda", &c.evalHandSpeed } });
+        return;
+    }
+    if (m_viewerDrill == TrackingViewer3D::GetUpDrill || m_viewerDrill == TrackingViewer3D::LyingBackDrill
+        || m_viewerDrill == TrackingViewer3D::LyingFrontDrill) {
+        // (06/11 13h41: o levantar voltou a rede livre - sem clipe e sem mao; a medida e a avaliacao fixa de 64 quedas, a mesma
+        // desde 31/10 - o dominio do levantar pelo clipe deixou de existir.)
+        // (07/11, ele: "os levantares nao estao mostrando os dados completos": o treino de cada um, cheio, e o teste fixo,
+        // tracejado; e a nota do juiz.)
+        panels({ Panel { "Levanta e fica de pé no fim (%)", &c.trainStood, nullptr, green, "treino", "%.0f%%", "%", 100.0f,
+                     "sem dados deste levantar", &c.evalStood },
+            Panel { "Tempo para levantar (s)", &c.trainSeconds, nullptr, cyan, "treino", "%.2f s", "s", 0.0f,
+                "sem dados deste levantar", &c.evalSeconds },
+            Panel { "Parecido com os clipes, para o juiz (%)", &c.judge, nullptr, pink, "juiz (teste)", "%.0f%%", "%", 100.0f,
+                "sem a nota do juiz ainda (sai nas avaliações)" },
+            Panel { "Pose de pé no fim, perto do parado (%)", &c.evalPose, nullptr, violet, "teste", "%.0f%%", "%",
+                100.0f, "sem avaliação do levantar" },
+            Panel { "Levantou alguma vez (%)", &c.trainRose, nullptr, amber, "treino", "%.0f%%", "%", 100.0f,
+                "sem dados deste levantar", &c.evalRose } });
+        return;
+    }
+    if (m_viewerDrill == TrackingViewer3D::EquilibriumDrill) {
+        panels({ Panel { "Sem cair com empurrões (%)", &c.sceneryStood, nullptr, green, "sem cair", "%.0f%%", "%", 100.0f,
+                     "sem dados do equilíbrio" },
+            Panel { "Passos de recuperação por episódio", &c.scenerySeconds, nullptr, cyan, "passos", "%.1f", "", 0.0f,
+                "sem dados do equilíbrio" },
+            Panel { "Pose de pé, perto do parado (%)", &c.sceneryImitation, nullptr, violet, "pose", "%.0f%%", "%",
+                100.0f, "sem dados do equilíbrio" },
+            Panel { "Quietou depois do empurrão (%)", &c.sceneryStability, nullptr, amber, "quietou", "%.0f%%", "%", 100.0f,
+                "sem dados do equilíbrio" },
+            Panel { "Nível dos empurrões (% da faixa do treino)", &c.sceneryAssist, nullptr, blue, "nível", "%.0f%%", "%", 100.0f,
+                "sem o currículo dos empurrões" } });
+        return;
+    }
+    if (m_viewerDrill == TrackingViewer3D::SceneryDrill || TrackingViewer3D::isAvoidSceneryDrill(m_viewerDrill)
+        || TrackingViewer3D::sceneryPresetOf(m_viewerDrill) >= 0) {
+        const bool avoid = TrackingViewer3D::isAvoidSceneryDrill(m_viewerDrill);
+        const bool individual = TrackingViewer3D::sceneryPresetOf(m_viewerDrill) >= 0;
+        const auto& rate = avoid ? c.sceneryAvoided : c.sceneryStood;
         ImGui::BeginGroup();
-        ImGui::TextColored(InfoText, "%s", "Chegou ao alvo (%) · Levantar em movimento");
-        tooltip("Cai e levanta já indo para um alvo a 4–8 m, em arrancada, virado para ele: quantos chegam ao alvo nos "
-                "6 s. Tracejado, o teste da rede sem ruído em 32 quedas fixas com alvo; em laranja, quantos ficam de pé.");
-        lineChart("##chegou", { { &c.reached, green, false, "treino" }, { &c.reachedTest, green, true, "teste sem ruído" },
-                                  { &c.movingStood, amber, false, "de pé" } },
-            0.0f, 100.0f, size, both(c.reachedTest, c.reached, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
+        ImGui::TextColored(InfoText, "%s", individual ? (avoid ? "Evitou neste cenário (%)" : "Levantou neste cenário (%)") : (avoid ? "Evitou nos ambientes · agregado (%)" : "Levantou nos ambientes · agregado (%)"));
+        tooltip(individual ? "Somente episodios deste layout. O historico anterior a coleta individual fica sem dados." : "Agregado dos episodios de treino ambientados.");
+        lineChart("##ambientes_taxa", { { &rate, green, false, individual ? "cenário selecionado" : "treino com cenário" } }, 0.0f, 100.0f,
+            size, last(rate, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
         ImGui::EndGroup();
         ImGui::SameLine();
         ImGui::SetCursorPosY(rowTop);
         ImGui::BeginGroup();
-        ImGui::TextColored(InfoText, "%s", "Velocidade rumo ao alvo (m/s) · Levantar em movimento");
-        tooltip("A velocidade média rumo ao alvo enquanto de pé e com o pedido (2,5–5 m/s): o treino e, tracejado, o teste.");
-        lineChart("##rumo", { { &c.towardSpeed, cyan, false, "treino" }, { &c.towardSpeedTest, cyan, true, "teste sem ruído" } },
-            0.0f, 6.0f, size, both(c.towardSpeedTest, c.towardSpeed, "%.2f m/s").c_str(), "m/s", &c.times, true,
-            "sem dados ainda");
+        const auto& other = avoid && !individual ? c.avoided : c.scenerySeconds;
+        ImGui::TextColored(InfoText, "%s", individual ? (avoid ? "Tempo para recompor neste cenário (s)" : "Tempo para levantar neste cenário (s)") : (avoid ? "Evitou em todos os episodios (%)" : "Tempo para levantar nos ambientes (s)"));
+        lineChart("##ambientes_comparacao", { { &other, violet, false, individual ? "cenário selecionado" : avoid ? "todos os cenários" : "treino com cenário" } },
+            0.0f, avoid && !individual ? 100.0f : 12.0f, size, last(other, avoid && !individual ? "%.0f%%" : "%.2f s").c_str(),
+            avoid && !individual ? "%" : "s", &c.times, true, "sem dados ainda");
         ImGui::EndGroup();
+        return;
+    }
+    if (m_viewerDrill == TrackingViewer3D::MovingGetUpDrill) {
+        // (07/11: levanta deitado e corre ate um alvo a 4-8 m - o treino, cheio, e o teste fixo de 32 comecos, tracejado.)
+        panels({ Panel { "Chegou ao alvo (%)", &c.reached, nullptr, green, "treino", "%.0f%%", "%", 100.0f, "sem dados ainda",
+                     &c.reachedTest },
+            Panel { "Velocidade rumo ao alvo (m/s)", &c.towardSpeed, nullptr, cyan, "treino", "%.2f m/s", "m/s", 6.0f,
+                "sem dados ainda", &c.towardSpeedTest },
+            Panel { "Parecido com os clipes, para o juiz (%)", &c.judge, nullptr, pink, "juiz (teste)", "%.0f%%", "%", 100.0f,
+                "sem a nota do juiz ainda (sai nas avaliações)" },
+            Panel { "Levanta e fica de pé no fim (%)", &c.trainStood, nullptr, violet, "treino", "%.0f%%", "%", 100.0f,
+                "sem dados ainda", &c.evalStood },
+            Panel { "Tempo para levantar (s)", &c.trainSeconds, nullptr, amber, "treino", "%.2f s", "s", 0.0f, "sem dados ainda",
+                &c.evalSeconds } });
         return;
     }
     if (const std::size_t k = locomotionIndex(m_viewerDrill); k < LocomotionLogKeys.size()) {
         const std::string name = LocomotionNames[k];
         const bool still = k == 0, turn = k == 1;
         ImGui::BeginGroup();
-        const std::string title = still ? "Pose do parado em alerta (%) · " + name
+        const std::string title = still ? "Pose do parado (%) · " + name
             : turn                      ? "Erro do rumo (graus) · " + name
                                         : "Velocidade no rumo (% da pedida) · " + name;
         ImGui::TextColored(InfoText, "%s", title.c_str());
-        tooltip(still ? "De pé, no fim: a semelhança da pose com o parado em alerta e, em violeta, a da coluna (a pelve, o "
+        tooltip(still ? "De pé, no fim: a semelhança da pose com o parado e, em violeta, a da coluna (a pelve, o "
                         "tronco, o pescoço e a cabeça como no clipe, reto de lado). O treino (de pé, com empurrões) e, "
                         "tracejado, o teste sem ruído em 8 começos fixos de pé, sem empurrão."
                 : turn ? "O rumo pedido do corpo gira (0,4–0,8 rad/s, giros de 30–450° com pausas de 1–3 s): o erro médio "
@@ -2156,67 +3435,45 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         ImGui::EndGroup();
         return;
     }
-    if (m_viewerDrill == TrackingViewer3D::BalanceDrill) {
+    // (04/11 23h, ele: "refaca completamente o grafico do levantar e do evitar queda (grafico horrivel atual nao entendo nada!!!
+    // ele precisa mostrar quantos % ele consegue se levantar e permanecer de pe!!!! e o outro a velocidade com que faz isso, e
+    // ai um terceiro grafico para a estabilidade dele)": tres graficos lado a lado, o treino cheio e o teste sem ruido tracejado.)
+    const float third = (ImGui::GetContentRegionAvail().x - 2.0f * spacing) / 3.0f;
+    const ImVec2 cell3 { third, m_chartsExpanded && m_viewerDrill != TrackingViewer3D::AvoidFallDrill
+        ? std::max(height / 3.0f - 2.0f * ImGui::GetTextLineHeightWithSpacing(), ui(40.0f)) : size.y };
+    const auto column = [&](bool first) {
+        if (!first) {
+            ImGui::SameLine();
+            ImGui::SetCursorPosY(rowTop);
+        }
         ImGui::BeginGroup();
-        ImGui::TextColored(InfoText, "%s", "Sem cair com empurrões (%) · Equilíbrio parado");
-        tooltip("De pé, com empurrões curtos e contínuos: quantos não caem (o chão tocado pelo tronco, o pescoço ou a "
-                "cabeça). Tracejado, o teste sem ruído em 32 empurrões fixos com a régua do parado com empurrão forte do "
-                "B21 (curto de 900–1200 N ou contínuo de 205–275 N por 1–3 s): a comparação com a outra rede.");
-        lineChart("##equilibrio", { { &c.balance, green, false, "treino" }, { &c.balanceTest, green, true, "teste sem ruído" } },
-            0.0f, 100.0f, size, both(c.balanceTest, c.balance, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
-        ImGui::EndGroup();
-        ImGui::SameLine();
-        ImGui::SetCursorPosY(rowTop);
-        ImGui::BeginGroup();
-        ImGui::TextColored(InfoText, "%s", "Pose de pé (%) · perto do parado em alerta");
-        tooltip("A semelhança com o parado em alerta (ou o espelho) dos que terminam de pé, de 0 a 100: começando de pé "
-                "com empurrões e, em laranja, depois de levantar de uma queda.");
-        lineChart("##pose_equilibrio", { { &c.poseStanding, violet, false, "começando de pé" }, { &c.pose, amber, false, "depois de levantar" } },
-            0.0f, 100.0f, size, last(c.poseStanding, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
-        ImGui::EndGroup();
-        return;
-    }
+    };
     if (m_viewerDrill == TrackingViewer3D::AvoidFallDrill) {
-        ImGui::BeginGroup();
-        ImGui::TextColored(InfoText, "%s", "Evitou a queda (%) · Evitar a queda");
-        tooltip("De pé, um empurrão forte (o curto ou o contínuo) que derrubava a rede de antes: quantos não caem "
-                "(cabeça abaixo de 0,9 m ou o chão tocado por algo que não os pés, as mãos e os antebraços). Tracejado, o "
-                "teste sem ruído em 32 empurrões fixos; em laranja, quantos se recompõem (de pé, na pose do parado e quase parado).");
-        lineChart("##evitou", { { &c.avoided, green, false, "treino" }, { &c.avoidedTest, green, true, "teste sem ruído" },
-                                  { &c.recomposed, amber, false, "recompôs-se" } },
-            0.0f, 100.0f, size, both(c.avoidedTest, c.avoided, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
+        column(true);
+        ImGui::TextColored(InfoText, "%s", "Evita a queda e fica de pé (%)");
+        // (05/11 01h40, ele: "esses graficos do levantar estao confusos... tira esse (teste), eu quero ver os dados do treino":
+        // so o treino nos graficos do levantar e do evitar.)
+        tooltip("De pé, leva um empurrão forte. Verde: não caiu (o tronco nunca no chão). Azul: de pé no fim do episódio "
+                "(contando quem caiu e levantou). Dados do treino.");
+        lineChart("##evitar_taxa", { { &c.avoided, green, false, "evitou a queda" }, { &c.avoidStanding, cyan, false, "de pé no fim" } },
+            0.0f, 100.0f, cell3, ("evitou " + last(c.avoided, "%.0f%%") + " · de pé no fim " + last(c.avoidStanding, "%.0f%%")).c_str(),
+            "%", &c.times, true, "sem dados ainda");
         ImGui::EndGroup();
-        ImGui::SameLine();
-        ImGui::SetCursorPosY(rowTop);
-        ImGui::BeginGroup();
-        ImGui::TextColored(InfoText, "%s", "Tempo para se recompor (s) · Evitar a queda");
-        tooltip("Do fim do empurrão até estar de pé, na pose do parado e quase parado: o treino e, tracejado, o teste.");
-        lineChart("##recompos", { { &c.recomposeSeconds, violet, false, "treino" },
-                                    { &c.recomposeSecondsTest, violet, true, "teste sem ruído" } },
-            0.0f, 4.0f, size, both(c.recomposeSecondsTest, c.recomposeSeconds, "%.2f s").c_str(), "s", &c.times, true,
-            "sem dados ainda");
+        column(false);
+        ImGui::TextColored(InfoText, "%s", "Tempo para se recompor (s)");
+        tooltip("Do fim do empurrão até estar de pé, quieto e na pose: menor é melhor. Sem dados enquanto nenhum episódio se recompõe.");
+        lineChart("##evitar_tempo", { { &c.recomposeSeconds, violet, false, "treino" } },
+            0.0f, 4.0f, cell3, last(c.recomposeSeconds, "%.2f s").c_str(), "s", &c.times, true,
+            "nenhum se recompôs ainda");
+        ImGui::EndGroup();
+        column(false);
+        ImGui::TextColored(InfoText, "%s", "Estabilidade depois do empurrão (%)");
+        tooltip("A estabilidade do episódio de pé depois do empurrão (100 = firme e quieto o tempo todo).");
+        lineChart("##evitar_estab", { { &c.avoidStill, amber, false, "estabilidade" } }, 0.0f, 100.0f, cell3,
+            last(c.avoidStill, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
         ImGui::EndGroup();
         return;
     }
-    ImGui::BeginGroup();
-    ImGui::TextColored(InfoText, "%s", "Levantou da queda (%) · Levantar do chão");
-    tooltip("De pé no fim do episódio (6 s), começando de uma queda sorteada: o treino (com ruído) e, tracejado, o "
-            "teste da rede sem ruído nas mesmas 64 quedas. Em laranja, os episódios que já começam de pé: quantos "
-            "continuam de pé até o fim (o equilíbrio).");
-    lineChart("##levantou", { { &c.standing, green, false, "treino" }, { &c.test, green, true, "teste sem ruído" },
-                                { &c.kept, amber, false, "começando de pé" } },
-        0.0f, 100.0f, size, last(c.standing, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
-    ImGui::EndGroup();
-    ImGui::SameLine();
-    ImGui::SetCursorPosY(rowTop);
-    ImGui::BeginGroup();
-    ImGui::TextColored(InfoText, "%s", "Pose de pé (%) · Levantar do chão");
-    tooltip("Depois de levantar, a semelhança com o parado em alerta (ou o espelho), de 0 a 100: o treino e, tracejado, o "
-            "teste nas 64 quedas fixas.");
-    lineChart("##pose_levantar", { { &c.pose, violet, false, "treino" }, { &c.poseTest, violet, true, "teste sem ruído" } },
-        0.0f, 100.0f, size, both(c.poseTest, c.pose, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
-    (void)blue;
-    ImGui::EndGroup();
 }
 
 void ReinforcementLearningScreen::drawLocomotionCharts(float height) {

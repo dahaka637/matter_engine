@@ -9,6 +9,7 @@
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
 
 #include <algorithm>
@@ -156,6 +157,9 @@ JPH::RefConst<JPH::Shape> createJoltShape(const PhysicsShape3D& shape,
             throw std::invalid_argument("Triangle mesh invalida");
         }
         geometry = mesh->shape;
+        const auto& materials = static_cast<const JPH::MeshShape*>(geometry.GetPtr())->GetMaterialList();
+        if (materials.empty() || joltShapeMaterialId(materials.front()) != shape.materialId)
+            throw std::invalid_argument("Triangle mesh must be cooked with its body's material");
         break;
     }
     }

@@ -3,6 +3,7 @@
 #include "Engine/Athlete/Body/GetUpPolicy3D.hpp"
 #include "Engine/RL/Body/RLBody3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
+#include "Engine/RL/Supervisor/TrainerLink3D.hpp"
 #include "Engine/Tracking/TrackingGetUpAmpTraining3D.hpp"
 #include "Engine/Tracking/TrackingTraining3D.hpp"
 #include "Workbench/ReinforcementLearning/LocomotionViewer3D.hpp"
@@ -12,11 +13,13 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdio>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <random>
+#include <string_view>
 #include <vector>
 
 namespace MatterEngine {
@@ -26,9 +29,9 @@ namespace {
 constexpr float DefaultSpeed = 3.0f;
 
 // O treino do levantar livre (31/10: uma rede para qualquer queda, tools/rl/levantar_amp.py).
-std::filesystem::path getUpRun() {
-    const char* home = std::getenv("HOME");
-    const auto runs = std::filesystem::path(home != nullptr ? home : ".") / ".local/share/matter-engine/rl/runs";
+std::filesystem::path getUpRun(const std::filesystem::path& selected = {}) {
+    if (!selected.empty()) return selected;
+    const auto runs = defaultTrainerPaths3D({}).data / "runs";
     // (31/10 17h: o levantar v2 - com o levantar em movimento e o evitar a queda -, quando existe; 01/11, a rl_final, a
     // rede que levanta, se protege e se locomove, quando existe.)
     if (std::filesystem::exists(runs / "rl_final")) return runs / "rl_final";
@@ -64,6 +67,23 @@ constexpr float PartnerSeconds = 3.0f;
 constexpr float MovingHandoffSeconds = 0.2f;
 constexpr float PartnerRunSpeed = 3.5f;
 
+// A forca auxiliar por exercicio do run.json (v2.ajuda_exercicios, 04/11) na ordem do drillAssist do treino; -1 sem.
+std::vector<float> drillAssistOf(const nlohmann::json& v2) {
+    static constexpr const char* Names[37] { "lev_trote_0", "lev_trote_1", "lev_trote_2", "lev_trote_3", "lev_trote_4",
+        "lev_trote_5", "lev_trote_6", "lev_trote_7", "lev_corrida_0", "lev_corrida_1", "lev_corrida_2", "lev_corrida_3",
+        "lev_corrida_4", "lev_corrida_5", "lev_corrida_6", "lev_corrida_7", "lev_troca_suave", "lev_troca_media",
+        "lev_troca_forte", "lev_troca_livre", "lev_curva_suave", "lev_curva_s", "lev_curva_fechada", "lev_giro", "lev_parado",
+        "lev_curva_suave_corrida", "lev_curva_s_corrida", "lev_curva_fechada_corrida", "lev_sprint", "lev_levantar",
+        "lev_estrela_trote_fixo", "lev_estrela_trote_livre", "lev_estrela_trote_girando", "lev_estrela_corrida_fixo",
+        "lev_estrela_corrida_livre", "lev_estrela_corrida_girando", "lev_comando" };
+    std::vector<float> levels(std::size(Names), -1.0f);
+    const auto it = v2.find("ajuda_exercicios");
+    if (it == v2.end() || !it->is_object()) return levels;
+    for (std::size_t k = 0; k < std::size(Names); ++k)
+        if (it->contains(Names[k]) && (*it)[Names[k]].is_number()) levels[k] = (*it)[Names[k]].get<float>();
+    return levels;
+}
+
 } // namespace
 
 struct TrackingViewer3D::Impl {
@@ -88,6 +108,7 @@ struct TrackingViewer3D::Impl {
     // O levantar: o lote do levantar livre com um mundo, como a avaliacao do treino (so quedas sorteadas: o corpo cai,
     // a rede levanta e fica de pe ate o fim do episodio, e cai de novo), com a ultima rede exportada (relida quando o
     // treino exporta outra) e a conta de quantas quedas ele levantou.
+    std::filesystem::path getUpDirectory;
     std::unique_ptr<TrackingGetUpAmpTraining3D> getUp;
     std::unique_ptr<PolicyRuntime3D> getUpPolicy;
     std::filesystem::file_time_type getUpPolicyWrite {};
@@ -145,6 +166,7 @@ struct TrackingViewer3D::Impl {
     }
     // O evitar a queda: a rede da locomocao de pe na origem e, em 1 s, o empurrao forte do treino.
     void startAvoid() {
+        if (TrackingViewer3D::isAvoidSceneryDrill(getUpDrill)) return;
         if (!ensurePartner()) return;
         partner->reset(seed + ++restarts);
         partnerActive = true;
@@ -154,6 +176,9 @@ struct TrackingViewer3D::Impl {
     }
     // De pe e firme no mundo do levantar: a troca.
     void checkHandoff() {
+        // (Na sequencia de clipes nao ha troca de rede: os clipes seguem ate o fim do episodio.)
+        if (sequenceActive) return;
+        if (TrackingViewer3D::sceneryPresetOf(getUpDrill) >= 0 || getUpDrill == SceneryDrill || getUpDrill == AvoidSceneryDrill) return;
         const RagdollProfile3D& profile = getUp->profile();
         const RagdollState3D& body = getUp->body(0);
         if (body.links.empty()) return;
@@ -228,6 +253,7 @@ struct TrackingViewer3D::Impl {
                 partner->setManualTarget(std::nullopt, 0.0f);
                 runTarget.reset();
                 partnerActive = false;
+                refreshAssist();
                 getUp->reset(seed + ++restarts);
                 firmSeconds = 0.0f;
                 wasDown = false;
@@ -236,12 +262,28 @@ struct TrackingViewer3D::Impl {
         }
         if (partnerTime >= PartnerSeconds && !partner->gettingUp()) {
             partnerActive = false;
-            getUp->reset(seed + ++restarts);
+            refreshAssist();
+                getUp->reset(seed + ++restarts);
             firmSeconds = 0.0f;
             wasDown = false;
         }
     }
     float avoidLow = 1800.0f, avoidHigh = 2600.0f;
+    // O musculo da cabeca da locomocao do treino (o json do run.json; vazio: o do rastreador).
+    std::string muscleFile;
+    // (04/11, ele: "eu devo ver o exercicio rodando com a forca auxiliar real que ele tem" - relida do run.json a cada
+    // episodio: o treinador a afrouxa durante o treino.)
+    void refreshAssist() {
+        if (!getUp) return;
+        std::ifstream file(getUpDirectory / "run.json");
+        const nlohmann::json run = nlohmann::json::parse(file, nullptr, false);
+        if (!run.is_discarded() && run.is_object() && run.contains("v2") && run["v2"].is_object()) {
+            getUp->setLocomotionAssist(run["v2"].value("ajuda_locomocao", 0.0f));
+            getUp->setRunAssist(run["v2"].value("ajuda_corrida", -1.0f));
+            getUp->setManeuverAssist(run["v2"].value("ajuda_manobra", -1.0f));
+            getUp->setDrillAssist(drillAssistOf(run["v2"]));
+        }
+    }
     void startGetUp() {
         TrackingGetUpAmpSettings3D s;
         s.assetsDirectory = assets.string();
@@ -252,8 +294,11 @@ struct TrackingViewer3D::Impl {
         s.evaluationKind = getUpKind;
         s.heading = locomotionHeadingOf(getUpDrill, seed);
         s.evaluationBand = locomotionBandOf(getUpDrill);
+        s.evaluationManeuver = maneuverOf(getUpDrill);
+        if (s.evaluationManeuver > 0)
+            s.evaluationBand = getUpDrill.ends_with("_corrida") || getUpDrill.starts_with("lev_estrela_corrida_") ? 2 : 1;
         // (As forcas e as velocidades do treino de agora: o run.json do levantar v2, gravado a cada abertura.)
-        std::ifstream file(getUpRun() / "run.json");
+        std::ifstream file(getUpDirectory / "run.json");
         const nlohmann::json run = nlohmann::json::parse(file, nullptr, false);
         if (!run.is_discarded() && run.is_object() && run.contains("v2") && run["v2"].is_object()) {
             const nlohmann::json& v2 = run["v2"];
@@ -280,10 +325,12 @@ struct TrackingViewer3D::Impl {
             // (O levantar guiado pelo clipe, como no treino: 01/11 23h10.)
             s.getUpGuide = v2.value("levantar_guiado", false);
             s.getUpSeconds = v2.value("levantar_segundos", 1.7f);
+            // (O levantar pelo clipe, como no treino: 05/11 04h40.)
+            s.getUpTracking = v2.value("levantar_clipe", false);
             // (O rolar pelo clipe, como no treino: 02/11 01h40.)
             s.rollBlend = v2.value("rolar_clipe", 1.0f);
             // (Os ambientes nas fatias do treino, so no exercicio deles.)
-            if (getUpDrill == SceneryDrill || getUpDrill == AvoidSceneryDrill) {
+            if (getUpDrill == SceneryDrill || TrackingViewer3D::isAvoidSceneryDrill(getUpDrill) || TrackingViewer3D::sceneryPresetOf(getUpDrill) >= 0) {
                 s.evaluationScenery = true;
                 s.obstacleFraction = v2.value("obstaculo", 0.0f);
                 s.weightFraction = v2.value("peso_em_cima", 0.0f);
@@ -295,19 +342,372 @@ struct TrackingViewer3D::Impl {
             }
             // (Os rumos e o giro com a regua fixa da avaliacao do treino: 2,5 m/s e, se o treino tem empurroes em
             // movimento, os do comeco do B21 - os padroes daqui; sem eles no treino, sem eles aqui.)
+            // (03/11, o rastreio dos clipes: as duas cabecas, a nota e o fim do episodio como no treino.)
+            s.separateSkills = v2.value("habilidades_separadas", false);
+            s.locomotionTracking = v2.value("rastreio", false);
+            s.trackingTermination = v2.value("rastreio_encerra", 0.0f);
+            // (04/11: a forca auxiliar da locomocao de agora - o treinador grava a cada mudanca.)
+            s.locomotionAssist = v2.value("ajuda_locomocao", 0.0f);
+            s.balanceFeet = v2.value("pe_equilibrio", false);
+            s.runAssist = v2.value("ajuda_corrida", -1.0f);
+            s.maneuverAssist = v2.value("ajuda_manobra", -1.0f);
+            s.idleAfterStand = v2.value("idle_pos_levantar", false);
+            s.idleOnLocomotion = v2.value("parado_locomocao", false);
+            s.idleResidualScale = v2.value("idle_alcance", 1.0f);
+            // (04/11 09h10: a entrega ao idle depois de levantar, como no treino.)
+            s.idleBlendSeconds = v2.value("idle_entrega", 0.0f);
+            s.riseHandoffHead = v2.value("entrega_subindo", 0.0f);
+            s.lateralHandPush = !v2.value("trote_lateral_sem_puxao", false);
+            s.lateralRunLegReach = v2.value("corrida_lateral_pernas", 1.0f);
+            // (04/11 12h40: os pedidos fixos do trote e da corrida, com o clipe na cadencia dele.)
+            for (const auto& [key, speeds] : { std::pair { "velocidades_trote", &s.trotSpeeds }, std::pair { "velocidades_corrida", &s.runSpeeds } })
+                if (v2.contains(key) && v2[key].is_array() && v2[key].size() == 8)
+                    for (std::size_t k = 0; k < 8; ++k) (*speeds)[k] = v2[key][k].get<float>();
+            s.backStartLean = -v2.value("largada_costas", 0.0f) * 3.14159265f / 180.0f;
+            s.courseLimit = v2.value("curva_fora", 0.0f);
+            s.curveLean = v2.value("curva_inclinar", false);
+            s.accelLean = v2.value("troca_inclinar", 0.0f) * 3.14159265f / 180.0f;
+            s.sprintSpeed = v2.value("sprint_velocidade", 0.0f);
+            if (v2.contains("sprint_inclinar") && v2["sprint_inclinar"].is_array() && v2["sprint_inclinar"].size() == 2) {
+                s.sprintLean = v2["sprint_inclinar"][0].get<float>() * 3.14159265f / 180.0f;
+                s.sprintLeanLegs = v2["sprint_inclinar"][1].get<float>();
+            }
+            // (06/11: a largada progressiva da corrida, como no treino.)
+            if (v2.contains("corrida_largada") && v2["corrida_largada"].is_array() && v2["corrida_largada"].size() == 3) {
+                s.runLaunchScale = v2["corrida_largada"][0].get<float>();
+                s.runLaunchEaseSeconds = v2["corrida_largada"][1].get<float>();
+                s.runLaunchAcceleration = v2["corrida_largada"][2].get<float>();
+            }
+            if (v2.contains("corrida_inclinar") && v2["corrida_inclinar"].is_array() && v2["corrida_inclinar"].size() == 2) {
+                s.runLean = v2["corrida_inclinar"][0].get<float>() * 3.14159265f / 180.0f;
+                s.runLeanLegs = v2["corrida_inclinar"][1].get<float>();
+            }
+            if (v2.contains("corrida_costas_inclinar") && v2["corrida_costas_inclinar"].is_array()
+                && v2["corrida_costas_inclinar"].size() == 2) {
+                s.runBackLean = v2["corrida_costas_inclinar"][0].get<float>() * 3.14159265f / 180.0f;
+                s.runBackLeanLegs = v2["corrida_costas_inclinar"][1].get<float>();
+            }
+            if (v2.contains("trote_frente_inclinar") && v2["trote_frente_inclinar"].is_array() && v2["trote_frente_inclinar"].size() == 2) {
+                s.frontLean = v2["trote_frente_inclinar"][0].get<float>() * 3.14159265f / 180.0f;
+                s.frontStartLean = v2["trote_frente_inclinar"][1].get<float>() * 3.14159265f / 180.0f;
+            }
+            s.recoveryNatural = v2.value("naturalidade", 0.0f);
+            s.idleBlendReach = v2.value("idle_entrega_alcance", -1.0f);
+            s.trackingReward = v2.value("recompensa_rastreio", s.trackingReward);
+            s.phaseSync = v2.value("sincronizar_fase", false);
+            s.armClipReach = v2.value("bracos_clipe", -1.0f);
+            s.headClipReach = v2.value("cabeca_clipe", -1.0f);
+            // (08/11: a estrela na fase de agora do treino e a duracao dela.)
+            if (v2.contains("estrela_fases") && v2["estrela_fases"].is_array() && v2["estrela_fases"].size() == 6)
+                for (std::size_t k = 0; k < 6; ++k) s.starPhases[k] = std::clamp(v2["estrela_fases"][k].get<int>(), 1, 4);
+            s.starSeconds = v2.value("estrela_segundos", s.starSeconds);
+            // (08/11 14h40: o comando na fase de agora do treino.)
+            s.commandPhase = std::clamp(v2.value("comando_fase", 1), 1, 4);
+            s.commandSeconds = v2.value("comando_segundos", s.commandSeconds);
+            s.upperHand = v2.value("mao_tronco", false);
+            s.bodyHand = v2.value("mao_corpo", false);
+            // (04/11 15h, os passos: o layout levantar-v7 - as entradas do equilibrio, os canais do passo - e o gerador, a
+            // autoridade sob ameaca e a chegada do levantar como no treino; o equilibrio parado no nivel dele.)
+            s.balanceObservation = s.stepChannels = s.balanceSteps = v2.value("equilibrio", false);
+            // (11/11 18h05: a variante do levantar pelo clipe na entrada, como no treino - o rolando com 1.)
+            s.clipVariantObservation = v2.value("levantar_unreal_variante", false);
+            // (12/11 06h40: as entradas do fogo, como no treino.)
+            s.fireObservation = v2.value("levantar_fogo_entrada", false);
+            s.idleThroughPushes = v2.value("empurrao_idle", false);
+            s.idleThreatReach = v2.value("idle_alcance_ameaca", 0.0f);
+            s.avoidOnIdle = v2.value("evitar_idle", false);
+            s.arrivalBonus = v2.value("chegada_premio", 0.0f);
+            s.flightPenalty = v2.value("voo_multa", 0.0f);
+            s.balancePushLevel = v2.value("equilibrio_nivel", 0.5f);
+            {
+                const std::vector<float> levels = drillAssistOf(v2);
+                for (std::size_t k = 0; k < s.drillAssist.size() && k < levels.size(); ++k) s.drillAssist[k] = levels[k];
+            }
+            s.locomotionResidual = v2.value("residuo", 0.0f) > 0.0f;
             s.trotMinimumSpeed = s.trotMaximumSpeed = 2.5f;
+            // (03/11 18h27, a professora B21: os rumos como no treino dela - de pe, no pedido do que ela faz, sem rampa
+            // nem fase - e o musculo da cabeca da locomocao; aqui a aluna sozinha.)
+            if (!v2.value("professor", std::string()).empty()) {
+                s.taughtHeadings = true;
+                if (v2.contains("professor_aluna") && v2["professor_aluna"].is_array() && v2["professor_aluna"].size() == 8)
+                    for (std::size_t k = 0; k < 8; ++k) s.teacherStudentSpeeds[k] = v2["professor_aluna"][k].get<float>();
+            }
+            muscleFile = v2.value("musculo", std::string());
             float low = 0.0f, high = 0.0f, holdLow = 0.0f, holdHigh = 0.0f;
             pair("empurrao_mov_forca", low, high);
             pair("empurrao_mov_continuo_forca", holdLow, holdHigh);
             if (high <= 0.0f && holdHigh <= 0.0f)
                 s.movingPushMaximumNewtons = s.movingPushMinimumNewtons = s.movingPushHoldMinimumNewtons =
                     s.movingPushHoldMaximumNewtons = 0.0f;
+            // (08/11, a fase de fogo: as pancadas e os empurroes no nivel de agora do treino - as faixas do fire_bands do
+            // levantar_amp.py -, um por episodio na locomocao e, no equilibrio, a cada 1,5-3 s.)
+            if (const float level = std::clamp(v2.value("fogo_nivel", -1.0f), -1.0f, 3.0f); level >= 0.0f) {
+                s.pushMinimumNewtons = s.movingPushMinimumNewtons = 350.0f + 250.0f * level;
+                s.pushMaximumNewtons = s.movingPushMaximumNewtons = std::min(2400.0f, 350.0f + 1050.0f * level);
+                s.pushHoldMinimumNewtons = s.movingPushHoldMinimumNewtons = 120.0f + 80.0f * level;
+                s.pushHoldMaximumNewtons = s.movingPushHoldMaximumNewtons = std::min(900.0f, 120.0f + 380.0f * level);
+                s.pushHoldMinimumSeconds = s.movingPushHoldMinimumSeconds = 3.0f;
+                s.pushHoldMaximumSeconds = s.movingPushHoldMaximumSeconds = 5.0f;
+                s.pushHoldFraction = s.movingPushHoldFraction = 0.5f;
+                s.balancePushLevel = 1.0f;
+            }
         }
+        // (18h05) A caixa "Empurroes": marcada, os empurroes do treino (as faixas por grupo, abaixo, depois de construir); desmarcada,
+        // nenhum na locomocao.
+        if (pushes) {
+            s.pushHoldFraction = s.movingPushHoldFraction = 0.5f;
+            s.pushHoldMinimumSeconds = s.movingPushHoldMinimumSeconds = 3.0f;
+            s.pushHoldMaximumSeconds = s.movingPushHoldMaximumSeconds = 5.0f;
+        } else {
+            s.movingPushMinimumNewtons = s.movingPushMaximumNewtons = s.movingPushHoldMinimumNewtons = s.movingPushHoldMaximumNewtons = 0.0f;
+        }
+        s.sceneryPreset = TrackingViewer3D::sceneryPresetOf(getUpDrill);
+        if (s.sceneryPreset >= 0) {
+            s.evaluationScenery = true;
+            if (s.sceneryPreset == 3 || s.sceneryPreset == 4) s.episodeSeconds = 12.0f;
+        }
+        // (05/11 02h, ele: "faca durar mais o tempo do exercicio para eu ver se de fato ele esta caindo": o levantar no
+        // visualizador com 20 s - a queda, o levantar e o de pe no idle por muito tempo.)
+        if (getUpKind == 0 && s.sceneryPreset < 0) s.episodeSeconds = 20.0f;
         getUp = std::make_unique<TrackingGetUpAmpTraining3D>(s);
+        // (08/11: os passos pelos ciclos na meta, como no treino.)
+        {
+            std::ifstream cyclesFile(getUpDirectory / "run.json");
+            const nlohmann::json cyclesRun = nlohmann::json::parse(cyclesFile, nullptr, false);
+            if (!cyclesRun.is_discarded() && cyclesRun.is_object() && cyclesRun.contains("v2") && cyclesRun["v2"].is_object())
+            {
+                getUp->setGaitCycles(cyclesRun["v2"].value("passos_ciclos", false));
+                // (08/11 16h20: a parada no fim dos retos do treino - aqui em todo reto, na janela dele -, pelas paradas da Unreal
+                // quando o treino as usa.)
+                if (cyclesRun["v2"].value("parada", 0.0) > 0.0) {
+                    getUp->setFinalStop(1.0f, 4.5f, 5.5f, 5.0f, true);
+                    getUp->setStopClips(cyclesRun["v2"].value("parada_clipes", false));
+                }
+                // (09/11 14h: a parada livre - a locomocao dirige ate parar de pe, sem referencia que freia - tambem no comando.)
+                getUp->setFreeStop(cyclesRun["v2"].value("parada_livre", false));
+                getUp->setFreeTroca(cyclesRun["v2"].value("troca_livre", false));
+                getUp->setFreeStandGate(cyclesRun["v2"].value("parada_pose", 0.0f));
+                getUp->setCommandChestGate(cyclesRun["v2"].value("peito_comando", 0.0f));
+                getUp->setFreeIdle(cyclesRun["v2"].value("parado_livre", false));
+                getUp->setPoseBoost(cyclesRun["v2"].value("pose_reforco", 0.0f));
+                getUp->setFreePush(cyclesRun["v2"].value("empurrao_livre", false));
+                getUp->setFreeIdleMatch(cyclesRun["v2"].value("parado_semelhanca", 0.0f));
+                getUp->setFreeStepHeight(cyclesRun["v2"].value("passo_baixo", 0.0f));
+                getUp->setIdleBentEnd(cyclesRun["v2"].value("parado_dobrado_encerra", false));
+                getUp->setUpperImitation(cyclesRun["v2"].value("imitacao_tronco", false));
+                getUp->setIdleWide(cyclesRun["v2"].value("parado_largo", false));
+                // (11/11: sem freio - a ordem de parar vai direto ao idle alerta -, o parado unico e a nota nova dele, como no treino.)
+                getUp->setStopToIdle(cyclesRun["v2"].value("parada_direto_idle", false));
+                getUp->setIdleAfterStop(cyclesRun["v2"].value("idle_depois_freada", false));
+                getUp->setTurnVariety(cyclesRun["v2"].value("giro_variado", false), cyclesRun["v2"].value("giro_coluna", 0.0f));
+                getUp->setStillCost(cyclesRun["v2"].value("quieto_custos", 0.0f));
+                getUp->setIdleStatic(cyclesRun["v2"].value("parado_estatico", false));
+                // (11/11 10h45, ele: "a coluna ta torta no parado": a coluna sem o canal livre de velocidade, como no treino.)
+                getUp->setSpineVelocityFeedforward(cyclesRun["v2"].value("coluna_sem_velocidade", false));
+                getUp->setIdleUnified(cyclesRun["v2"].value("parado_unico", false));
+                if (cyclesRun["v2"].contains("parado_recompensa") && cyclesRun["v2"]["parado_recompensa"].is_array()
+                    && cyclesRun["v2"]["parado_recompensa"].size() == 3) {
+                    const nlohmann::json& r = cyclesRun["v2"]["parado_recompensa"];
+                    getUp->setIdleReward(r[0].get<float>(), r[1].get<float>(), r[2].get<float>());
+                }
+                if (pushes) {
+                    // (As faixas do fire_bands do levantar_amp.py, no nivel de cada grupo do treino agora.)
+                    const nlohmann::json& v = cyclesRun["v2"];
+                    std::vector<float> bands;
+                    for (const char* group : { "frente", "lado", "costas", "giro", "parado", "outros" }) {
+                        float level = -0.5f;
+                        if (v.contains("fogo_niveis") && v["fogo_niveis"].is_object()) level = v["fogo_niveis"].value(group, -0.5f);
+                        level = std::clamp(level, -0.5f, 3.0f);
+                        const float hitLow = 350.0f + 250.0f * level, holdLow = 120.0f + 80.0f * level;
+                        const float hitHigh = level < 0.0f ? hitLow : std::min(2400.0f, 350.0f + 1050.0f * level);
+                        const float holdHigh = level < 0.0f ? holdLow : std::min(900.0f, 120.0f + 380.0f * level);
+                        bands.insert(bands.end(), { hitLow, hitHigh, holdLow, holdHigh });
+                    }
+                    getUp->setFireGroups(bands);
+                    getUp->setPushVariety(v.value("fogo_pontos", false));
+                    getUp->setFireShown(true);
+                    // (12/11 16h30, o fogo da locomocao como no treino: marcada, os exercicios de locomocao com fogo nos niveis de agora de
+                    // cada grupo - a ultima linha do log com fogo_locomocao; sem ela, os de partida.)
+                    if (v.value("locomocao_fogo", 0.0f) > 0.0f) {
+                        std::array<float, 6> levels {};
+                        std::ifstream log(getUpDirectory / "log.jsonl", std::ios::binary | std::ios::ate);
+                        const std::streamoff size = log ? static_cast<std::streamoff>(log.tellg()) : 0;
+                        const std::streamoff from = std::max<std::streamoff>(0, size - 600000);
+                        std::string tail(static_cast<std::size_t>(size - from), '\0');
+                        if (log) {
+                            log.seekg(from);
+                            log.read(tail.data(), static_cast<std::streamsize>(tail.size()));
+                        }
+                        for (std::size_t end = tail.size(); end > 0;) {
+                            const std::size_t start = tail.rfind('\n', end - 1);
+                            const std::size_t begin = start == std::string::npos ? 0 : start + 1;
+                            const std::string_view line(tail.data() + begin, end - begin);
+                            if (line.find("\"fogo_locomocao\"") != std::string_view::npos) {
+                                const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
+                                if (!row.is_discarded() && row.contains("fogo_locomocao") && row["fogo_locomocao"].contains("niveis")) {
+                                    const nlohmann::json& n = row["fogo_locomocao"]["niveis"];
+                                    std::size_t k = 0;
+                                    for (const char* group : { "frente", "lado", "costas", "giro", "parado", "outros" })
+                                        levels[k++] = n.value(group, 0.0f);
+                                    break;
+                                }
+                            }
+                            if (start == std::string::npos) break;
+                            end = start;
+                        }
+                        getUp->setLocomotionFire(1.0f, levels, v.value("locomocao_fogo_liberdade", 0.0f));
+                    }
+                }
+            }
+        }
+        // (06/11 17h40: a velocidade-alvo na acao da rede livre, como no treino - antes de dimensionar a acao.)
+        {
+            std::ifstream velocityFile(getUpDirectory / "run.json");
+            const nlohmann::json velocityRun = nlohmann::json::parse(velocityFile, nullptr, false);
+            if (!velocityRun.is_discarded() && velocityRun.is_object() && velocityRun.contains("v2") && velocityRun["v2"].is_object())
+            {
+                getUp->setVelocityActions(velocityRun["v2"].value("acao_velocidade", false));
+                getUp->setRecoveryVelocity(velocityRun["v2"].value("levantar_velocidade", false));
+                // (11/11 14h: o levantar pelo clipe - os clipes e as opcoes do treino, LEVANTAR_UNREAL do levantar_amp.py.)
+                if (velocityRun["v2"].value("levantar_unreal", 0.0) > 0.0) {
+                    const nlohmann::json& v = velocityRun["v2"];
+                    const std::vector<std::string> clips { "levantar/levantar_costas", "levantar/levantar_brucos",
+                        "levantar/levantar_correndo_costas", "levantar/levantar_correndo_brucos", "levantar/levantar_costas_rolando" };
+                    getUp->addStyleClips(clips);
+                    getUp->setClipGetUp(clips, 0.0f, 0.0f, v.value("levantar_unreal_depois", 1.5f), 0.0f,
+                        v.value("levantar_unreal_largura", 2.0f), v.value("levantar_unreal_vel", 1.5f));
+                    getUp->setClipGetUpVariants({ 0.0f, 0.0f, 0.0f, 0.0f, 1.0f });
+                    getUp->setClipGetUpParts(v.value("levantar_unreal_partes", false));
+                    // (12/11 04h30, ele: "os levantares correndo estao terminando muito cedo": sem o relogio da agilidade do treino, a
+                    // rede - mais rapida que o clipe - ficava longe dele e o laboratorio encerrava aos 1,0-1,3 s.) Os pontos de entrega e
+                    // a agilidade do treino (levantar_unreal_entrega, levantar_unreal_agilidade: parado, correndo, rampa).
+                    if (v.contains("levantar_unreal_entrega") && v["levantar_unreal_entrega"].is_array()) {
+                        std::vector<float> deliver;
+                        for (const auto& x : v["levantar_unreal_entrega"]) deliver.push_back(x.get<float>());
+                        getUp->setClipGetUpDeliver(deliver);
+                    }
+                    if (v.contains("levantar_unreal_agilidade") && v["levantar_unreal_agilidade"].is_array()
+                        && v["levantar_unreal_agilidade"].size() >= 2) {
+                        const float stand = v["levantar_unreal_agilidade"][0].get<float>(), run = v["levantar_unreal_agilidade"][1].get<float>();
+                        getUp->setClipGetUpAgility({ stand, stand, run, run, 0.0f });
+                    }
+                    // (12/11 04h40, a fase de fogo do levantar: o levantar adaptativo e o fogo como no treino.)
+                    // (05h30, ele: "se eu marcar a checkbox Empurroes eu devo ver os treinos que ocorrem com os empurroes/pancadas (de
+                    // diferentes tipos que temos)... caso o checkbox do empurroes esteja desativo eu vejo so os cenarios limpos") Marcada:
+                    // so os cenarios com fogo - pancada, continuo, os dois e os de cima, nas fatias do treino - nos niveis de agora do
+                    // treino (a ultima linha do log com fogo_levantar; sem ela, os de partida); desmarcada: so os limpos.
+                    if (v.value("levantar_adaptativo", false)) getUp->setClipGetUpAdaptive(true);
+                    // (12/11 07h55) A firmeza depois da entrega e o soltar da forca, como no treino.
+                    if (v.contains("levantar_fogo_soltar"))
+                        getUp->setAdaptiveSettle(v.value("levantar_adaptativo_firmeza", 0.0f), v.value("levantar_fogo_soltar", 0.15f));
+                    // (12/11 08h30, ele: "tentar se levantar novamente, APOS fracassar... (nunca desistir)") A nova tentativa, como no treino.
+                    if (v.value("levantar_tentar", false)) getUp->setAdaptiveRetry(true);
+                    // (12/11 17h20, a estrela sem o encerramento por sair do caminho e com as pernas em curva - como no treino.)
+                    if (v.contains("estrela_caminho") && v["estrela_caminho"].is_array() && v["estrela_caminho"].size() == 2
+                        && v.contains("estrela_curvas") && v["estrela_curvas"].is_array() && v["estrela_curvas"].size() == 3)
+                        getUp->setStarRework(v["estrela_caminho"][0].get<float>(), v["estrela_caminho"][1].get<float>(),
+                            v["estrela_curvas"][0].get<float>(), v["estrela_curvas"][1].get<float>(), v["estrela_curvas"][2].get<float>());
+                    // (12/11 17h, ele: o parado nascendo torto para aprender a se reajustar - como no treino.)
+                    if (v.contains("parado_torto") && v["parado_torto"].is_array() && v["parado_torto"].size() == 3)
+                        getUp->setCrookedStart(v["parado_torto"][0].get<float>(), v["parado_torto"][1].get<float>(), v["parado_torto"][2].get<float>());
+                    // (14h30) Os comecos em pose variada, como no treino (o laboratorio roda como avaliacao: aqui so se o treino tiver).
+                    if (v.value("levantar_pose_variada", 0.0f) > 0.0f) getUp->setGetUpPoseVariety(v.value("levantar_pose_variada", 0.0f));
+                    // (14h05) A janela dos correndo depois de ficar de pe, como no treino.
+                    if (v.contains("levantar_velocidade_corrida") && v["levantar_velocidade_corrida"].is_array() && v["levantar_velocidade_corrida"].size() == 2)
+                        getUp->setRunPostRise(v["levantar_velocidade_corrida"][0].get<float>(), v["levantar_velocidade_corrida"][1].get<float>());
+                    // (12/11 08h45) Nos correndo, a parte da forca contra a corrida limitada, como no treino.
+                    if (v.value("levantar_fogo_contra_corrida", 0.0f) > 0.0f)
+                        getUp->setFireRunHeadwindCap(v.value("levantar_fogo_contra_corrida", 0.0f));
+                    // (12/11 09h15, ele: as paredes do levantar "visiveis no laboratorio") As paredes como no treino.
+                    // (12/11 12h35, a fase 2) As adversidades novas do fogo, como no treino.
+                    if (v.contains("levantar_fogo_extras") && v["levantar_fogo_extras"].is_array() && v["levantar_fogo_extras"].size() >= 8) {
+                        const auto& x = v["levantar_fogo_extras"];
+                        const auto at = [&](std::size_t k, float fallback) { return k < x.size() ? x[k].get<float>() : fallback; };
+                        getUp->setGetUpFireExtras(static_cast<int>(at(0, 1.0f)), at(1, 0.0f), at(2, 0.0f), at(3, 0.5f), at(4, 3.0f), at(5, 0.0f),
+                            at(6, 1.5f), at(7, 0.0f), at(8, 0.0f), at(9, 0.0f), at(10, 0.3f), at(11, 0.4f), at(12, 1.2f), at(13, 0.1f), at(14, 0.2f), at(15, 0.0f), at(16, 0.0f));
+                    }
+                    if (v.contains("levantar_paredes") && v["levantar_paredes"].is_array() && v["levantar_paredes"].size() == 2)
+                        getUp->setGetUpArena(v["levantar_paredes"][0].get<float>(), v["levantar_paredes"][1].get<float>());
+                    if (v.contains("levantar_fogo") && v["levantar_fogo"].is_array() && v["levantar_fogo"].size() == 4
+                        && v.contains("levantar_fogo_prova") && v["levantar_fogo_prova"].is_object()) {
+                        std::vector<float> shares;
+                        for (const auto& x : v["levantar_fogo"]) shares.push_back(x.get<float>());
+                        nlohmann::json current = v["levantar_fogo_prova"];
+                        {
+                            std::ifstream log(getUpDirectory / "log.jsonl", std::ios::binary | std::ios::ate);
+                            const std::streamoff size = log ? static_cast<std::streamoff>(log.tellg()) : 0;
+                            const std::streamoff from = std::max<std::streamoff>(0, size - 600000);
+                            std::string tail(static_cast<std::size_t>(size - from), '\0');
+                            if (log) {
+                                log.seekg(from);
+                                log.read(tail.data(), static_cast<std::streamsize>(tail.size()));
+                            }
+                            for (std::size_t end = tail.size(); end > 0;) {
+                                const std::size_t start = tail.rfind('\n', end - 1);
+                                const std::size_t begin = start == std::string::npos ? 0 : start + 1;
+                                const std::string_view line(tail.data() + begin, end - begin);
+                                if (line.find("\"fogo_levantar\"") != std::string_view::npos) {
+                                    const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
+                                    if (!row.is_discarded() && row.contains("fogo_levantar") && row["fogo_levantar"].is_object()) {
+                                        current = row["fogo_levantar"];
+                                        break;
+                                    }
+                                }
+                                if (start == std::string::npos) break;
+                                end = start;
+                            }
+                        }
+                        std::vector<float> levels;
+                        for (const char* key : { "lev_levantar_costas", "lev_levantar_brucos", "lev_levantar_correndo_costas",
+                                 "lev_levantar_correndo_brucos" }) {
+                            const nlohmann::json& level = current.value(key, nlohmann::json::array());
+                            for (std::size_t k = 0; k < 4; ++k) levels.push_back(k < level.size() ? level[k].get<float>() : 0.0f);
+                        }
+                        levels.insert(levels.end(), 4, 0.0f);
+                        const float above = v.value("levantar_fogo_de_cima", 0.0f);
+                        if (shares[1] + shares[2] + shares[3] > 0.0f)
+                            getUp->setGetUpFire(pushes ? std::vector<float> { 0.0f, shares[1], shares[2], shares[3], above }
+                                                       : std::vector<float> { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+                                levels, false);
+                    }
+                    getUp->reset(seed);
+                }
+                // (07/11: os comecos deitados do treino - os mesmos clipes de LYING_STAND e LYING_RUN do levantar_amp.py.)
+                if (velocityRun["v2"].value("deitado", false)) {
+                    const std::vector<std::string> stand { "referencias_unreal/ragdoll_getup_stand_b", "referencias_unreal/ragdoll_getup_stand_f" };
+                    const std::vector<std::string> run { "referencias_unreal/ragdoll_getup_run_b", "referencias_unreal/ragdoll_getup_run_f",
+                        "referencias_unreal/ragdoll_getup_run_l", "referencias_unreal/ragdoll_getup_run_r" };
+                    std::vector<std::string> all = stand;
+                    all.insert(all.end(), run.begin(), run.end());
+                    getUp->addStyleClips(all);
+                    getUp->setLyingStarts(stand, run);
+                    getUp->setMovingHandoff(true);
+                    // (07/11, ele: "as vezes nasce em pe": o construtor ja sorteou o primeiro comeco sem os deitados.)
+                    getUp->reset(seed);
+                }
+            }
+        }
+        if (!muscleFile.empty()) {
+            std::ifstream muscleStream(muscleFile);
+            const nlohmann::json muscle = nlohmann::json::parse(muscleStream, nullptr, false);
+            if (!muscle.is_discarded() && muscle.is_object()) {
+                const auto values = [&](const char* key) {
+                    std::vector<float> out;
+                    if (muscle.contains(key) && muscle[key].is_array())
+                        for (const auto& v : muscle[key]) out.push_back(v.get<float>());
+                    return out;
+                };
+                const std::vector<float> stiffness = values("rigidez"), damping = values("amortecimento"),
+                                         torque = values("teto");
+                if (stiffness.size() == getUp->actionSize() && damping.size() == stiffness.size()
+                    && torque.size() == stiffness.size())
+                    getUp->setStudentActuator(stiffness, damping, torque, muscle.value("gravidade", false));
+            }
+        }
         // (As quedas da locomocao: as 32 fixas da avaliacao do treino, que ele grava cruas - a posicao, a orientacao e
         // as velocidades de cada link; sem o arquivo, as quedas sorteadas.)
         if (getUpKind == 7) {
-            std::ifstream raw(getUpRun() / "quedas_locomocao_aval.f32", std::ios::binary);
+            std::ifstream raw(getUpDirectory / "quedas_locomocao_aval.f32", std::ios::binary);
             std::vector<float> values;
             for (float value; raw.read(reinterpret_cast<char*>(&value), sizeof value);) values.push_back(value);
             const std::size_t links = getUp->profile().links.size();
@@ -328,20 +728,99 @@ struct TrackingViewer3D::Impl {
         getUpObservation.assign(getUp->observationSize(), 0.0f);
         getUpAction.assign(getUp->actionSize(), 0.0f);
         getUpFalls = getUpStood = 0;
+        // (So nos exercicios em que o cinematico age: os rumos e manobras, o parado e o giro - as avaliacoes 3 a 6.)
+        if (kinematic && getUpKind >= 3 && getUpKind <= 6) applyKinematic();
+        // (07/11, ele: "falta essa visao cinematica para os exercicios de levantar": de costas, de brucos e correndo tambem.)
+        // (11/11, ele: "o clipes do exercicio deveria mostrar o que o treino segue... foda-se se e ou nao Unreal": a vista
+        // mostra a pose alvo do treino - em view() -, nao mais a sequencia de clipes da Unreal do juiz; a rede segue agindo.)
+    }
+    // (07/11, ele: "vamos fazer os clipes tipo nos faziamos antes, sem Motion Matching... ligar as trocas adequadamente" e
+    // "so ver no laboratorio") A sequencia de clipes da Unreal de cada exercicio, por regra, sem fisica - ligada por padrao.
+    // (07/11, ele: "agora o clipes do exercicio desativado por default".)
+    bool sequence = false;
+    mutable RagdollState3D referenceBody;
+    // (08/11 18h05, ele: "um checkbox ao lado do Clipes do exercicio, chamado empurroes, para eu visualizar os treinos com
+    // empurroes"): marcada, os empurroes do treino - o nivel de cada grupo, os pontos variados - em todo episodio.
+    bool pushes = false;
+    bool sequenceActive = false;
+    void applySequence() {
+        kinematicError.clear();
+        sequenceActive = false;
+        if (!getUp) return;
+        try {
+            std::vector<std::string> names;
+            const std::filesystem::path folder = assets / "animations" / "clips" / "referencias_unreal";
+            for (const auto& entry : std::filesystem::directory_iterator(folder)) {
+                const std::string file = entry.path().filename().string();
+                constexpr std::string_view Suffix = ".matteranim.json";
+                if (!file.ends_with(Suffix)) continue;
+                const std::string id = file.substr(0, file.size() - Suffix.size());
+                const bool used = id.starts_with("trote_run_start_") || id.starts_with("trote_run_loop_") || id.starts_with("trote_run_stop_")
+                    || id.starts_with("trote_run_turn_") || id.starts_with("trote_run_arc_") || id.starts_with("corrida_")
+                    || id.starts_with("trote_run_reface_start_") || id.starts_with("stand_turn_")
+                    || id == "stand_idle_loop";
+                if (used) names.push_back("referencias_unreal/" + id);
+            }
+            std::sort(names.begin(), names.end());
+            getUp->addStyleClips(names);
+            getUp->setClipSequence(true);
+            getUp->setStarDrill(starModeOf(getUpDrill));
+            getUp->reset(seed);
+            sequenceActive = true;
+        } catch (const std::exception& error) {
+            kinematicError = error.what();
+        }
+    }
+    // (07/11, ele: "temporariamente, coloca os movimentos dos exercicios de forma cinematica, so para eu ver o Motion Matching
+    // operando") Os bancos do juiz (tools/rl/juiz_mm_bancos.json, o conjunto denso do Game Animation Sample) e a previsao do
+    // treino no lote do laboratorio; o corpo vai ao quadro escolhido a cada decisao, sem fisica.
+    // (07/11, ele: "deixa como default ativo, pois nao consigo ativar pois trava"; depois: "esse Motion Matching esta muito
+    // problematico, entao ele fica arquivado por hora" - desligado e sem a chave na tela; o codigo fica.)
+    bool kinematic = false;
+    std::string kinematicError;
+    void applyKinematic() {
+        kinematicError.clear();
+        if (!getUp) return;
+        try {
+            std::ifstream specFile(assets.parent_path() / "tools" / "rl" / "juiz_mm_bancos.json");
+            const nlohmann::json spec = nlohmann::json::parse(specFile);
+            std::vector<std::string> names, schemas, all;
+            std::vector<std::vector<std::string>> clips;
+            std::vector<std::array<float, 3>> biases;
+            std::vector<int> categories;
+            std::size_t main = 0;
+            for (const nlohmann::json& g : spec.at("grupos")) {
+                if (g.at("nome").get<std::string>() == spec.value("principal", std::string())) main = names.size();
+                names.push_back(g.at("nome").get<std::string>());
+                schemas.push_back(g.at("esquema").get<std::string>());
+                clips.push_back(g.at("clipes").get<std::vector<std::string>>());
+                all.insert(all.end(), clips.back().begin(), clips.back().end());
+                const auto v = g.at("vieses");
+                biases.push_back({ v.at(0).get<float>(), v.at(1).get<float>(), v.at(2).get<float>() });
+                categories.push_back(g.at("categoria").get<int>());
+            }
+            getUp->addStyleClips(all);
+            getUp->buildMotionMatching(names, schemas, clips, biases, categories, main);
+            getUp->setMotionMovement(8.8f, 22.1f, 5.0f, 0.0f, -1.0f);
+            getUp->setKinematicMotion(true);
+            getUp->reset(seed);
+        } catch (const std::exception& error) {
+            kinematicError = error.what();
+        }
     }
     void loadGetUpPolicy() {
         std::error_code error;
-        const auto write = std::filesystem::last_write_time(getUpExport(), error);
+        const auto write = std::filesystem::last_write_time(getUpDirectory / "exports/policy_latest.mrlpolicy", error);
         if (error || (getUpPolicy && write == getUpPolicyWrite)) return;
         try {
-            auto policy = std::make_unique<PolicyRuntime3D>(getUpExport());
+            auto policy = std::make_unique<PolicyRuntime3D>(getUpDirectory / "exports/policy_latest.mrlpolicy");
             // (A rede do contrato v2, sem as entradas do chao do v3 no fim, le so o comeco da observacao.)
             const std::size_t size = policy->observationSize();
             // (As do ambiente, do levantar-v5, vem por ultimo: a rede do v4 le tudo menos elas.)
             constexpr std::size_t environment = TrackingGetUpAmpTraining3D::EnvironmentSize;
             constexpr std::size_t phase = TrackingGetUpAmpTraining3D::PhaseSize;
-            const std::size_t full = getUp->observationSize() - environment;
-            if ((size == full + environment || size == full || size + phase == full
+            const std::size_t full = getUp->observationSize() - environment - TrackingGetUpAmpTraining3D::SkillModeSize;
+            if ((size == getUp->observationSize() || size == full + environment || size == full || size + phase == full
                     || size + phase + TrackingGetUpAmpTraining3D::GroundObservationSize == full)
                 && policy->actionSize() == getUp->actionSize()) {
                 getUpPolicy = std::move(policy);
@@ -577,7 +1056,7 @@ TrackingViewer3D::Conditions TrackingViewer3D::conditionsOf(const std::filesyste
 
 TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed,
     const std::string& drill, const std::filesystem::path& locomotionTask, float speedScale, float filterBeta,
-    Conditions conditions)
+    Conditions conditions, const std::filesystem::path& getUpDirectory)
     : m_impl(std::make_unique<Impl>()) {
     Impl& impl = *m_impl;
     impl.heading = headingOf(drill);
@@ -639,11 +1118,18 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
         if (p.links[i].id == "UpperChest") impl.chest = static_cast<std::uint32_t>(i);
     impl.apply();
     if (isGetUpDrill(drill)) {
+        impl.getUpDirectory = getUpRun(getUpDirectory);
         impl.assets = assetsDirectory;
         impl.seed = seed;
         impl.getUpDrill = drill;
-        impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == AvoidFallDrill || drill == AvoidSceneryDrill ? 2u
+        // (11/11 14h: com o levantar pelo clipe no treino, os quatro exercicios dele - as avaliacoes 11 a 14.)
+        const bool clipGetUp = clipGetUpRun(impl.getUpDirectory);
+        impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == LyingBackDrill ? (clipGetUp ? 11u : 9u)
+            : drill == LyingFrontDrill ? (clipGetUp ? 12u : 10u) : drill == RunGetUpBackDrill ? 13u : drill == RunGetUpFrontDrill ? 14u
+            : drill == RollGetUpDrill ? 15u
+            : drill == AvoidFallDrill || isAvoidSceneryDrill(drill) ? 2u
             : drill == BalanceDrill                                                                     ? 3u
+            : drill == EquilibriumDrill                                                                 ? 8u
             : drill == LocomotionFallDrill                                                                      ? 7u
             : drill == LocomotionDrills[0]                                                                      ? 5u
             : drill == LocomotionDrills[1]                                                                      ? 6u
@@ -658,9 +1144,29 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     }
 }
 
+int TrackingViewer3D::sceneryPresetOf(const std::string& drill) {
+    for (std::size_t i = 0; i < ControlledGetUpDrills.size(); ++i)
+        if (drill == ControlledGetUpDrills[i]) return static_cast<int>(i);
+    for (std::size_t i = 0; i < ControlledAvoidDrills.size(); ++i)
+        if (drill == ControlledAvoidDrills[i]) return static_cast<int>(i);
+    return -1;
+}
+
+bool TrackingViewer3D::isAvoidSceneryDrill(const std::string& drill) {
+    return drill == AvoidSceneryDrill || std::find(ControlledAvoidDrills.begin(), ControlledAvoidDrills.end(), drill) != ControlledAvoidDrills.end();
+}
+
+bool TrackingViewer3D::clipGetUpRun(const std::filesystem::path& runDirectory) {
+    std::ifstream file(runDirectory / "run.json");
+    const nlohmann::json run = nlohmann::json::parse(file, nullptr, false);
+    return !run.is_discarded() && run.is_object() && run.contains("v2") && run["v2"].is_object()
+        && run["v2"].value("levantar_unreal", 0.0) > 0.0;
+}
+
 bool TrackingViewer3D::isGetUpDrill(const std::string& drill) {
-    return drill == GetUpDrill || drill == MovingGetUpDrill || drill == AvoidFallDrill || drill == BalanceDrill
-        || drill == LocomotionFallDrill || drill == SceneryDrill || drill == AvoidSceneryDrill || isLocomotionDrill(drill);
+    return drill == GetUpDrill || drill == MovingGetUpDrill || drill == LyingBackDrill || drill == LyingFrontDrill
+        || drill == RunGetUpBackDrill || drill == RunGetUpFrontDrill || drill == RollGetUpDrill || drill == AvoidFallDrill || drill == BalanceDrill || drill == EquilibriumDrill
+        || drill == LocomotionFallDrill || drill == SceneryDrill || drill == AvoidSceneryDrill || sceneryPresetOf(drill) >= 0 || isLocomotionDrill(drill);
 }
 
 bool TrackingViewer3D::isGetUpTask(const std::filesystem::path& taskPath) {
@@ -670,11 +1176,50 @@ bool TrackingViewer3D::isGetUpTask(const std::filesystem::path& taskPath) {
     return !task.is_discarded() && task.is_object() && task.value("schema", std::string()) == "matter-getup-amp-1";
 }
 
+// (04/11: os rumos da corrida, "lev_corrida_0".."lev_corrida_7", como os do trote.)
+bool runHeadingDrill(const std::string& drill) {
+    return drill.size() == 13 && drill.rfind("lev_corrida_", 0) == 0 && drill.back() >= '0' && drill.back() <= '7';
+}
+
+int TrackingViewer3D::maneuverOf(const std::string& drill) {
+    static constexpr const char* Names[7] { "lev_troca_suave", "lev_troca_media", "lev_troca_forte", "lev_troca_livre",
+        "lev_curva_suave", "lev_curva_s", "lev_curva_fechada" };
+    if (drill == "lev_comando") return 12;
+    // (08/11: a estrela - 8 peito fixo, 9 livre, 10 girando; a faixa pelo nome.)
+    for (std::size_t k = 0; k < StarDrills.size(); ++k)
+        if (drill == StarDrills[k]) return 8 + static_cast<int>(k % 3);
+    for (int k = 0; k < 7; ++k)
+        if (drill == Names[k]) return k + 1;
+    // (04/11 11h50: as curvas na corrida.)
+    for (int k = 4; k < 7; ++k)
+        if (drill == std::string(Names[k]) + "_corrida") return k + 1;
+    return -1;
+}
+
+int TrackingViewer3D::starModeOf(const std::string& drill) {
+    if (!drill.starts_with("comp_estrela_")) return 0;
+    return drill.ends_with("_livre") ? 2 : drill.ends_with("_fixo") ? 1 : 0;
+}
+
+int TrackingViewer3D::starBandOf(const std::string& drill) {
+    return starModeOf(drill) == 0 ? -1 : drill.find("_corrida_") != std::string::npos ? 2 : 1;
+}
+
 bool TrackingViewer3D::isLocomotionDrill(const std::string& drill) {
+    if (maneuverOf(drill) > 0) return true;
+    if (starModeOf(drill) > 0) return true;
+    if (drill.size() == 11 && drill.rfind("lev_trote_", 0) == 0 && drill.back() >= '0' && drill.back() <= '7') return true;
+    if (runHeadingDrill(drill)) return true;
     return std::find(LocomotionDrills.begin(), LocomotionDrills.end(), drill) != LocomotionDrills.end();
 }
 
 int TrackingViewer3D::locomotionHeadingOf(const std::string& drill, std::uint64_t seed) {
+    if (drill.size() == 11 && drill.rfind("lev_trote_", 0) == 0 && drill.back() >= '0' && drill.back() <= '7') return drill.back() - '0';
+    if (runHeadingDrill(drill)) return drill.back() - '0';
+    if (maneuverOf(drill) > 0) return 0;
+    if (starModeOf(drill) > 0) return 0;
+    // (05/11, ele: "no sprint faltou a velocidade pedida x atendida em tempo real, igual faz com os outros": o sprint e para a frente.)
+    if (drill == "lev_sprint") return 0;
     const bool right = seed % 2 == 1;
     if (drill == "lev_frente") return 0;
     if (drill == "lev_diagonal_frente") return right ? 7 : 1;
@@ -685,38 +1230,44 @@ int TrackingViewer3D::locomotionHeadingOf(const std::string& drill, std::uint64_
     return -1;
 }
 
-bool TrackingViewer3D::getUpVersion2() {
-    const std::string name = getUpRun().filename().string();
-    return name == "levantar_v2" || name == "rl_final";
+bool TrackingViewer3D::getUpVersion2(const std::filesystem::path& runDirectory) {
+    const auto directory = getUpRun(runDirectory);
+    std::ifstream file(directory / "run.json");
+    const auto run = nlohmann::json::parse(file, nullptr, false);
+    return (!run.is_discarded() && run.is_object() && run.contains("v2") && run["v2"].is_object())
+        || directory.filename() == "levantar_v2" || directory.filename() == "rl_final";
 }
 
 int TrackingViewer3D::locomotionBandOf(const std::string& drill) {
+    if (runHeadingDrill(drill)) return 2;
+    if (starModeOf(drill) > 0) return starBandOf(drill);
     for (int band = 0; band < 4; ++band)
         if (drill == LocomotionDrills[8 + static_cast<std::size_t>(band)]) return band;
     return -1;
 }
 
-bool TrackingViewer3D::getUpLocomotion() {
-    std::ifstream file(getUpRun() / "run.json");
+bool TrackingViewer3D::getUpLocomotion(const std::filesystem::path& runDirectory) {
+    std::ifstream file(getUpRun(runDirectory) / "run.json");
     const nlohmann::json run = nlohmann::json::parse(file, nullptr, false);
     return !run.is_discarded() && run.is_object() && run.contains("v2") && run["v2"].is_object()
         && run["v2"].value("locomocao", 0.0) > 0.0;
 }
 
-std::filesystem::path TrackingViewer3D::getUpExport() { return getUpRun() / "exports/policy_latest.mrlpolicy"; }
+std::filesystem::path TrackingViewer3D::getUpExport(const std::filesystem::path& runDirectory) { return getUpRun(runDirectory) / "exports/policy_latest.mrlpolicy"; }
 
-std::filesystem::path TrackingViewer3D::getUpLog() { return getUpRun() / "log.jsonl"; }
+std::filesystem::path TrackingViewer3D::getUpLog(const std::filesystem::path& runDirectory) { return getUpRun(runDirectory) / "log.jsonl"; }
 
-bool TrackingViewer3D::getUpReady() {
+bool TrackingViewer3D::getUpReady(const std::filesystem::path& runDirectory) {
     std::error_code error;
-    return std::filesystem::exists(getUpExport(), error);
+    return std::filesystem::exists(getUpExport(runDirectory), error);
 }
 
-bool TrackingViewer3D::getUpTraining() {
-    // (O treino grava o log a cada ~2 min.)
-    std::error_code error;
-    const auto written = std::filesystem::last_write_time(getUpLog(), error);
-    return !error && std::filesystem::file_time_type::clock::now() - written < std::chrono::minutes(10);
+bool TrackingViewer3D::getUpTraining(const std::filesystem::path& runDirectory) {
+    const auto directory = getUpRun(runDirectory);
+    std::ifstream file(directory / "status.json");
+    const auto status = nlohmann::json::parse(file, nullptr, false);
+    return !status.is_discarded() && status.is_object()
+        && trainerProcessAlive3D(status.value("pid", 0), directory.filename().string());
 }
 
 TrackingViewer3D::~TrackingViewer3D() = default;
@@ -734,7 +1285,7 @@ void TrackingViewer3D::setPolicy(const std::filesystem::path& file, std::string&
         // (O levantar usa a rede propria, nao a do treino mostrado.)
         impl.loadGetUpPolicy();
         label = impl.getUpPolicy
-            ? getUpRun().filename().string() + " r" + std::to_string(impl.getUpPolicy->info().iteration)
+            ? impl.getUpDirectory.filename().string() + " r" + std::to_string(impl.getUpPolicy->info().iteration)
             : "sem rede";
         return;
     }
@@ -755,6 +1306,33 @@ void TrackingViewer3D::setPolicy(const std::filesystem::path& file, std::string&
 }
 
 void TrackingViewer3D::clearPolicy() { m_impl->policy.reset(); }
+void TrackingViewer3D::setKinematicMotionMatching(bool on) {
+    Impl& impl = *m_impl;
+    if (on == impl.kinematic) return;
+    impl.kinematic = on;
+    if (impl.getUp) {
+        if (on) impl.applyKinematic();
+        else impl.startGetUp();
+    }
+}
+bool TrackingViewer3D::kinematicMotionMatching() const { return m_impl->kinematic; }
+void TrackingViewer3D::setClipSequence(bool on) {
+    Impl& impl = *m_impl;
+    if (on == impl.sequence) return;
+    impl.sequence = on;
+    if (impl.getUp) impl.startGetUp();
+}
+bool TrackingViewer3D::clipSequence() const { return m_impl->sequence; }
+void TrackingViewer3D::setPushes(bool on) {
+    Impl& impl = *m_impl;
+    if (on == impl.pushes) return;
+    impl.pushes = on;
+    if (impl.getUp) impl.startGetUp();
+}
+bool TrackingViewer3D::pushes() const { return m_impl->pushes; }
+std::string TrackingViewer3D::kinematicClip() const { return m_impl->getUp ? m_impl->getUp->kinematicClip(0) : std::string(); }
+std::size_t TrackingViewer3D::kinematicJumps() const { return m_impl->getUp ? m_impl->getUp->kinematicJumps(0) : 0; }
+const std::string& TrackingViewer3D::kinematicError() const { return m_impl->kinematicError; }
 bool TrackingViewer3D::hasPolicy() const {
     return m_impl->getUp ? m_impl->getUpPolicy != nullptr : m_impl->policy != nullptr;
 }
@@ -768,7 +1346,9 @@ void TrackingViewer3D::step() {
             return;
         }
         // A rede nova do treino a cada ~2 s; sem rede, os alvos zerados (o corpo largado).
-        if (impl.steps % 60 == 0) impl.loadGetUpPolicy();
+        if (impl.steps % 60 == 0) {
+            impl.loadGetUpPolicy();
+        }
         impl.getUp->observations(impl.getUpObservation);
         if (impl.getUpPolicy)
             impl.getUpPolicy->evaluate(std::span<const float>(impl.getUpObservation).first(impl.getUpPolicy->observationSize()),
@@ -777,7 +1357,9 @@ void TrackingViewer3D::step() {
         impl.getUp->step(impl.getUpAction, impl.rewards, impl.terminated, impl.truncated);
         for (const TrackingGetUpAmpEpisode3D& episode : impl.getUp->takeEpisodes()) {
             ++impl.getUpFalls;
-            const bool good = impl.getUpKind == 1 ? episode.reachedSeconds >= 0.0f
+            // (O levantar pelo clipe: a troca no fim do clipe e de pe com a locomocao depois.)
+            const bool good = impl.getUpKind >= 11 ? episode.handoffSeconds >= 0.0f && !episode.partnerFell
+                : impl.getUpKind == 1 ? episode.reachedSeconds >= 0.0f
                 : impl.getUpKind >= 2             ? !episode.fellAfterStanding
                                                   : episode.firstStandSeconds >= 0.0f;
             if (good) ++impl.getUpStood;
@@ -816,7 +1398,9 @@ void TrackingViewer3D::reset(std::uint64_t seed) {
     Impl& impl = *m_impl;
     if (impl.getUp) {
         impl.seed = seed;
-        impl.startGetUp();
+        // (Com o cinematico, o recomeco nao refaz o lote - os bancos levam segundos para montar.)
+        if ((impl.kinematic || impl.sequenceActive) && impl.kinematicError.empty()) impl.getUp->reset(seed);
+        else impl.startGetUp();
         impl.steps = 0;
         impl.partnerActive = false;
         impl.firmSeconds = 0.0f;
@@ -853,6 +1437,11 @@ BodyWorldView3D TrackingViewer3D::view() const {
         const RagdollState3D& body = impl.getUp->body(0);
         BodyWorldView3D view;
         view.state = &body;
+        // (11/11) Clipes do exercicio: a pose alvo que o treino segue, no lugar do corpo da rede.
+        if (impl.sequence) {
+            impl.referenceBody = body;
+            if (impl.getUp->referencePose(0, impl.referenceBody.links)) view.state = &impl.referenceBody;
+        }
         view.steps = impl.steps;
         const Vec3 velocity = rlBodyCenterOfMassVelocity3D(impl.getUp->profile(), body.links);
         view.velocity = { velocity.x, velocity.y, 0.0f };
@@ -863,16 +1452,85 @@ BodyWorldView3D TrackingViewer3D::view() const {
             view.target = world.target;
             view.targetStop = world.commandSpeed <= 0.0f;
         }
+        // (08/11: a estrela - as 9 marcas, as linhas do centro as pontas, a perna de agora, o ponto dela e o seguinte, o texto.)
+        if (world.star && world.starPoints.size() == 9) {
+            const auto point = [&](int k) { return world.starPoints[static_cast<std::size_t>(std::clamp(k + 1, 0, 8))]; };
+            view.starPoints = world.starPoints;
+            for (int k = 0; k < 8; ++k) view.starLines.push_back({ world.starPoints[0], point(k) });
+            view.hasTarget = true;
+            view.target = point(world.starGoal);
+            view.targetStop = world.starArrive < 1.6f;
+            view.hasStarLeg = true;
+            view.starLeg = { point(world.starFrom), point(world.starGoal) };
+            view.hasNextTarget = true;
+            view.nextTarget = point(world.starNext);
+            // (12/11 17h20, ele: "botar alguns com a obrigatoriedade de fazer curva... sinalizando adequadamente a curva") O caminho de
+            // verdade: o arco nas pernas em curva, e o da perna seguinte.
+            view.starLegPoints = world.starLegPath;
+            view.starNextPoints = world.starNextPath;
+            static constexpr const char* Chest[3] { "peito fixo", "peito livre", "peito girando" };
+            const auto curve = [](float bend) {
+                return bend == 0.0f ? std::string("reta")
+                    : std::string(std::abs(bend) >= 0.3f ? "curva fechada" : "curva aberta") + (bend > 0.0f ? " à esquerda" : " à direita");
+            };
+            char text[200];
+            std::snprintf(text, sizeof text, "%s · fase %d/4 · perna %d (%s) · próxima troca %.0f° · chegada %.1f m/s",
+                Chest[std::clamp(world.starChest - 8, 0, 2)], world.starPhase, world.starLegs + 1, curve(world.starBend).c_str(),
+                std::abs(world.starTurnDegrees), world.starArrive);
+            view.starCaption = text;
+        }
+        if (!world.commandText.empty()) view.starCaption = world.commandText;
+        // (04/11 11h50: nas curvas, o caminho pedido a frente - os pontos azuis no chao; o fim dele em verde.)
+        if (!world.path.empty()) {
+            view.starPoints = world.path;
+            view.hasTarget = true;
+            view.target = world.path.back();
+        }
         // (O pedido de deslocamento - rumo ao alvo no levantar em movimento, o rumo pedido na locomocao - e, na
         // locomocao, o rumo pedido do corpo: a camera e o olho seguem ele, como nos exercicios do B21.)
         view.command.moveVelocity = world.moveVelocity;
         if (world.hasFace) view.command.faceHeading = world.faceYaw;
-        if (world.pushing && impl.chest < body.links.size()) {
+        if ((world.clipGetUp && world.fireKind > 0) || world.locoFire) {
+            // (12/11 05h30) O fogo do levantar, desenhado a parte (ReinforcementLearningScreen) - sem a seta antiga do empurrao.
+            // (12/11 16h30) E o fogo da locomocao, com os mesmos campos.
+            GetUpFireView3D& fire = view.fire;
+            fire.active = true;
+            fire.kind = world.fireKind;
+            fire.timing = world.fireTiming;
+            fire.direction = world.fireDirection;
+            fire.shoveLink = world.fireShoveLink;
+            fire.abovePitch = world.fireAbovePitch;
+            fire.fraction = world.fireFraction;
+            fire.size = world.fireSize;
+            fire.shoveSize = world.fireShoveSize;
+            fire.hold = world.fireHold;
+            fire.shoveForce = world.fireShoveForce;
+            fire.aim = world.fireAim;
+            fire.shoveAt = world.fireShoveAt;
+            fire.shoveSeconds = world.fireShoveSeconds;
+            fire.shoveDone = world.fireShoveDone;
+            fire.time = world.time;
+            fire.budget = world.fireBudget;
+            fire.upAt = world.upAt;
+            fire.deliveredAt = world.deliveredAt;
+            fire.downAt = world.downAt;
+            fire.weight = world.weight;
+            fire.levelHold = world.fireLevelHold;
+            fire.grabLink = world.fireGrabLink;
+            fire.grabForce = world.fireGrabForce;
+            fire.slip = world.fireSlip;
+            fire.levelShove = world.fireLevelShove;
+            fire.locomotion = world.locoFire && !world.clipGetUp;
+            fire.locoLevel = world.locoFireLevel;
+            if (fire.locomotion) fire.fraction = 1.0f;
+        } else if (world.pushing && impl.chest < body.links.size()) {
             view.pushLink = static_cast<int>(impl.chest);
             view.pushForce = world.pushForce;
             view.pushFade = 1.0f;
         }
         impl.getUp->scenerySegments(0, view.scenery);
+        impl.getUp->arenaSegments(0, view.walls);
+        impl.getUp->slipSegments(0, view.wet);
         impl.getUp->sceneryBodies(0, view.otherBodies);
         return view;
     }
@@ -918,6 +1576,10 @@ std::pair<std::uint32_t, std::uint32_t> TrackingViewer3D::getUpTally() const {
 
 bool TrackingViewer3D::drivingLocomotion() const {
     return m_impl->getUp && m_impl->partnerActive && !m_impl->partner->gettingUp();
+}
+
+bool TrackingViewer3D::locomotionHeadDriving() const {
+    return m_impl->getUp && !m_impl->getUpObservation.empty() && m_impl->getUpObservation.back() > 0.5f;
 }
 
 const std::string& TrackingViewer3D::partnerText() const { return m_impl->partnerLabel; }

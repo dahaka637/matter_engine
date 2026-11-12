@@ -1,0 +1,29 @@
+// 32 unidades = 1 metro. Z para cima. Todos os comprimentos *_m em metros.
+@SolidClass = worldspawn : "Cenario estatico do Soccer Fall" [
+    message(string) : "Nome do mapa" : "Novo mapa"
+]
+
+// Exportado como KHR_lights_punctual e consumido pelo laboratorio.
+@PointClass size(-5 -5 -5, 5 5 5) color(245 235 170) = light : "Luz (glTF); origem em unidades do editor" [
+    _color(color1) : "Cor RGB 0..1" : "1 0.96 0.89"
+    intensity(float) : "Intensidade em candelas" : "550"
+    range(float) : "Alcance em metros" : "20"
+    type(choices) : "Tipo" : "point" = [ "point" : "Pontual" "spot" : "Direcionada (cone)" ]
+    angle(float) : "Direcao horizontal: 0=+X, 90=+Y" : "0"
+    pitch(float) : "Inclinacao: -90 para baixo, 0 horizontal" : "-90"
+    inner_cone(float) : "Abertura total interna em graus" : "80"
+    outer_cone(float) : "Abertura total externa em graus" : "110"
+]
+
+@SolidClass color(180 180 180) = func_detail : "Geometria estatica agrupada" []
+
+@PointClass size(-10 -10 0, 10 10 58) color(60 220 100) = info_player_start : "Nascimento: origem nos pes, angle 0 aponta +X" [
+    angle(integer) : "Direcao em graus (0=+X, 90=+Y)" : 0
+]
+
+// Galpao 01 gera demarcacoes e traves; a superficie de grama e um brush do mapa.
+@PointClass size(-16 -16 0, 16 16 4) color(90 190 60) = matter_field : "Centro do campo procedural" [
+    angle(integer) : "Direcao do comprimento em graus" : 0
+    length_m(float) : "Comprimento em metros" : "105"
+    width_m(float) : "Largura em metros" : "68"
+]

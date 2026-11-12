@@ -1203,7 +1203,7 @@ public:
     // shape to createImGuiTexture above, but registers a set=1 material
     // descriptor (see createScene3DResources) instead of an ImGui one, so
     // the mesh pipeline can sample it as an albedo map.
-    TextureHandle createTexture2D(Extent2D extent, std::span<const std::byte> rgbaPixels) {
+    TextureHandle createTexture2D(Extent2D extent, std::span<const std::byte> rgbaPixels, bool srgb = false) {
         if (extent.width == 0 || extent.height == 0) {
             throw std::runtime_error("Cannot create a zero-sized texture");
         }
@@ -1268,7 +1268,7 @@ public:
 
             VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
             imageInfo.imageType = VK_IMAGE_TYPE_2D;
-            imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+            imageInfo.format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
             imageInfo.extent = { extent.width, extent.height, 1 };
             imageInfo.mipLevels = mipLevels;
             imageInfo.arrayLayers = 1;
@@ -1523,9 +1523,9 @@ public:
         resource.image = VK_NULL_HANDLE;
         resource.allocation = VK_NULL_HANDLE;
         resource.view = VK_NULL_HANDLE;
-        // materialDescriptor is left allocated in materialDescriptorPool
-        // (that pool never frees individual sets, only on shutdown) but no
-        // longer reachable through this handle once alive flips false.
+        if (resource.materialDescriptor != VK_NULL_HANDLE)
+            check(vkFreeDescriptorSets(device, materialDescriptorPool, 1, &resource.materialDescriptor),
+                "vkFreeDescriptorSets(material)");
         resource.materialDescriptor = VK_NULL_HANDLE;
         resource.alive = false;
         ++resource.generation;
@@ -2359,6 +2359,10 @@ public:
                 mesh->albedoTexture.index, mesh->albedoTexture.generation,
                 mesh->metallicRoughnessTexture.index,
                 mesh->metallicRoughnessTexture.generation,
+                mesh->normalTexture.index, mesh->normalTexture.generation,
+                mesh->emissiveTexture.index, mesh->emissiveTexture.generation,
+                mesh->emissiveFactor.x, mesh->emissiveFactor.y, mesh->emissiveFactor.z,
+                mesh->normalScale, mesh->parallaxDepth,
                 mesh->characterMaterial.index, mesh->characterMaterial.generation,
                 mesh->castsShadow, mesh->visibleInCamera,
                 mesh->planarReflection,
@@ -2508,6 +2512,20 @@ public:
                     checkedResource(characterMaterials, meshObject.characterMaterial, "character material");
                 vkCmdBindDescriptorSets(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     sceneCharacterPipelineLayout, 4, 1, &material.descriptor, 0, nullptr);
+            }
+            if (bindMaterial) {
+                const auto layout = character ? sceneCharacterPipelineLayout : sceneMeshPipelineLayout;
+                const auto& normal = checkedResource(textures,
+                    meshObject.normalTexture.valid() ? meshObject.normalTexture : defaultMaterialTexture, "normal texture");
+                const auto& emissive = checkedResource(textures,
+                    meshObject.emissiveTexture.valid() ? meshObject.emissiveTexture : defaultMaterialTexture, "emissive texture");
+                const std::array<VkDescriptorSet, 2> surfaceSets { normal.materialDescriptor, emissive.materialDescriptor };
+                vkCmdBindDescriptorSets(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    layout, 5, 2, surfaceSets.data(), 0, nullptr);
+                const std::array<float, 8> surface { meshObject.emissiveFactor.x, meshObject.emissiveFactor.y,
+                    meshObject.emissiveFactor.z, meshObject.normalTexture.valid() ? meshObject.normalScale : 0.0f,
+                    meshObject.parallaxDepth, 0, 0, 0 };
+                vkCmdPushConstants(frame.commandBuffer, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(surface), surface.data());
             }
             const std::array<VkBuffer, 2> vertexBuffers {
                 vertexBuffer.buffer,
@@ -6174,6 +6192,7 @@ public:
         VkDescriptorPoolCreateInfo materialPoolInfo {
             VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
         };
+        materialPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
         materialPoolInfo.maxSets = MaxMaterialTextures;
         materialPoolInfo.poolSizeCount = 1;
         materialPoolInfo.pPoolSizes = &materialPoolSize;
@@ -6220,9 +6239,11 @@ public:
         // Nenhum push constant aqui: dados por instancia (posicao/orientacao/
         // metallic/roughness/flags) ja chegam pelo vertex buffer de instancia
         // (binding 1, ver meshBinding abaixo).
-        const std::array<VkDescriptorSetLayout, 4> meshSetLayouts {
+        const VkPushConstantRange surfaceRange { VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float) * 8 };
+        const std::array<VkDescriptorSetLayout, 7> meshSetLayouts {
             sceneDescriptorSetLayout, materialDescriptorSetLayout,
-            materialDescriptorSetLayout, materialDescriptorSetLayout
+            materialDescriptorSetLayout, materialDescriptorSetLayout,
+            materialDescriptorSetLayout, materialDescriptorSetLayout, materialDescriptorSetLayout
         };
         VkPipelineLayoutCreateInfo meshPipelineLayoutInfo {
             VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
@@ -6230,6 +6251,8 @@ public:
         meshPipelineLayoutInfo.setLayoutCount =
             static_cast<std::uint32_t>(meshSetLayouts.size());
         meshPipelineLayoutInfo.pSetLayouts = meshSetLayouts.data();
+        meshPipelineLayoutInfo.pushConstantRangeCount = 1;
+        meshPipelineLayoutInfo.pPushConstantRanges = &surfaceRange;
         check(vkCreatePipelineLayout(device, &meshPipelineLayoutInfo, nullptr,
             &sceneMeshPipelineLayout), "vkCreatePipelineLayout(scene mesh)");
 
@@ -6354,13 +6377,16 @@ public:
             characterPoolInfo.pPoolSizes = characterPoolSizes.data();
             check(vkCreateDescriptorPool(device, &characterPoolInfo, nullptr, &characterDescriptorPool),
                 "vkCreateDescriptorPool(character)");
-            const std::array<VkDescriptorSetLayout, 5> characterSetLayouts {
+            const std::array<VkDescriptorSetLayout, 7> characterSetLayouts {
                 sceneDescriptorSetLayout, materialDescriptorSetLayout, materialDescriptorSetLayout,
-                materialDescriptorSetLayout, characterDescriptorSetLayout
+                materialDescriptorSetLayout, characterDescriptorSetLayout,
+                materialDescriptorSetLayout, materialDescriptorSetLayout
             };
             VkPipelineLayoutCreateInfo characterPipelineLayoutInfo { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
             characterPipelineLayoutInfo.setLayoutCount = static_cast<std::uint32_t>(characterSetLayouts.size());
             characterPipelineLayoutInfo.pSetLayouts = characterSetLayouts.data();
+            characterPipelineLayoutInfo.pushConstantRangeCount = 1;
+            characterPipelineLayoutInfo.pPushConstantRanges = &surfaceRange;
             check(vkCreatePipelineLayout(device, &characterPipelineLayoutInfo, nullptr, &sceneCharacterPipelineLayout),
                 "vkCreatePipelineLayout(scene character)");
             VkPipelineShaderStageCreateInfo characterVertexStage = meshVertexStage;
@@ -7736,8 +7762,8 @@ BufferHandle VulkanDevice::createBuffer(const BufferDesc& desc) { return m_impl-
 ShaderHandle VulkanDevice::createShader(const ShaderDesc& desc) { return m_impl->createShader(desc); }
 PipelineHandle VulkanDevice::createGraphicsPipeline(const GraphicsPipelineDesc& desc) { return m_impl->createGraphicsPipeline(desc); }
 TextureHandle VulkanDevice::createRenderTarget(const TextureDesc& desc) { return m_impl->createRenderTarget(desc); }
-TextureHandle VulkanDevice::createTexture2D(Extent2D extent, std::span<const std::byte> rgbaPixels) {
-    return m_impl->createTexture2D(extent, rgbaPixels);
+TextureHandle VulkanDevice::createTexture2D(Extent2D extent, std::span<const std::byte> rgbaPixels, bool srgb) {
+    return m_impl->createTexture2D(extent, rgbaPixels, srgb);
 }
 CharacterMaterialHandle VulkanDevice::createCharacterMaterial(const CharacterMaterialDesc& desc) {
     return m_impl->createCharacterMaterial(desc);

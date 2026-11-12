@@ -109,7 +109,7 @@ public:
 private:
     void worker();
     [[nodiscard]] std::string request(const std::string& line, int timeoutMilliseconds) const;
-    void readStatus(const std::string& json, bool alive);
+    void readStatus(const std::string& json, bool alive, bool controlled = false);
     [[nodiscard]] std::string lastLogLine() const;
 
     TrainerPaths3D m_paths;

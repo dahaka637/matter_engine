@@ -43,6 +43,9 @@ struct LocomotionRewardWeights3D {
     // A quietude: o tremor do corpo parado (a pelve, o peito e a aceleracao dele)
     // quando o comando pede para ficar quieto; 0 (o padrao): sem o custo.
     float still = 0.0f;
+    // (03/11, a auditoria do Codex: com o continuo de 3-5 s, a quietude voltava 3 s depois do comeco, com a forca ainda
+    // empurrando.) Acima de 0: ela so volta tambem este tanto (s) depois do FIM do empurrao. 0 (o padrao): a regra de antes.
+    float stillAfterPushSeconds = 0.0f;
     // As pernas cruzadas (30/10, o trote lateral; a regra dele do giro parado: os pes nunca cruzam): o custo por
     // segundo de LocomotionStepMeasure3D::crossover. 0 (o padrao): sem o custo.
     float crossover = 0.0f;
