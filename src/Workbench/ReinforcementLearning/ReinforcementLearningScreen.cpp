@@ -141,7 +141,9 @@ std::vector<std::array<const char*, 2>> getUpDrillList(const std::filesystem::pa
         { TrackingViewer3D::LyingBackDrill, "Levantar de costas" }, { TrackingViewer3D::LyingFrontDrill, "Levantar de bruços" },
         { TrackingViewer3D::RunGetUpBackDrill, "Levantar correndo de costas" },
         { TrackingViewer3D::RunGetUpFrontDrill, "Levantar correndo de bruços" },
-        { TrackingViewer3D::RollGetUpDrill, "Levantar de costas rolando" },
+        // (12/11 19h20, ele: o exercicio da troca de cerebros - deitado, levanta, troca e vai ate o ponto.)
+        { TrackingViewer3D::GetUpGoDrill, "Levantar e ir" },
+        // (12/11 17h50, ele: "remove aquele treino do levantar rolando, pois ele era antigo e nao usamos mais" - fora do treino desde 12/11 02h55.)
         { TrackingViewer3D::AvoidFallDrill, "Evitar queda" }, { TrackingViewer3D::BalanceDrill, "Parado" },
         { TrackingViewer3D::EquilibriumDrill, "Equilíbrio (empurrões)" },
         { TrackingViewer3D::SceneryDrill, "Bench: levantar" },
@@ -234,6 +236,9 @@ std::vector<std::array<const char*, 2>> getUpDrillList(const std::filesystem::pa
                 || id == TrackingViewer3D::RollGetUpDrill;
             return (sceneryDrill && !scenery) || (id == TrackingViewer3D::MovingGetUpDrill && !moving)
                 || (lyingDrill && !v2.value("deitado", false) && !clipGetUp) || (runGetUpDrill && !clipGetUp)
+                || (id == TrackingViewer3D::GetUpGoDrill
+                    && !(v2.contains("levantar_e_ir") && v2["levantar_e_ir"].is_array() && !v2["levantar_e_ir"].empty()
+                         && v2["levantar_e_ir"][0].is_number() && v2["levantar_e_ir"][0].get<double>() > 0.0))
                 // (07/11, ele: "pode tirar o equilibrio empurroes... sera so no futuro... e sera na locomocao": so com a fatia.)
                 || (id == TrackingViewer3D::EquilibriumDrill && (!v2.value("equilibrio", false) || v2.value("equilibrio_fatia", 0.0) <= 0.0))
                 // (05/11 04h55, ele: "o treino do evitar queda agora sai, fica inativo; vou idealizar melhor ele futuramente".)
@@ -270,6 +275,7 @@ const char* scenarioKey(const std::string& drill) {
     if (drill == TrackingViewer3D::RunGetUpBackDrill) return "lev_levantar_correndo_costas";
     if (drill == TrackingViewer3D::RunGetUpFrontDrill) return "lev_levantar_correndo_brucos";
     if (drill == TrackingViewer3D::RollGetUpDrill) return "lev_levantar_costas_rolando";
+    if (drill == TrackingViewer3D::GetUpGoDrill) return "lev_levantar_e_ir";
     return drill == TrackingViewer3D::BalanceDrill ? "lev_parado" : drill.c_str();
 }
 
@@ -632,8 +638,28 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
             ImVec4 line = item.color;
             if (item.reference) line.w = 0.8f;
             const ImU32 lineColor = ImGui::ColorConvertFloat4ToU32(line);
-            for (std::size_t k = 0; k + 1 < joined.size(); ++k)
-                draw->AddLine(joined[k], joined[k + 1], lineColor, item.reference ? 1.2f : 2.0f);
+            // (12/11 19h, ele: a linha do teste "cortadinha") As de referencia - o teste, o exigido - tracejadas: 6 px de traco e 4 de
+            // vao, a fase seguindo de um segmento ao outro.
+            float phase = 0.0f;
+            for (std::size_t k = 0; k + 1 < joined.size(); ++k) {
+                if (!item.reference) {
+                    draw->AddLine(joined[k], joined[k + 1], lineColor, 2.0f);
+                    continue;
+                }
+                const ImVec2 a = joined[k], b = joined[k + 1];
+                const float length = std::hypot(b.x - a.x, b.y - a.y);
+                for (float t = 0.0f; t < length;) {
+                    const bool on = phase < 6.0f;
+                    const float step = std::min(length - t, on ? 6.0f - phase : 10.0f - phase);
+                    if (on && length > 0.0f) {
+                        const float u0 = t / length, u1 = (t + step) / length;
+                        draw->AddLine({ a.x + (b.x - a.x) * u0, a.y + (b.y - a.y) * u0 }, { a.x + (b.x - a.x) * u1, a.y + (b.y - a.y) * u1 },
+                            lineColor, 1.4f);
+                    }
+                    t += step;
+                    phase = std::fmod(phase + step, 10.0f);
+                }
+            }
             if (joined.size() == 1) draw->AddCircleFilled(joined.front(), 1.8f, lineColor);
             if (!item.reference)
                 for (std::size_t i = v.size(); i-- > 0;)
@@ -1174,6 +1200,8 @@ void ReinforcementLearningScreen::ensureViewer() {
                 if (m_assistChosen) locomotion->setAssist(m_locomotionAssist);
                 else m_locomotionAssist = locomotion->assist();
             }
+            if (auto* tracking = dynamic_cast<TrackingViewer3D*>(m_locomotion.get()); tracking != nullptr && m_viewerPushes)
+                tracking->setPushes(true);
             applyManual();
             reloadPolicy(true);
         } catch (const std::exception& error) {
@@ -1247,10 +1275,16 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
 }
 
 void ReinforcementLearningScreen::setViewerPushes(bool on) {
+    m_viewerPushes = on;
     if (auto* viewer = dynamic_cast<TrackingViewer3D*>(m_locomotion.get())) {
         viewer->setPushes(on);
         m_dirty = true;
     }
+}
+
+bool ReinforcementLearningScreen::viewerPushes() const {
+    const auto* viewer = dynamic_cast<const TrackingViewer3D*>(m_locomotion.get());
+    return viewer != nullptr && viewer->pushes();
 }
 
 void ReinforcementLearningScreen::setManualSpeed(std::optional<float> metersPerSecond) {
@@ -2392,8 +2426,11 @@ void ReinforcementLearningScreen::drawToolbar() {
         if (!sequencing->kinematicError().empty()) ImGui::TextColored(WarningText, "%s", sequencing->kinematicError().c_str());
         ImGui::SameLine();
         // (08/11 18h05, ele: "um checkbox ao lado do Clipes do exercicio, chamado empurroes".)
+        // (12/11 18h45, ele: marcada, "qualquer exercicio que eu for visualizar eu verei as fases de fogo, nao precisando clicar
+        // novamente cada vez que mudo" - a escolha fica na tela e vai para cada visualizador novo.)
         bool pushes = sequencing->pushes();
         if (ImGui::Checkbox("Empurrões", &pushes)) {
+            m_viewerPushes = pushes;
             sequencing->setPushes(pushes);
             m_dirty = true;
         }
@@ -2569,8 +2606,11 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
             label = m_policyText + "\nlevantou " + count + " quedas";
         // (A troca, 01/11: quem dirige agora - a rede do levantar ou, de pe e firme, a da locomocao.)
         const std::size_t cut = label.find('\n');
-        const std::string who = tracking->drivingLocomotion() ? "rede da locomoção · " + tracking->partnerText()
-                                                              : "rede do levantar · " + m_policyText;
+        // (12/11 19h30: o cerebro que dirige de verdade - a ultima entrada da observacao, a que escolhe a cabeca; a rede "parceira" de outro
+        // treino so nos treinos antigos.)
+        const std::string who = tracking->drivingLocomotion() ? "rede da locomoção (outro treino) · " + tracking->partnerText()
+            : tracking->locomotionHeadDriving()               ? "cérebro da LOCOMOÇÃO · " + m_policyText
+                                                              : "cérebro do LEVANTAR · " + m_policyText;
         label = who + (cut == std::string::npos ? std::string() : label.substr(cut));
         if (TrackingViewer3D::sceneryPresetOf(m_viewerDrill) >= 0 || headingDrill(m_viewerDrill)) {
             const auto at = std::find(m_drillIds.begin(), m_drillIds.end(), m_viewerDrill);
@@ -2938,7 +2978,7 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
     };
     float movingTest = none, movingSpeedTest = none, spineTest = none, capacityZero = none, capacitySpeed = none;
     // (06/11) O levantar pela avaliacao fixa (64 quedas, a rede do levantar sozinha, sem clipe e sem mao), repetida ate a seguinte.
-    float evalStood = none, evalRose = none, evalSeconds = none, evalPose = none, judgeValue = none;
+    float evalStood = none, evalRose = none, evalSeconds = none, evalPose = none, judgeValue = none, evalFirmClean = none;
     float evalRiseSeconds = none, evalHandSpeed = none, evalRecovered = none;
     const std::string capacityKey = scenarioKey(m_viewerDrill);
     // (07/11) O treino dos levantares: de costas e de brucos separados; o correndo e o "mov_" do treino.
@@ -2949,7 +2989,8 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
         : m_viewerDrill == TrackingViewer3D::LyingFrontDrill ? "lu_brucos_"
         : m_viewerDrill == TrackingViewer3D::RunGetUpBackDrill ? "lu_correndo_costas_"
         : m_viewerDrill == TrackingViewer3D::RunGetUpFrontDrill ? "lu_correndo_brucos_"
-        : m_viewerDrill == TrackingViewer3D::RollGetUpDrill ? "lu_costas_rolando_" : "";
+        : m_viewerDrill == TrackingViewer3D::RollGetUpDrill ? "lu_costas_rolando_"
+        : m_viewerDrill == TrackingViewer3D::GetUpGoDrill ? "lu_ir_" : "";
     const std::string trainPrefix = clipGetUp && !clipPrefix.empty() ? "treino_" + clipPrefix
         : m_viewerDrill == TrackingViewer3D::LyingBackDrill ? "treino_costas_"
         : m_viewerDrill == TrackingViewer3D::LyingFrontDrill                       ? "treino_brucos_"
@@ -2988,6 +3029,8 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
             if (row.contains(evalPrefix + "de_pe")) {
                 // (12/11 07h55: sob fogo, o firme dos cenarios com fogo - levantou e continuou de pe.)
                 evalStood = percent(row, (evalPrefix + (row.contains(evalPrefix + "firme_sob_fogo") ? "firme_sob_fogo" : "de_pe")).c_str());
+                // (12/11 19h, ele: o teste sem ruido tambem no sucesso do levantar - o firme dos limpos, como o teste limpo da locomocao.)
+                evalFirmClean = percent(row, (evalPrefix + "firme_limpo").c_str());
                 const bool fire = row.contains(evalPrefix + "sob_fogo");
                 curve.getUpFire = curve.getUpFire || fire;
                 evalRose = percent(row, (evalPrefix + (fire ? "sob_fogo" : "levantou")).c_str());
@@ -3014,6 +3057,7 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
                 curve.capacityZero.back() = capacityZero;
                 curve.capacitySpeed.back() = capacitySpeed;
                 curve.evalStood.back() = evalStood;
+                curve.evalFirmClean.back() = evalFirmClean;
                 curve.judge.back() = judgeValue;
                 curve.evalRose.back() = evalRose;
                 curve.evalSeconds.back() = evalSeconds;
@@ -3048,6 +3092,7 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
         curve.capacityZero.push_back(capacityZero);
         curve.capacitySpeed.push_back(capacitySpeed);
         curve.evalStood.push_back(evalStood);
+        curve.evalFirmClean.push_back(evalFirmClean);
         curve.judge.push_back(judgeValue);
         curve.trainStood.push_back(trainPrefix.empty() ? none
             : percent(row, (trainPrefix + (row.contains(trainPrefix + "firme_sob_fogo") ? "firme_sob_fogo" : "de_pe")).c_str()));
@@ -3071,7 +3116,13 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
             const auto& selected = scenarios != row.end() && scenarios->is_object() && scenarios->contains(key)
                 && (*scenarios)[key].is_object() ? (*scenarios)[key] : empty;
             // (04/11: nos rumos, a fracao que chega ao fim - o fim antes da hora sem queda, o corpo virado, nao aparecia no sem cair.)
-            curve.sceneryStood.push_back(percent(selected, headingDrill(m_viewerDrill) ? "ate_o_fim" : "levantou"));
+            // (12/11 18h45, ele: o grafico deve "refletir corretamente o sucesso efetivo.. se ele conseguiu completar sem cair etc.. e
+            // tudo mais": o "sucesso" do log - o episodio inteiro, sem cair, sem fim antes da hora; no comando sem queda, na estrela perto
+            // do caminho; nas linhas antigas, o ate o fim.)
+            // (18h55, ele: duas linhas, o limpo e o fogo - sucesso_limpo e sucesso_fogo; sem elas, o sucesso de todos.)
+            curve.sceneryStood.push_back(percent(selected, !headingDrill(m_viewerDrill) ? "levantou"
+                                                               : selected.contains("sucesso_limpo") ? "sucesso_limpo"
+                                                               : selected.contains("sucesso") ? "sucesso" : "ate_o_fim"));
             curve.scenerySeconds.push_back(plain(selected, headingDrill(m_viewerDrill) ? "vel_rumo" : TrackingViewer3D::isAvoidSceneryDrill(m_viewerDrill) ? "recompos_s" : "tempo"));
             curve.sceneryAvoided.push_back(percent(selected, "evitou"));
             curve.sceneryImitation.push_back(percent(selected, "semelhanca"));
@@ -3157,6 +3208,17 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
             const nlohmann::json& levels = fire != row.end() && fire->is_object() && fire->contains("niveis") ? (*fire)["niveis"] : blank;
             curve.locoFireLevel.push_back(plain(levels, group));
         }
+        {
+            const nlohmann::json blank = nlohmann::json::object();
+            const auto scenarios = row.find("cenarios");
+            const std::string key = scenarioKey(m_viewerDrill);
+            const bool shownHere = headingDrill(m_viewerDrill) && scenarios != row.end() && scenarios->is_object() && scenarios->contains(key)
+                && (*scenarios)[key].is_object();
+            curve.sceneryStoodFire.push_back(shownHere ? percent((*scenarios)[key], "sucesso_fogo") : none);
+            curve.trainFirmClean.push_back(trainPrefix.empty() ? none : percent(row, (trainPrefix + "firme_limpo").c_str()));
+            // (So o sob fogo de verdade - sem ele, nada; o trainStood cai no de_pe.)
+            curve.trainFirmFire.push_back(trainPrefix.empty() ? none : percent(row, (trainPrefix + "firme_sob_fogo").c_str()));
+        }
         // (O levantar v2: o em movimento e o evitar a queda, no treino e, tracejado, nas avaliacoes fixas.)
         curve.reached.push_back(percent(row, "mov_chegou"));
         curve.reachedTest.push_back(movingTest);
@@ -3218,8 +3280,14 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         // professor sendo que ele saiu do jogo?... mostrasse a evolucao REAL do treino": so o treino e o teste - sem a
         // professora, a forca auxiliar e a capacidade a 15%.)
         const std::vector<float>* test = nullptr;
+        // (12/11 18h55, ele: "2 linhas, a do limpo e a do fogo") Uma segunda linha cheia (o fogo), com a cor e o nome dela.
+        const std::vector<float>* second = nullptr;
+        ImVec4 secondColor {};
+        const char* secondLabel = nullptr;
     };
     const ImVec4 pink { 0.95f, 0.55f, 0.80f, 1.0f };
+    const ImVec4 fireOrange { 1.0f, 0.50f, 0.20f, 1.0f };
+    const ImVec4 testGray { 0.62f, 0.64f, 0.68f, 1.0f };
     const auto panels = [&](const std::vector<Panel>& p) {
         // (06/11 05h40, ele: "era preferivel um abaixo do outro, com alturas padronizadas, do que lado a lado": cada grafico na
         // largura toda, todos da mesma altura - o espaco dividido entre eles, entre 5 e 11 linhas de texto.)
@@ -3237,7 +3305,10 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
             const Panel& item = p[static_cast<std::size_t>(k)];
             std::vector<ChartSeries> series { { item.values, item.color, false, item.label } };
             if (demand && item.required) series.push_back({ item.required, red, true, "exigido" });
-            if (item.test && anyFinite(*item.test)) series.push_back({ item.test, item.color, true, "teste sem ruído" });
+            // (12/11 19h, ele: "essa linha do teste sem ruido ser de cor cinza e... cortadinha" - cinza e tracejada em todos.)
+            if (item.test && anyFinite(*item.test)) series.push_back({ item.test, testGray, true, "teste sem ruído" });
+            const bool second = item.second != nullptr && anyFinite(*item.second);
+            if (second) series.push_back({ item.second, item.secondColor, false, item.secondLabel });
             float low = 0.0f, high = item.high;
             // (Pelos dados com o teto minimo de 1: a forca toda em 0 nao vira uma escala de 0,001.)
             if (high <= 0.0f)
@@ -3254,6 +3325,9 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
             std::string headline = last(*item.values, item.format);
             if (item.test && anyFinite(*item.test))
                 headline = "teste " + last(*item.test, item.format) + (anyFinite(*item.values) ? " · treino " + headline : std::string());
+            if (second)
+                headline = (item.test && anyFinite(*item.test) ? "teste " + last(*item.test, item.format) + " · " : std::string())
+                    + item.label + " " + last(*item.values, item.format) + " · " + item.secondLabel + " " + last(*item.second, item.format);
             lineChart(id.c_str(), series, low, high, cell, headline.c_str(), item.unit, &c.times, true, item.empty);
             ImGui::EndGroup();
         }
@@ -3263,8 +3337,9 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         // media da fracao de cada episodio, ate 100%: a medida da regua da forca.)
         const bool still = m_viewerDrill == "lev_giro" || m_viewerDrill == TrackingViewer3D::BalanceDrill;
         // (O teste: o fixo de cada exercicio, sem ruido e sem forca - "capacidade" a 0% das avaliacoes.)
-        std::vector<Panel> shown { Panel { "Até o fim neste exercício (%)", &c.sceneryStood, &c.requiredStood, green, "treino",
-                                       "%.0f%%", "%", 100.0f, "sem dados deste exercício", &c.capacityZero },
+        std::vector<Panel> shown { Panel { "Sucesso neste exercício: completou sem cair (%)", &c.sceneryStood, &c.requiredStood, green,
+                                       "limpo", "%.0f%%", "%", 100.0f, "sem dados deste exercício", &c.capacityZero, &c.sceneryStoodFire,
+                                       fireOrange, "fogo" },
             Panel { "Velocidade neste exercício (% do pedido)", &c.sceneryRatio, &c.requiredRatio, cyan, "treino", "%.0f%%",
                 "%", 100.0f, still ? "sem pedido de velocidade" : "sem dados deste exercício", &c.capacitySpeed },
             Panel { "Estabilidade (%)", &c.sceneryStability, &c.requiredStability, amber, "estabilidade", "%.0f%%", "%", 100.0f,
@@ -3293,6 +3368,21 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
     // (11/11 15h, ele: "os graficos nao aparecem nos exercicios de levantares correndo, nos 2 - garanta que os dados existem e os
     // graficos aparecam adequadamente") O levantar pelo clipe, os quatro: o treino cheio e o teste fixo (16 deitados no quadro 0)
     // tracejado, com as medidas dele (TrackingClipGetUp3D; os resumos lu_* e treino_lu_* do log).
+    // (12/11 19h20, o levantar e ir: o sucesso - chegou ao ponto sem cair -, levantou e trocou, o tempo ate a troca, o tempo ate chegar e
+    // a velocidade na troca; o teste sem ruido da avaliacao dele.)
+    if (c.clipGetUp && m_viewerDrill == TrackingViewer3D::GetUpGoDrill) {
+        panels({ Panel { "Sucesso: levantou, trocou e chegou ao ponto sem cair (%)", &c.trainFirmClean, nullptr, green, "limpo", "%.0f%%", "%",
+                     100.0f, "sem dados deste exercício", &c.evalFirmClean, &c.trainFirmFire, fireOrange, "fogo" },
+            Panel { "Levantou e trocou para a locomoção (%)", &c.trainRose, nullptr, blue, "treino", "%.0f%%", "%", 100.0f,
+                "sem dados deste exercício", &c.evalRose },
+            Panel { "Tempo até a troca (s)", &c.trainRiseSeconds, nullptr, pink, "treino", "%.2f s", "s", 0.0f, "sem troca ainda",
+                &c.evalRiseSeconds },
+            Panel { "Tempo até chegar ao ponto (s)", &c.trainSeconds, nullptr, cyan, "treino", "%.2f s", "s", 0.0f, "ainda não chegou",
+                &c.evalSeconds },
+            Panel { "Velocidade na troca (m/s)", &c.trainHandSpeed, nullptr, amber, "treino", "%.2f m/s", "m/s", 0.0f, "sem troca ainda",
+                &c.evalHandSpeed } });
+        return;
+    }
     const bool clipGetUpDrill = m_viewerDrill == TrackingViewer3D::LyingBackDrill || m_viewerDrill == TrackingViewer3D::LyingFrontDrill
         || m_viewerDrill == TrackingViewer3D::RunGetUpBackDrill || m_viewerDrill == TrackingViewer3D::RunGetUpFrontDrill
         || m_viewerDrill == TrackingViewer3D::RollGetUpDrill;
@@ -3300,12 +3390,13 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         const bool running = m_viewerDrill == TrackingViewer3D::RunGetUpBackDrill || m_viewerDrill == TrackingViewer3D::RunGetUpFrontDrill;
         if (c.getUpFire) {
             // (12/11 04h40, a fase de fogo do levantar: a prova de fogo tracejada - 4 limpos, 6 continuos e 6 pancadas nos niveis de partida.)
-            panels({ Panel { "Levantou sob fogo, a média dos cenários com fogo (%)", &c.trainRose, nullptr, green, "treino", "%.0f%%", "%", 100.0f,
+            // (18h55, ele: o sucesso com duas linhas "ate os de levantar": levantou e continuou de pe, limpo e sob fogo.)
+            panels({ Panel { "Sucesso: levantou e continuou de pé (%)", &c.trainFirmClean, nullptr, green, "limpo", "%.0f%%", "%", 100.0f,
+                         "sem dados deste levantar", &c.evalFirmClean, &c.trainFirmFire, fireOrange, "fogo" },
+                Panel { "Levantou sob fogo, a média dos cenários com fogo (%)", &c.trainRose, nullptr, green, "treino", "%.0f%%", "%", 100.0f,
                          "sem dados deste levantar", &c.evalRose },
                 Panel { "Levantou de novo depois de ir ao chão (%)", &c.trainRecovered, nullptr, blue, "treino", "%.0f%%", "%", 100.0f,
                     "ainda não foi ao chão", &c.evalRecovered },
-                Panel { "Firme sob fogo: levantou e continuou de pé (%)", &c.trainStood, nullptr, cyan, "treino", "%.0f%%", "%", 100.0f,
-                    "sem dados deste levantar", &c.evalStood },
                 Panel { "Estilo, o juiz (%)", &c.evalPose, nullptr, violet, "teste", "%.0f%%", "%", 100.0f, "sem a nota do juiz ainda" },
                 Panel { "Tempo para levantar, limpo (s)", &c.trainRiseSeconds, nullptr, pink, "treino", "%.2f s", "s", 0.0f,
                     "sem dados deste levantar", &c.evalRiseSeconds },

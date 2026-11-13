@@ -269,6 +269,19 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // pedido do levantar correndo.
     std::vector<std::size_t> clipGetUpClips;
     std::vector<float> clipGetUpDirection, clipGetUpSpeed, clipGetUpVariants, clipGetUpStartBias;
+    // (13/11 11h30, settings.getUpFormWeight) A forma da cabeca e do peito do clipe de cada exercicio a cada 1/30 s: a altura da cabeca,
+    // a cabeca contra o peito (para a frente +, de lado) e a torcao do peito contra a pelve, em graus - setGetUpForm.
+    // (12h25, a imagem do laboratorio: saindo do chao ele arqueia o peito para tras e olha o ceu - a cabeca contra o peito nao via isso)
+    // Mais o peito contra a pelve (+ para a frente, - arqueado para tras) e o olhar (a frente da cabeca contra o horizonte, + para cima).
+    // (12h40, ele: o de brucos "fica travado assim que levanta meio arqueado ate se posturar") Mais o peito contra a vertical (+ a frente,
+    // no rumo da pelve): de pe curvado, com o peito igual ao do clipe contra a pelve, so isto ve.
+    struct GetUpFormSample { float head = 0.0f, pitch = 0.0f, roll = 0.0f, twist = 0.0f, lean = 0.0f, gaze = 0.0f, tilt = 0.0f; };
+    std::vector<std::vector<GetUpFormSample>> clipGetUpForm;
+    // (12h50, medido: na janela de firmeza os de pe ficavam de pe agachados e curvados - a cabeca a 1,43-1,54 m e o peito a +30-38 graus
+    // por 1,2 s, e so se endireitavam quando o idle assumia; o clipe acaba com a cabeca a 1,59-1,65 m e o peito a +17-26) De cada
+    // exercicio, o fim do clipe (a media dos ultimos 0,3 s): a altura da cabeca e o peito contra a vertical.
+    std::vector<std::array<float, 2>> clipGetUpStand;
+    std::array<std::size_t, 2> handLinksForm { std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max() };
     // (12/11 00h35) O ponto de entrega de cada exercicio (s do clipe; <= 0: no fim dele) - setClipGetUpDeliver.
     std::vector<float> clipGetUpDeliver;
     // (12/11 02h50) O reforco da pose de cada exercicio (TrackingClipGetUp3D::Widths::emphasis) - setClipGetUpEmphasis.
@@ -534,6 +547,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // dela; e o firme do levantar adaptativo (o tempo firme seguido, de quando, e quando levantou).
         int fireKind = 0, fireTiming = 0, fireDirection = 0;
         float fireFraction = 0.0f, fireSize = 0.0f, fireHoldScale = 0.0f, fireShoveAt = -1.0f, fireDownAt = -1.0f;
+        float fireReleaseFrom = -1.0f;
         float riseFirmSeconds = 0.0f, riseFirmFrom = -1.0f, upAt = -1.0f, fireShoveSize = 0.0f, fireShoveHead = 0.0f, fireAbovePitch = 0.0f;
         float handoffCalmSeconds = 0.0f;
         // (12/11 08h20, settings.adaptiveRetry) A tentativa de agora: desde quando, quantas e ha quanto tempo ele esta para tras do clipe.
@@ -572,6 +586,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // da pose e quieto (s).
         bool crooked = false;
         float crookedFixedAt = -1.0f, crookedFixSeconds = 0.0f;
+        // (12/11 19h10, settings.getUpGoShare) O levantar e ir: o ponto, a distancia dele no comeco e quando chegou (s; -1 nao).
+        bool getUpGo = false;
+        Vec3 goTarget;
+        float goDistance = 0.0f, goArrivedAt = -1.0f;
         TrackingClipGetUp3D::Terms clipTerms {};
         // No levantar em movimento guiado, a arrancada agachada no lugar do fim do clipe de levantar.
         bool sprintGuided = false;
@@ -816,6 +834,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // lugar (rad/s).
         struct Command {
             int key = -1, phase = 1, state = 0, events = 0, stops = 0, starts = 0;
+            // (12/11 18h, settings.commandGetUp) As quedas, os levantares de volta, de quando e quanto tempo somado (s).
+            int falls = 0, rises = 0, runRises = 0;
+            float riseFrom = -1.0f, riseSum = 0.0f;
             bool run = false;
             float target = 0.0f, nextKeyAt = 0.0f, nextMouseAt = 0.0f, panRate = 0.0f, panUntil = -1.0f, turnRate = 0.0f;
         } command;
@@ -1898,7 +1919,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
     void beginClipGetUp(World& w) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
         const std::uint32_t count = static_cast<std::uint32_t>(clipGetUpClips.size());
-        const std::uint32_t exercise = settings.evaluation
+        // (12/11 19h10) O levantar e ir: no treino na fatia; na avaliacao com a fatia cheia, todos, com o exercicio sorteado.
+        const bool goEval = settings.evaluation && settings.getUpGoShare >= 1.0f;
+        w.getUpGo = settings.getUpGoShare > 0.0f && (settings.evaluation ? goEval : u(w.rng) < settings.getUpGoShare);
+        const std::uint32_t exercise = goEval ? std::uniform_int_distribution<std::uint32_t>(0u, count - 1u)(w.rng)
+            : settings.evaluation
             ? std::min<std::uint32_t>(count - 1u, settings.evaluationKind >= 11u ? settings.evaluationKind - 11u : 0u)
             : settings.clipGetUpWeights.size() == count
             ? static_cast<std::uint32_t>(std::discrete_distribution<int>(settings.clipGetUpWeights.begin(),
@@ -1906,7 +1931,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             : std::uniform_int_distribution<std::uint32_t>(0u, count - 1u)(w.rng);
         const std::size_t clip = clipGetUpClips[exercise];
         const TrackingClipReference3D& reference = *references[clip];
-        const bool mid = !settings.evaluation && u(w.rng) < settings.clipGetUpMidStartFraction;
+        const bool mid = !settings.evaluation && !w.getUpGo && u(w.rng) < settings.clipGetUpMidStartFraction;
         // (18h22: o vies dos comecos no meio por exercicio - setClipGetUpStartBias: o expoente da fracao sorteada; 2 no rolando, metade
         // dos comecos no meio antes de ~0,8 s, onde ele rola.)
         const float bias = exercise < clipGetUpStartBias.size() ? std::max(0.1f, clipGetUpStartBias[exercise]) : 1.0f;
@@ -1976,7 +2001,38 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.trackScale = 1.0f;
         w.trackYaw = yaw;
         w.rampFrom = -1.0f;
+        if (w.getUpGo) {
+            // (O ponto: para onde o clipe termina virado - de pe, +-60 graus - ou correndo - +-20 -, a getUpGoMin-Max m.)
+            const std::size_t e = w.clipExercise;
+            const bool run = clipRunExercise(w.clipExercise);
+            const float base = w.clipYaw + (run ? (e < clipGetUpDirection.size() ? clipGetUpDirection[e] : 0.0f)
+                                                : (e < clipGetUpFacing.size() ? clipGetUpFacing[e] : 0.0f));
+            const float angle = base + (2.0f * u(w.rng) - 1.0f) * (run ? GoRunSpread : GoStandSpread);
+            w.goDistance = settings.getUpGoMin + (std::max(settings.getUpGoMin, settings.getUpGoMax) - settings.getUpGoMin) * u(w.rng);
+            const Vec3 root = w.body->links[rootLink].position;
+            w.goTarget = { root.x + std::cos(angle) * w.goDistance, root.y + std::sin(angle) * w.goDistance, 0.0f };
+        }
         beginGetUpFire(w);
+    }
+    static constexpr float GoStandSpread = Pi / 3.0f, GoRunSpread = Pi / 9.0f, GoArriveMeters = 1.0f, GoTurnRate = 1.5f;
+    // (12/11 19h10) O prazo do levantar e ir depois da troca (s): 3 s mais o percurso a 2,5 m/s.
+    float goBudget(const World& w) const { return 3.0f + w.goDistance / 2.5f; }
+    // (12/11 19h10, o levantar e ir) Depois da troca, a cada decisao: chegou (a GoArriveMeters do ponto) ou o rumo e a vista virando para
+    // o ponto a GoTurnRate rad/s; o alvo longe na frente, como na troca do correndo.
+    void steerGo(World& w) {
+        if (!w.getUpGo || !w.clipGetUp || w.clipHandedAt < 0.0f || w.goArrivedAt >= 0.0f || w.body->links.empty()) return;
+        const Vec3 root = w.body->links[rootLink].position;
+        const float dx = w.goTarget.x - root.x, dy = w.goTarget.y - root.y;
+        if (std::hypot(dx, dy) <= GoArriveMeters) {
+            w.goArrivedAt = w.time;
+            return;
+        }
+        const float dt = TicksPerDecision * TickSeconds;
+        const float step = std::clamp(wrapAngle(std::atan2(dy, dx) - w.faceYaw), -GoTurnRate * dt, GoTurnRate * dt);
+        w.faceYaw = wrapAngle(w.faceYaw + step);
+        w.moveYaw = w.faceYaw;
+        w.trackYaw = wrapAngle(w.faceYaw - w.trackTwist);
+        w.target = { root.x + std::cos(w.faceYaw) * ClipRunTargetMeters, root.y + std::sin(w.faceYaw) * ClipRunTargetMeters, 0.0f };
     }
 
     // (12/11 04h40, ele: a fase de fogo do levantar - vault 04_locomocao/plano_fogo_do_levantar_12_11.md: "uma forca constante empurrando
@@ -1987,6 +2043,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // sorteada (0,4 a 1) do nivel do exercicio: o continuo em fracao do peso, a pancada em m/s ao centro de massa em 0,1-0,2 s; a
     // pancada no instante do clipe do momento sorteado (do tempo dele, a 1x), ou logo, se o episodio comecou depois.
     void beginGetUpFire(World& w) {
+        // (12/11 19h10) O levantar e ir comeca limpo (a troca primeiro).
+        if (w.getUpGo) return;
         const std::size_t e = w.clipExercise;
         if (getUpFireLevels.size() < 4 * (e + 1)) return;
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
@@ -2007,6 +2065,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
             }
             direction = std::uniform_int_distribution<int>(0, 7)(w.rng);
             timing = std::uniform_int_distribution<int>(1, 3)(w.rng);
+            // (13/11, settings.fireEarlyShare) A maioria cedo, pelo tempo; o resto pela altura, meio a meio.
+            if (settings.fireEarlyShare > 0.0f) timing = u(w.rng) < settings.fireEarlyShare ? 1 : u(w.rng) < 0.5f ? 2 : 3;
             // (06h20, ele: "as forcas e desafios precisam ser mais fortes, para tentar IMPEDIR ele de chegar a ficar de pe") A fracao do
             // nivel de 0,8 a 1 (era de 0,4 a 1).
             fraction = 0.8f + 0.2f * u(w.rng);
@@ -2038,7 +2098,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
             (void)deliverAt;
             const float draw = getUpFireExam ? 0.5f : u(w.rng);
             const bool run = clipRunExercise(static_cast<std::uint32_t>(e));
-            if (timing == 1) w.fireShoveAt = 0.15f + 0.45f * draw;
+            if (timing == 1)
+                w.fireShoveAt = settings.fireEarlyShare > 0.0f && !getUpFireExam ? 0.05f + (settings.fireEarlyWindow - 0.05f) * draw
+                                                                                 : 0.15f + 0.45f * draw;
             else {
                 w.fireShoveAt = -1.0f;
                 w.fireShoveHeight = timing == 2 ? 0.7f + 0.3f * draw : (run ? 1.0f : 1.1f) + 0.2f * draw;
@@ -2130,9 +2192,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
     }
     void maybeGetUpFire(World& w, const TrackingGetUpPosture3D& now) {
         if (!w.clipGetUp || w.fireKind == 0) return;
-        if (w.fireKind == 2 || w.fireKind == 3)
-            w.fireHoldScale = w.clipDeliveredAt >= 0.0f ? std::max(0.0f, 1.0f - (w.time - w.clipDeliveredAt) / settings.fireReleaseSeconds)
-                                                        : std::min(1.0f, w.time / 0.3f);
+        if (w.fireKind == 2 || w.fireKind == 3) {
+            // (13/11 12h55, settings.fireReleaseAtFirm) O soltar desde o primeiro firme de pe, nao desde a entrega.
+            const float from = settings.fireReleaseAtFirm && w.fireReleaseFrom >= 0.0f ? w.fireReleaseFrom : w.clipDeliveredAt;
+            w.fireHoldScale = from >= 0.0f ? std::max(0.0f, 1.0f - (w.time - from) / settings.fireReleaseSeconds) : std::min(1.0f, w.time / 0.3f);
+        }
         // (06h20) Depois de levantar (a entrega), nada mais: a pancada que nao veio fica sem vir. (12h45, fase 2: uma vez, na entrega; com
         // settings.fireAfterStandShare, a pancada de depois de ficar de pe, na janela de firmeza.)
         if (w.clipDeliveredAt >= 0.0f && !w.fireStandHandled) {
@@ -2169,7 +2233,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.fireShoveDirection = std::uniform_int_distribution<int>(0, 7)(w.rng) + (w.fireDirection >= 8 ? 8 : 0);
         }
         const bool shoveNow = w.fireShoveHeight > 0.0f ? now.headHeight >= w.fireShoveHeight : w.fireShoveAt >= 0.0f && w.time >= w.fireShoveAt;
-        if ((w.fireKind == 1 || w.fireKind == 3) && !w.fireShoveDone && shoveNow && w.pushTicks == 0) {
+        // (13/11 13h15, settings.fireReleaseAtFirm; o laboratorio: uma pancada da serie comecou entre o firme e a entrega e acertou o idle)
+        // Firme de pe, nenhuma pancada nova.
+        const bool released = settings.fireReleaseAtFirm && w.fireReleaseFrom >= 0.0f;
+        if ((w.fireKind == 1 || w.fireKind == 3) && !w.fireShoveDone && shoveNow && w.pushTicks == 0 && !released) {
             std::uniform_real_distribution<float> u(0.0f, 1.0f);
             const float angle = trackingBodyYaw3D(profile->links[rootLink], w.body->links[rootLink])
                 + static_cast<float>(w.fireShoveDirection % 8) * Pi / 4.0f;
@@ -2223,11 +2290,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // (12/11 16h30, o fogo da locomocao v1 - ver TrackingGetUpAmpSettings3D::locoFireShare.) Os extremos do nivel L: o continuo (do
     // peso), a pancada seca de L = 0 (N; a de L = 1 e a do levantar, fireShoveNewtons*), o agarrao de L = 0 (do peso); a forca que e
     // p = 1 (do peso) e em quanto tempo p cai a zero (s).
-    static constexpr float CrookedFixSpan = 2.5f;
     static constexpr float LocoFireHold0 = 0.05f, LocoFireHold1 = 0.5f, LocoFireShoveMin0 = 80.0f, LocoFireShoveMax0 = 180.0f,
                            LocoFireGrab0 = 0.08f, LocoFirePerturbForce = 0.2f, LocoFirePerturbFade = 1.5f;
     // A duracao do episodio (s): o comando, a estrela, a locomocao ou a de sempre.
     float episodeLimit(const World& w) const {
+        // (12/11 19h10: o levantar e ir vira locomocao na troca e fica na duracao do levantar.)
+        if (w.getUpGo) return settings.episodeSeconds;
         return isCommand(w) && settings.commandSeconds > 0.0f ? settings.commandSeconds
             : isStar(w) && settings.starSeconds > 0.0f ? settings.starSeconds
             : w.locomotion && settings.locomotionSeconds > 0.0f ? settings.locomotionSeconds
@@ -2245,7 +2313,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         return std::atan(std::hypot(f.x, f.y) / std::max(1.0f, profile->totalMassKg * 9.81f));
     }
     bool locoFireEligible(const World& w) const {
-        return !w.clipGetUp && !isCommand(w) && (w.startKind == 2 || w.startKind == 6 || w.startKind == 7) && !w.body->links.empty();
+        // (12/11 18h, ele: "agora pode tambem aplicar a fase de fogo no treino de comando" - o comando entra.)
+        return !w.clipGetUp && (w.startKind == 2 || w.startKind == 6 || w.startKind == 7) && !w.body->links.empty();
     }
     float locoShoveNewtons(const World& w, float draw) const {
         const float lo1 = settings.fireShoveNewtonsMax > 0.0f ? settings.fireShoveNewtonsMin : 350.0f;
@@ -2257,6 +2326,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // No comeco do episodio (antes do cenario): se tem fogo, o nivel e o que e do episodio inteiro - a grama molhada e o prensado.
     void beginLocomotionFire(World& w) {
         if (!locoFireEligible(w)) return;
+        if (settings.crookedNoFire && w.crooked && !(settings.evaluation && settings.locoFireExam)) return;
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
         const bool exam = settings.evaluation && settings.locoFireExam;
         if (settings.evaluation ? !(exam || (settings.fireShown && settings.locoFireShare > 0.0f))
@@ -2274,6 +2344,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         const bool still = w.startKind == 2 || w.startKind == 7;
         w.locoFireNextAt = still ? 0.5f + u(w.rng) : 1.0f + 1.5f * u(w.rng);
+        // (12/11 18h, o parado torto: com o fogo em 90% o primeiro empurrao chegava no meio do reajuste - 0,5-1,5 s, ele leva 3-4 s - e o
+        // reajustou caiu de 33% para 5%. Nascido torto, o fogo comeca so depois de 3-4 s.)
+        if (w.crooked) w.locoFireNextAt = std::max(w.locoFireNextAt, 3.0f + u(w.rng));
         if (settings.fireSlipShare > 0.0f && u(w.rng) < settings.fireSlipShare * (0.4f + 0.6f * w.locoFireLevel))
             w.fireSlip = true, w.fireExtras |= 32;
         // (O prensado: so de pe no lugar - parado e giro -, a parede do lado do primeiro continuo, que entao vem primeiro.)
@@ -2327,6 +2400,17 @@ struct TrackingGetUpAmpTraining3D::Impl {
     void maybeLocomotionFire(World& w, const TrackingGetUpPosture3D& now) {
         if (!w.locoFire) return;
         const float dt = TicksPerDecision * TickSeconds;
+        // (12/11 18h, settings.commandGetUp) Levantando no comando, o fogo pausa: o continuo sai na rampa, nada novo, e volta 1,5 s depois.
+        if (w.clipGetUp && w.clipHandedAt < 0.0f) {
+            w.fireHoldScale = std::max(0.0f, w.fireHoldScale - dt / 0.3f);
+            if (w.locoFireNextAt >= 0.0f) w.locoFireNextAt = std::max(w.locoFireNextAt, w.time + 1.5f);
+            w.firePerturb = std::max(0.0f, w.firePerturb - dt / LocoFirePerturbFade);
+            return;
+        }
+        // (12/11 18h20) Nascido torto, o fogo espera o reajuste (+0,5 s), no maximo ate 6 s: com o piso de 3-4 s o reajuste (que levava
+        // 4-5 s) ainda caiu de 33% para 14-20%.
+        if (w.crooked && w.crookedFixedAt < 0.0f && w.time < 6.0f && w.locoFireNextAt >= 0.0f)
+            w.locoFireNextAt = std::max(w.locoFireNextAt, w.time + 0.5f);
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
         const float L = w.locoFireLevel;
         const float weight = profile->totalMassKg * 9.81f;
@@ -2351,6 +2435,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         if (!w.fireShoveDone && w.fireShoveAt >= 0.0f && w.time >= w.fireShoveAt && w.pushTicks == 0)
             locoFireShove(w, now, locoShoveNewtons(w, exam ? 0.5f : u(w.rng)), !exam);
         const bool busy = holding || w.fireShovesLeft > 0 || !w.fireShoveDone || w.pushTicks > 0 || w.fireGrabUntil > w.time;
+        // (12/11 20h05, a revisao com o Codex: o fim do continuo nao conta a serie de pancadas de dentro dele, que pode passar dele - o
+        // intervalo saia do fim estimado e o evento seguinte vinha logo depois da ultima pancada. O minimo do intervalo conta do fim real.)
+        if (busy && w.locoFireNextAt >= 0.0f && !exam)
+            w.locoFireNextAt = std::max(w.locoFireNextAt, w.time + settings.locoFireGapScale * (still ? 1.0f : 1.5f));
         if (w.locoFireNextAt >= 0.0f && w.time >= w.locoFireNextAt && !busy) {
             // (0 o continuo, 1 a serie de pancadas, 2 o agarrao.)
             int kind = 1;
@@ -2406,7 +2494,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 w.fireExtras |= 64;
             }
             ++w.locoFireEvents;
-            w.locoFireNextAt = exam ? -1.0f : end + (still ? 1.0f + 1.5f * u(w.rng) : 1.5f + 2.0f * u(w.rng));
+            w.locoFireNextAt = exam ? -1.0f : end + settings.locoFireGapScale * (still ? 1.0f + 1.5f * u(w.rng) : 1.5f + 2.0f * u(w.rng));
         }
         const Vec3 f = fireHoldNow(w) + (w.pushTicks > 0 ? w.pushForce : Vec3 {}) + (fireGrabActive(w) ? w.fireGrabForce : Vec3 {});
         const float pf = std::min(1.0f, f.length() / std::max(1.0f, LocoFirePerturbForce * weight));
@@ -3061,6 +3149,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // que cabe em ManeuverLateral no giro da vista.
     void advanceManeuver(World& w) {
         if (w.maneuver == 0 || (!locomotionCommanded(w) && !isCommand(w))) return;
+        // (12/11 18h, settings.commandGetUp) Levantando, o jogador espera.
+        if (isCommand(w) && w.clipGetUp && w.clipHandedAt < 0.0f) return;
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
         const float dt = TicksPerDecision * TickSeconds;
         // (05/11 21h, runTurnBrake) Freado, a meia-volta; e, trotando depois dela, a volta a corrida no rumo de agora.
@@ -5966,6 +6056,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.idleAfterGetUp = false;
         w.sprintGuided = false;
         w.clipGetUp = false;
+        w.getUpGo = false;
+        w.goDistance = 0.0f;
+        w.goArrivedAt = -1.0f;
         w.clipFarSeconds = w.clipFacingSeconds = 0.0f;
         w.clipHandedAt = -1.0f;
         w.clipHandSpeed = w.clipFlightSeconds = 0.0f;
@@ -5985,6 +6078,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.handoffCalmSeconds = 0.0f;
         w.fireShovesLeft = w.fireShoveDirection = w.fireExtras = 0;
         w.fireAfterStand = w.fireStandHandled = w.fireSlip = false;
+        w.fireReleaseFrom = -1.0f;
         w.fireGrabLink = -1;
         w.fireGrabForce = {};
         w.fireGrabFrom = w.fireGrabUntil = -1.0f;
@@ -6233,7 +6327,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
             // (O levantar pelo clipe: parado, sem pedido; correndo, o pedido e a velocidade do fim do clipe, no rumo dele no mundo.)
             const Vec3 root = w.body->links[rootLink].position;
             if (clipRunExercise(w.clipExercise)) {
-                const float direction = w.clipYaw + clipGetUpDirection[w.clipPoseExercise];
+                const float direction = w.getUpGo ? std::atan2(w.goTarget.y - root.y, w.goTarget.x - root.x)
+                                                  : w.clipYaw + clipGetUpDirection[w.clipPoseExercise];
                 w.target = { root.x + std::cos(direction) * ClipRunTargetMeters, root.y + std::sin(direction) * ClipRunTargetMeters, 0.0f };
                 w.commandSpeed = clipGetUpSpeed[w.clipPoseExercise];
             } else {
@@ -6434,6 +6529,75 @@ struct TrackingGetUpAmpTraining3D::Impl {
                            .rotate({ 1.0f, 0.0f, 0.0f });
         return std::atan2(f.y, f.x);
     }
+    // (13/11 11h30) A forma da cabeca e do peito nos eixos do corpo (x a frente, z o alto): a cabeca contra o peito e o peito contra a pelve.
+    GetUpFormSample upperForm(const std::vector<PhysicsBodyState3D>& links, float floor) const {
+        const auto axes = [&](std::size_t k) { return (links[k].orientation * profile->links[k].modelOrientation.conjugate()).normalized(); };
+        const std::size_t head = contract->headLink();
+        const Quaternion p = axes(rootLink), c = axes(upperChestLink), h = axes(head);
+        const Vec3 cx = c.rotate({ 1.0f, 0.0f, 0.0f }), cy = c.rotate({ 0.0f, 1.0f, 0.0f }), cz = c.rotate({ 0.0f, 0.0f, 1.0f });
+        const Vec3 hz = h.rotate({ 0.0f, 0.0f, 1.0f }), hx = h.rotate({ 1.0f, 0.0f, 0.0f }), px = p.rotate({ 1.0f, 0.0f, 0.0f }),
+                   py = p.rotate({ 0.0f, 1.0f, 0.0f }), pz = p.rotate({ 0.0f, 0.0f, 1.0f });
+        constexpr float Deg = 180.0f / Pi;
+        return { rlLinkCenterOfMass3D(profile->links[head], links[head]).z - floor, Deg * std::atan2(dot(hz, cx), dot(hz, cz)),
+            Deg * std::atan2(dot(hz, cy), dot(hz, cz)), Deg * std::atan2(dot(cx, py), dot(cx, px)),
+            Deg * std::atan2(dot(cz, px), dot(cz, pz)), Deg * std::asin(std::clamp(hx.z, -1.0f, 1.0f)),
+            Deg * std::atan2(dot(cz, Vec3 { px.x, px.y, 0.0f }) / std::max(1.0e-4f, std::hypot(px.x, px.y)), cz.z) };
+    }
+    // A forma (0-1) contra a media do clipe na mesma altura da cabeca (+-0,1 m; senao a amostra mais perto), com folga de 8 graus: a cabeca
+    // nao mais para tras que o clipe, nao mais de lado, o peito nao mais torcido.
+    float getUpFormScore(const World& w, const std::vector<PhysicsBodyState3D>& links, float floor, bool standing) const {
+        if (w.clipExercise >= clipGetUpForm.size() || clipGetUpForm[w.clipExercise].empty()) return 1.0f;
+        const GetUpFormSample now = upperForm(links, floor);
+        float pitch = 0.0f, roll = 0.0f, twist = 0.0f, lean = 0.0f, gaze = 0.0f, tilt = 0.0f, nearest = 1.0e9f;
+        int n = 0;
+        const GetUpFormSample* best = nullptr;
+        for (const GetUpFormSample& s : clipGetUpForm[w.clipExercise]) {
+            const float d = std::abs(s.head - now.head);
+            if (d < nearest) nearest = d, best = &s;
+            if (d <= 0.1f)
+                pitch += s.pitch, roll += std::abs(s.roll), twist += std::abs(s.twist), lean += s.lean, gaze += s.gaze, tilt += s.tilt, ++n;
+        }
+        if (n == 0)
+            pitch = best->pitch, roll = std::abs(best->roll), twist = std::abs(best->twist), lean = best->lean, gaze = best->gaze,
+            tilt = best->tilt, n = 1;
+        const float slack = 8.0f, back = std::max(0.0f, pitch / n - slack - now.pitch) / 20.0f,
+                    side = std::max(0.0f, std::abs(now.roll) - roll / n - slack) / 15.0f,
+                    turn = std::max(0.0f, std::abs(now.twist) - twist / n - slack) / 15.0f,
+                    arch = std::max(0.0f, lean / n - slack - now.lean) / 15.0f, up = std::max(0.0f, now.gaze - gaze / n - slack) / 15.0f,
+                    bent = std::max(0.0f, std::abs(now.tilt - tilt / n) - 10.0f) / 15.0f;
+        const float score = 0.15f * std::exp(-back * back) + 0.15f * std::exp(-side * side) + 0.15f * std::exp(-turn * turn)
+            + 0.15f * std::exp(-arch * arch) + 0.20f * std::exp(-up * up) + 0.20f * std::exp(-bent * bent);
+        // (12h50) De pe nos levantares de pe: tambem o fim do clipe - o peito nao mais curvado (folga de 8 graus) e a cabeca na altura
+        // (folga de 4 cm): ficar de pe agachado e curvado "travado" custa.
+        if (!standing || clipRunExercise(w.clipExercise) || w.clipExercise >= clipGetUpStand.size()) return score;
+        const std::array<float, 2>& end = clipGetUpStand[w.clipExercise];
+        const float stoop = std::max(0.0f, now.tilt - end[1] - 8.0f) / 12.0f, low = std::max(0.0f, end[0] - 0.04f - now.head) / 0.05f;
+        return 0.6f * score + 0.2f * std::exp(-stoop * stoop) + 0.2f * std::exp(-low * low);
+    }
+    // (12h50, ele: "essa mao virada ai para se levantar de costas tambem nao gosto") A mao apoiada (o colisor a menos de 7 cm do chao) com
+    // a palma para baixo (0-1, 1 sem mao apoiada): o -z do colisor (medido nos clipes: no de brucos as duas maos apoiam com ele para baixo;
+    // no de costas o clipe apoia a direita de lado) nao pode apontar para cima - a rede apoiava a esquerda com o dorso no chao, ainda
+    // ajoelhada (a cabeca abaixo de 0,6 m: vale a subida inteira, fora do deitado).
+    float palmScore(const std::vector<PhysicsBodyState3D>& links, float floor) const {
+        float palm = 1.0f;
+        for (const std::size_t hand : handLinksForm) {
+            if (hand >= links.size()) continue;
+            const Quaternion q = (links[hand].orientation * profile->links[hand].collider.localOrientation).normalized();
+            const Vec3 center = links[hand].position + links[hand].orientation.rotate(profile->links[hand].collider.localPosition);
+            if (center.z - floor > 0.07f) continue;
+            const float flip = std::max(0.0f, -q.rotate({ 0.0f, 0.0f, 1.0f }).z - 0.2f) / 0.4f;
+            palm = std::min(palm, std::exp(-flip * flip));
+        }
+        return palm;
+    }
+    // (13/11 14h) A inclinacao de lado da pelve (graus): a linha das articulacoes dos quadris (a origem das coxas) contra o horizonte, + com
+    // o quadril direito mais alto. (O eixo y do corpo da pelve dava 3,5 graus a mais que ela; a linha dos quadris da 0,0 no clipe do idle.)
+    std::array<std::size_t, 2> thighLinks { std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max() };
+    float pelvisRoll(const std::vector<PhysicsBodyState3D>& links) const {
+        if (thighLinks[0] >= links.size() || thighLinks[1] >= links.size()) return 0.0f;
+        const Vec3 h = links[thighLinks[1]].position - links[thighLinks[0]].position;
+        return 180.0f / Pi * std::atan2(h.z, std::hypot(h.x, h.y));
+    }
     float facing(const World& w) const {
         const float c = std::cos(wrapAngle(faceDirection(w) - characterYaw(w)));
         return w.startKind == 7 ? 0.5f * (1.0f + c) : std::max(0.0f, c);
@@ -6580,7 +6744,16 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // 0 parado, 1 na pedida, caindo acima dela e negativa se afasta.)
     // (Nos rumos, o rumo do corpo e o do comeco: andar e trotar de costas e de lado sem virar para a direcao.)
     // (14h05, settings.runSettleSeconds) A janela da rede do levantar depois de ficar de pe: nos correndo a deles, se houver.
+    // (12/11 19h50, ele: no levantar e ir de pe "demora um pouco para de fato trocar o brain... precisaria ser mais preciso" e "no treino do
+    // Comando ele use essa mesma troca") A troca ja de pe tambem no levantar e ir e no comando: a medida no modo do laboratorio - de pe aos
+    // 0,9-1,0 s, a troca aos 1,6-1,8 s (0,2 s firme + a janela de 0,6 s), e na janela a cabeca do levantar deixava o corpo tombar (cabeca de
+    // 1,65 a 1,46 m) e metade caia 0,3 s depois da troca. Sem janela, e o firme de pe em StandHandoffFirm.
+    bool handoffAtStand(const World& w) const {
+        return settings.runHandoffAtStand && w.clipGetUp && (clipRunExercise(w.clipExercise) || w.getUpGo || isCommand(w));
+    }
+    static constexpr float StandHandoffFirm = 0.1f;
     float settleSecondsFor(const World& w) const {
+        if (handoffAtStand(w)) return 0.0f;
         return w.clipGetUp && clipRunExercise(w.clipExercise) && settings.runSettleSeconds > 0.0f ? settings.runSettleSeconds
                                                                                                  : settings.adaptiveSettleSeconds;
     }
@@ -8153,12 +8326,128 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // frente no fixo dele, o clipe do trote na fase das pernas de agora, no rumo em que o corpo vai; o pedido saindo da velocidade do
     // corpo, subindo ate o fixo (ver o comentario no codigo). Dai a locomocao (congelada) comanda por clipGetUpAfterSeconds; cair nesse
     // tempo encerra o episodio - a entrega ruim custa o que a locomocao deixaria de ganhar.
+    // (12/11 18h, ele: "no treino COMANDO (jogador emulado) vamos desde ja fazer a conexao entre os dois brains, o da locomocao e do
+    // levantar, para vermos na pratica como eles agiriam em conjunto... em qual momento ha as trocas... em perfeita harmonia... e
+    // garantir o aprendizado de ambos") settings.commandGetUp: caiu no comando, a cabeca do levantar assume no clipe de pe do lado em que
+    // o corpo esta, no trecho mais parecido com a pose (adoptClipForPose, o mesmo da nova tentativa), sem fogo, com o levantar adaptativo
+    // e o nunca desistir; o jogador espera (a tecla solta). De pe e firme (a entrega e a janela de firmeza), a troca: a locomocao no idle
+    // alerta, o comando parado, e a proxima tecla retoma. Sem levantar no orcamento do levantar, o episodio acaba.
+    void beginCommandGetUp(World& w, const TrackingGetUpPosture3D& now) {
+        World::Command& c = w.command;
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        ++c.falls;
+        c.riseFrom = w.time;
+        // (12/11 18h, ele: "no treino de comando, vamos treinar tambem o levantar correndo (quando ele ta caido mas quer correr, ai ele
+        // levanta ja correndo)") Andando, o jogador segue segurando a tecla em settings.commandRunGetUpShare das quedas - o levantar
+        // correndo; senao solta - o de pe.
+        const bool wantsRun = c.state == 0 && c.key >= 0 && u(w.rng) < settings.commandRunGetUpShare;
+        if (!wantsRun) c.key = -1;
+        c.state = 2;
+        // (O fogo da locomocao pausa enquanto ele levanta: o continuo e o agarrao soltam, nada novo.)
+        w.locoFireHoldUntil = std::min(w.locoFireHoldUntil, w.time);
+        w.fireShovesLeft = 0;
+        w.fireShoveDone = true;
+        w.fireGrabUntil = std::min(w.fireGrabUntil, w.time);
+        w.fireNextTurnAt = -1.0f;
+        w.freeStop = w.freeTroca = w.stopping = false;
+        w.stopPhase = 0;
+        w.runTurn = -1;
+        w.brakeTurnAt = w.runAgainAt = -1.0f;
+        w.commandSpeed = 0.0f;
+        const Vec3 root = w.body->links[rootLink].position;
+        w.target = { root.x, root.y, 0.0f };
+        w.clipGetUp = true;
+        // (O clipe de pe - de costas - ou o correndo - de costas -; adoptClipForPose troca pelo lado do corpo na mesma familia.)
+        std::uint32_t family = 0u;
+        if (wantsRun)
+            for (std::uint32_t e = 0; e < clipGetUpClips.size(); ++e)
+                if (clipRunExercise(e)) { family = e; break; }
+        w.clipExercise = family;
+        w.clipReference = clipGetUpClips[family];
+        w.clipStart = 0.0f;
+        w.clipHeld = w.time;
+        w.clipYaw = trunkYawOf(w.body->links);
+        w.clipGround = { 0.0f, 0.0f, terrainHeight(w, {}) };
+        w.clipDeliveredAt = w.clipHandedAt = -1.0f;
+        w.clipFree = false;
+        w.clipFreeUntil = -1.0f;
+        w.clipFarSeconds = w.clipFacingSeconds = 0.0f;
+        w.clipRate = 1.0f;
+        w.getUpCovered = w.getUpTarget = -1.0f;
+        w.riseFirmSeconds = 0.0f;
+        w.riseFirmFrom = w.upAt = -1.0f;
+        w.handoffCalmSeconds = 0.0f;
+        w.attempts = 1;
+        w.attemptFrom = w.time;
+        w.retryBehindSeconds = 0.0f;
+        w.attemptPeakHead = now.headHeight;
+        w.fireKind = 0;
+        w.fireHoldScale = 0.0f;
+        w.clipExercise = adoptClipForPose(w);
+        w.attemptPhase = clipTime(w);
+        // (Correndo: o pedido pelo rumo do clipe escolhido, como na nova tentativa.)
+        if (clipRunExercise(w.clipExercise) && w.clipExercise < clipGetUpDirection.size()) {
+            const float direction = w.clipYaw + clipGetUpDirection[w.clipExercise];
+            w.target = { root.x + std::cos(direction) * ClipRunTargetMeters, root.y + std::sin(direction) * ClipRunTargetMeters, 0.0f };
+            if (w.clipExercise < clipGetUpSpeed.size()) w.commandSpeed = clipGetUpSpeed[w.clipExercise];
+        }
+        w.trackClip = w.clipReference;
+        w.trackStart = clipTime(w) - w.time;
+        w.trackScale = 1.0f;
+        w.trackYaw = w.clipYaw;
+        w.rampFrom = -1.0f;
+        w.twistClip = std::numeric_limits<std::size_t>::max();
+        w.trackTwist = 0.0f;
+        w.locomotionControl = false;
+    }
     void clipHandoff(World& w) {
         const Vec3 v = rlBodyCenterOfMassVelocity3D(*profile, w.body->links);
         const float speed = std::hypot(v.x, v.y);
         w.clipHandedAt = w.time;
         w.clipHandSpeed = speed;
-        if (!clipRunExercise(w.clipExercise)) {
+        if (isCommand(w)) {
+            // (12/11 18h, settings.commandGetUp) De volta ao comando: a locomocao no idle alerta (os alvos indo dos da recuperacao aos do
+            // idle), a vista no rumo do corpo, o jogador parado - a proxima tecla retoma.
+            World::Command& c = w.command;
+            if (settings.idleBlendSeconds > 0.0f && w.lastRecoveryAction.size() == contract->actionSize()) {
+                w.idleBlendFrom = w.time;
+                w.idleBlendPose = w.lastRecoveryAction;
+            }
+            const bool ran = clipRunExercise(w.clipExercise) && c.key >= 0;
+            w.clipGetUp = false;
+            w.clipHandedAt = w.clipDeliveredAt = -1.0f;
+            ++c.rises;
+            if (ran) {
+                // (O levantar correndo: o jogador segue segurando - a frente, na vista do rumo em que ele saiu correndo -; o pedido parte
+                // da velocidade do corpo, como na troca do correndo, e sobe na StartAcceleration.)
+                const float yaw = speed > 1.5f ? std::atan2(v.y, v.x) : trunkYawOf(w.body->links);
+                w.faceYaw = yaw;
+                c.target = yaw;
+                c.key = 0;
+                if (commandStart(w, c.run ? 2u : 1u, 0)) {
+                    w.rampFrom = -1.0f;
+                    w.launchEnd = -1.0f;
+                    w.accelFrom = w.time;
+                    w.accelSpeed = speed;
+                    w.accelRate = StartAcceleration;
+                }
+                c.state = 0;
+                ++c.runRises;
+                w.stopping = false;
+                w.stopPhase = 0;
+            } else {
+                w.faceYaw = w.moveYaw = trunkYawOf(w.body->links);
+                c.target = w.faceYaw;
+                commandIdle(w);
+                w.stopping = true;
+            }
+            if (c.riseFrom >= 0.0f) c.riseSum += w.time - c.riseFrom;
+            c.riseFrom = -1.0f;
+            c.nextKeyAt = w.time + 0.6f + 0.8f * std::uniform_real_distribution<float>(0.0f, 1.0f)(w.rng);
+            w.locomotionControl = true;
+            return;
+        }
+        if (!clipRunExercise(w.clipExercise) && !w.getUpGo) {
             startIdle(w);
             if (settings.idleBlendSeconds > 0.0f && w.lastRecoveryAction.size() == contract->actionSize()) {
                 w.idleBlendFrom = w.time;
@@ -8167,7 +8456,30 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.locomotionControl = true;
             return;
         }
-        const std::uint32_t band = 1u;
+        if (w.getUpGo && !clipRunExercise(w.clipExercise)) {
+            // (12/11 19h10, o levantar e ir de pe: a largada do trote como a do comando - a vista para onde o corpo esta virado, a
+            // referencia misturada a partir da pose de agora, o pedido subindo do zero -; o steerGo vira para o ponto.)
+            w.locomotion = true;
+            w.startBand = 1u;
+            w.maneuver = 0;
+            w.speedScale = 1.0f;
+            w.altClip = w.pendingClip = std::numeric_limits<std::size_t>::max();
+            w.unrealStart = -1;
+            w.refActive = false;
+            w.faceYaw = trunkYawOf(w.body->links);
+            if (!commandStart(w, 1u, 0)) {
+                w.trackClip = std::numeric_limits<std::size_t>::max();
+                return;
+            }
+            w.startCommandSpeed = w.commandSpeed;
+            const Vec3 root = w.body->links[rootLink].position;
+            w.target = { root.x + std::cos(w.faceYaw) * ClipRunTargetMeters, root.y + std::sin(w.faceYaw) * ClipRunTargetMeters, 0.0f };
+            w.locomotionControl = true;
+            return;
+        }
+        // (12/11 19h10, o levantar e ir correndo: a corrida no lugar do trote; o rumo sai para onde o corpo vai e o steerGo vira para o
+        // ponto.)
+        const std::uint32_t band = w.getUpGo ? 2u : 1u;
         const Gait* gait = gaitFor(band, 0u);
         if (gait == nullptr) {
             w.trackClip = std::numeric_limits<std::size_t>::max();
@@ -8179,7 +8491,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.band = w.startBand = band;
         w.heading = 0u;
         w.maneuver = 0;
-        w.runBand = false;
+        w.runBand = band >= 2u;
         w.speedScale = 1.0f;
         const float fixed = fixedSpeed(band, 0u);
         w.commandSpeed = w.startCommandSpeed = fixed > 0.0f ? fixed : std::max(0.1f, travel[gait->clip].speed);
@@ -8597,6 +8909,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         advanceTurn(w);
         advanceManeuver(w);
+        steerGo(w);
         advanceStop(w);
         // (Parado com rumo pedido: a nota do parado 0,7 e o rumo do corpo 0,3, de pe. A coluna so quieto: sem empurrao e
         // 1 s depois do ultimo.)
@@ -8638,7 +8951,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             if (clipRunExercise(w.clipExercise)) {
                 const float toward = std::atan2(w.target.y - w.body->links[rootLink].position.y, w.target.x - w.body->links[rootLink].position.x);
                 const float along = v.x * std::cos(toward) + v.y * std::sin(toward);
-                firm = now.headHeight > 1.3f && now.upright > 0.7f && along >= 0.6f * w.commandSpeed && !down;
+                firm = now.headHeight > 1.3f && now.upright > 0.7f && (settings.runHandoffAtStand || along >= 0.6f * w.commandSpeed) && !down;
             } else {
                 // (06h20, ele: "a partir do momento em que ele ficou de pe posturado, ele se levantou com sucesso") De pe na postura
                 // (cabeca, pelve e tronco em pe), sem exigir o equilibrio parado - o empurrao continuo nao deixava o "firme" valer.
@@ -8647,6 +8960,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             const float dt = TicksPerDecision * TickSeconds;
             if (firm) {
                 if (w.riseFirmFrom < 0.0f) w.riseFirmFrom = w.time;
+                if (settings.fireReleaseAtFirm && w.fireReleaseFrom < 0.0f) w.fireReleaseFrom = w.time;
                 w.riseFirmSeconds += dt;
             } else {
                 w.riseFirmSeconds = 0.0f;
@@ -8654,7 +8968,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
             }
             constexpr float AdaptiveFirmStand = 0.2f, AdaptiveFirmRun = 0.2f;
             if (w.clipDeliveredAt < 0.0f
-                && w.riseFirmSeconds >= (clipRunExercise(w.clipExercise) ? AdaptiveFirmRun : AdaptiveFirmStand) - 1.0e-4f) {
+                && w.riseFirmSeconds >= (clipRunExercise(w.clipExercise) ? AdaptiveFirmRun : handoffAtStand(w) ? StandHandoffFirm : AdaptiveFirmStand)
+                        - 1.0e-4f) {
                 w.clipDeliveredAt = w.time;
                 w.upAt = w.riseFirmFrom;
                 deliveredNow = true;
@@ -8667,7 +8982,14 @@ struct TrackingGetUpAmpTraining3D::Impl {
                     if (settings.adaptiveTimeMax > 0.0f) {
                         // (13h45, settings.adaptiveTimeMin/Max) A faixa do tempo, encolhida pelo trecho do clipe que falta.
                         const float share = std::clamp(clipSeconds / std::max(0.3f, deliverAt), 0.2f, 1.0f);
-                        const float low = settings.adaptiveTimeMin * share, high = settings.adaptiveTimeMax * share, fall = 0.5f * share;
+                        // (13/11, settings.adaptiveTimeMinRun/MaxRun) Os correndo com a faixa deles.
+                        const bool runBand = clipRunExercise(w.clipExercise) && settings.adaptiveTimeMaxRun > 0.0f;
+                        // (13/11 10h55, settings.adaptiveTimeFireSlack) Com fogo, so o teto (o maximo + a folga), sem piso.
+                        const bool fireCeiling = settings.adaptiveTimeFireSlack >= 0.0f && w.fireKind != 0;
+                        const float low = fireCeiling ? 0.0f : (runBand ? settings.adaptiveTimeMinRun : settings.adaptiveTimeMin) * share,
+                                    high = ((runBand ? settings.adaptiveTimeMaxRun : settings.adaptiveTimeMax)
+                                            + (fireCeiling ? settings.adaptiveTimeFireSlack : 0.0f)) * share,
+                                    fall = settings.adaptiveTimeFall * share;
                         const float off = taken < low ? low - taken : taken > high ? taken - high : 0.0f;
                         w.arrivalReward += settings.adaptiveSpeedBonus * std::clamp(1.0f - off / fall, 0.0f, 1.0f);
                     } else {
@@ -8793,6 +9115,19 @@ struct TrackingGetUpAmpTraining3D::Impl {
             : w.commandSpeed > 0.0f ? moveReward(w, now)
             : w.locomotion ? 0.7f * posture->standingReward(now, w.body->links, settled) + (now.standing ? 0.3f * facing(w) : 0.0f)
                            : posture->standingReward(now, w.body->links, settled);
+        if (settings.settleCalmWeight > 0.0f && clipActive && settings.clipGetUpAdaptive && w.commandSpeed <= 0.0f
+            && !clipRunExercise(w.clipExercise) && now.standing && !down && upperChestLink < w.body->links.size()) {
+            // (13/11, settings.settleCalmWeight) A calma de pe: o centro de massa parado (0,3 m/s -> e^-1), o peito sem girar (1 rad/s),
+            // o ponto de captura na base (0,15 m fora -> e^-1) e os dois pes no chao.
+            const TrackingBalance3D b = measureTrackingBalance3D(*profile, w.body->links, w.body->interactions,
+                { footLinks[0], footLinks[1] }, floorUnder(w));
+            const float out = std::max(0.0f, -b.margin);
+            const float calm = 0.30f * std::exp(-(comVelocity.x * comVelocity.x + comVelocity.y * comVelocity.y) / 0.09f)
+                + 0.30f * std::exp(-w.body->links[upperChestLink].angularVelocity.lengthSquared())
+                + 0.25f * std::exp(-(out / 0.15f) * (out / 0.15f))
+                + 0.15f * (b.footDown[0] && b.footDown[1] ? 1.0f : b.footDown[0] || b.footDown[1] ? 0.5f : 0.0f);
+            state = (1.0f - settings.settleCalmWeight) * state + settings.settleCalmWeight * calm;
+        }
         if (settings.stillCost > 0.0f && w.startKind == 7 && w.locomotionControl && upperChestLink < w.body->links.size()) {
             // (settings.stillCost no giro parado: o tronco e a pelve tombando - o giro em volta do vertical e livre - e o pe escorregando.)
             const auto tilting = [&](std::size_t i) {
@@ -9053,7 +9388,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
                                 const float idleFree = fireFreedom(w);
                                 const float still = 1.0f / (1.0f + motion / 0.25f) * (1.0f - idleFree) + idleFree;
                                 // (12/11 17h, settings.crookedStartShare) O torto reajustou: perto da pose (shape e lugar) e quieto por 0,3 s; o
-                                // premio da rapidez, cheio no comeco e zero em CrookedFixSpan s.
+                                // premio da rapidez, cheio no comeco e zero em settings.crookedFixSpan s.
                                 float fixBonus = 0.0f;
                                 if (w.crooked && w.crookedFixedAt < 0.0f) {
                                     // (17h05, a sonda: a forma junta a junta do idle da rede ja fica ~24 graus do clipe no parado normal - o
@@ -9062,7 +9397,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
                                     w.crookedFixSeconds = near ? w.crookedFixSeconds + TicksPerDecision * TickSeconds : 0.0f;
                                     if (w.crookedFixSeconds >= 0.3f - 1.0e-4f) {
                                         w.crookedFixedAt = std::max(0.0f, w.time - 0.3f);
-                                        fixBonus = settings.crookedStartBonus * std::max(0.0f, 1.0f - w.crookedFixedAt / CrookedFixSpan);
+                                        fixBonus = settings.crookedStartBonus * std::max(0.0f, 1.0f - w.crookedFixedAt / settings.crookedFixSpan);
                                     }
                                 }
                                 float slide = 0.0f;
@@ -9229,9 +9564,25 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 * (0.5f * std::min(1.0f, w.recoveryRough / RecoveryRoughScale) + 0.5f * std::min(1.0f, 2.0f * w.recoveryLimits));
         reward = state + (shaped ? 0.99f * (posture->risePotential(now) + posture->turnPotential(now) + facePotential(w, now)) : 0.0f)
             - before;
+        // (13/11 11h30, settings.getUpFormWeight) A forma da cabeca e do peito na subida e na firmeza: custo, nao premio - ficar no meio
+        // da subida com a forma boa nao paga nada.
+        if (settings.getUpFormWeight > 0.0f && clipActive && settings.clipGetUpAdaptive && !w.locomotionControl && !down) {
+            const float form = now.headHeight > 0.6f ? getUpFormScore(w, w.body->links, floorUnder(w), now.standing) : 1.0f;
+            const float palm = palmScore(w.body->links, floorUnder(w));
+            // (A mao virada dura ~0,17 s - poucos passos -: com ela apoiada, metade da nota; com settings.getUpPalmWeight, peso proprio.)
+            if (settings.getUpPalmWeight > 0.0f)
+                reward -= settings.getUpFormWeight * (1.0f - form) + settings.getUpPalmWeight * (1.0f - palm);
+            else
+                reward -= settings.getUpFormWeight * (1.0f - (palm < 1.0f ? 0.5f * form + 0.5f * palm : form));
+        }
         // (04/11 15h30, o levantar que chega equilibrado: o premio da chegada e a multa do pulinho - os dois pes no ar quase de pe,
         // com a recuperacao no comando e sem empurrao.)
         reward += w.arrivalReward;
+        // (13/11 14h, settings.idlePelvisLevelWeight) O quadril reto no parado.
+        if (settings.idlePelvisLevelWeight > 0.0f && w.locomotionControl && w.commandSpeed <= 0.0f && now.standing && !down) {
+            const float roll = pelvisRoll(w.body->links) / 6.0f;
+            reward -= settings.idlePelvisLevelWeight * (1.0f - std::exp(-roll * roll));
+        }
         w.arrivalReward = 0.0f;
         if (settings.footSlipCost > 0.0f && w.locomotionControl && w.commandSpeed <= 0.0f) {
             // (10/11, settings.footSlipCost: os pes apoiados deslizando ou girando, parado - ver o .hpp.)
@@ -9318,6 +9669,17 @@ struct TrackingGetUpAmpTraining3D::Impl {
             reward -= !shaped ? 2.0f * FallPenalty : FallPenalty;
             w.fellAfterStanding = true;
         }
+        // (12/11 18h, settings.commandGetUp) No comando ligado ao levantar a queda nao encerra: a multa dela fica na locomocao e a cabeca
+        // do levantar assume (beginCommandGetUp); levantando, o chao nao encerra.
+        // (Sem os clipes do levantar no lote - as avaliacoes, as reguas -, o comando cai como antes.)
+        const bool commandRising = settings.commandGetUp && isCommand(w) && w.clipGetUp && w.clipHandedAt < 0.0f;
+        const bool commandFall = settings.commandGetUp && isCommand(w) && !clipGetUpClips.empty() && !commandRising && w.stoodAt >= 0.0f
+            && (lostBalance || (settings.locomotionTermination && down));
+        if (commandFall) {
+            if (down && !lostBalance) reward -= FallPenalty;
+            w.fellAfterStanding = true;
+            beginCommandGetUp(w, now);
+        }
         if (trackingNow) w.trackingAverage += (w.locomotionFeedback[0] - w.trackingAverage) * (TicksPerDecision * TickSeconds / 0.5f);
         const bool strayed = !(clipSequence || kinematicMotion) && trackingNow && settings.trackingTermination > 0.0f && w.time > 1.0f
             && w.trackingAverage < settings.trackingTermination;
@@ -9349,8 +9711,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // retos, o deslocamento (a velocidade de um passo, courseVelocity) mais que courseAngleLimit fora do pedido por
         // StraySeconds - fora do empurrao, da largada e da parada - encerra como a queda.)
         bool strayedCourse = false;
+        // (12/11 19h20: no levantar e ir o rumo e o do ponto, re-mirado a cada decisao - quem nao chega acaba pelo prazo; a sonda: 259 de
+        // 262 que nao chegaram eram este fim.)
         if (settings.courseAngleLimit > 0.0f && trackingNow && w.maneuver == 0 && w.locomotion && !w.stopping && !starting(w)
-            && w.time > 1.5f && !pushedNow && settings.locomotionTermination) {
+            && w.time > 1.5f && !pushedNow && settings.locomotionTermination && !w.getUpGo) {
             const Vec3 want = wantedVelocity(w, 0.0f), cv = settings.courseSmoothing > 0.0f ? w.courseVelocity : w.smoothVelocity;
             const float a = std::hypot(want.x, want.y), b = std::hypot(cv.x, cv.y);
             const float angle = a > 0.3f && b > 0.3f
@@ -9503,7 +9867,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const bool adaptiveOver = w.clipGetUp && settings.clipGetUpAdaptive && w.clipHandedAt < 0.0f
             && w.time - w.attemptFrom >= adaptiveDeliver + AdaptiveSpareSeconds - 1.0e-4f;
         const bool clipFell = w.clipGetUp && w.clipHandedAt >= 0.0f && down;
-        const bool fellMoving = clipFar || clipFell || (settings.locomotionTermination && (w.locomotion || w.taught) && down) || lostBalance || strayed || turnedAway
+        const bool fellMoving = clipFar || clipFell
+            || (((settings.locomotionTermination && (w.locomotion || w.taught) && down) || lostBalance) && !commandFall && !commandRising)
+            || strayed || turnedAway
             || idleLost || bentLost || offCourse || tooSlow;
         const float limit = episodeLimit(w);
         terminated = w.partnerFell || fellMoving ? 1 : 0;
@@ -9511,7 +9877,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const bool offWorld = !w.body->links.empty() && w.body->links[rootLink].position.z < -1.0f;
         truncated = !terminated && (w.time >= limit - 1e-4f || w.handoffAt >= 0.0f || adaptiveOver || offWorld
                                        || (w.clipGetUp && w.clipHandedAt >= 0.0f
-                                           && w.time >= w.clipHandedAt + settings.clipGetUpAfterSeconds - 1e-4f))
+                                           && (w.getUpGo ? w.goArrivedAt >= 0.0f || w.time >= w.clipHandedAt + goBudget(w) - 1e-4f
+                                               : w.time >= w.clipHandedAt + (settings.runAfterSeconds >= 0.0f && clipRunExercise(w.clipExercise)
+                                                                              ? settings.runAfterSeconds : settings.clipGetUpAfterSeconds) - 1e-4f)))
             ? 1 : 0;
         if (truncated || terminated) {
             if (!partnered) {
@@ -9581,7 +9949,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
             }
             episode.fellInPush = terminated && w.pushes > 0 && (w.pushTicks > 0 || w.time <= w.lastPushEnd + 2.0f);
             episode.stopError = w.stopping ? w.stopError : -1.0f;
-            if (w.clipGetUp) {
+            if (isCommand(w)) {
+                episode.commandFalls = static_cast<float>(w.command.falls);
+                episode.commandRises = static_cast<float>(w.command.rises);
+                episode.commandRiseSeconds = w.command.rises > 0 ? w.command.riseSum / static_cast<float>(w.command.rises) : -1.0f;
+                episode.commandRunRises = static_cast<float>(w.command.runRises);
+            }
+            if (w.clipGetUp && !isCommand(w)) {
                 // (11/11 14h, o levantar pelo clipe - ver TrackingClipGetUp3D: o exercicio no lugar do cenario; a troca e a locomocao
                 // depois dela nas colunas da parceira; a velocidade do centro de massa na troca na do rumo; o voo de pe na da chegada;
                 // a nota media do clipe na da imitacao.)
@@ -9609,6 +9983,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 episode.attempts = static_cast<float>(w.attempts);
                 episode.retrySeconds = w.attempts > 1 && w.clipDeliveredAt >= 0.0f && w.upAt >= 0.0f ? w.upAt - w.attemptFrom : -1.0f;
                 episode.fireExtras = static_cast<float>(w.fireExtras);
+                if (w.getUpGo) {
+                    episode.startKind = 11u;
+                    episode.getUpGo = clipRunExercise(w.clipExercise) ? 2.0f : 1.0f;
+                    episode.goArrivedAt = w.goArrivedAt;
+                    episode.goDistance = w.goDistance;
+                    episode.goLeft = std::hypot(w.goTarget.x - w.body->links[rootLink].position.x, w.goTarget.y - w.body->links[rootLink].position.y);
+                }
             }
             if (w.crooked) {
                 episode.crooked = 1.0f;
@@ -9652,8 +10033,12 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     // estilo e as quedas de antes.)
     if (settings.movingFraction > 0.0f || settings.sprintStartFraction > 0.0f || settings.evaluationKind == 1)
         names.insert(names.end(), std::begin(MovingClips), std::end(MovingClips));
+    // (12/11 19h40, ele no laboratorio: "nitidamente ha um problema na troca de brain, ele nao troca para o da locomocao, parece estar
+    // tentando andar pelo brain do levantar" - nas avaliacoes do levantar pelo clipe (11+) as marchas nao eram carregadas: a troca do
+    // correndo nao achava o trote (gaitFor nulo) e a cabeca do levantar seguia correndo ate o fim; no treino, com a locomocao, ia certo.)
+    const bool clipGetUpEval = settings.evaluationKind >= 11;
     if (settings.locomotionFraction > 0.0f || settings.turnFraction > 0.0f || settings.evaluationKind == 4
-        || settings.evaluationKind == 6) {
+        || settings.evaluationKind == 6 || clipGetUpEval) {
         names.insert(names.end(), std::begin(HeadingClips), std::end(HeadingClips));
         names.insert(names.end(), std::begin(LocomotionStyleClips), std::end(LocomotionStyleClips));
     }
@@ -9663,7 +10048,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         && (settings.avoidFraction > 0.0f || settings.locomotionFallFraction > 0.0f))
         names.insert(names.end(), std::begin(ProtectionClips), std::end(ProtectionClips));
     // (A rl_final: a corrida e o sprint so com as fatias deles - ou a avaliacao dessas faixas -, cada clipe uma vez.)
-    if (settings.runFraction > 0.0f || settings.evaluationBand == 2) {
+    if (settings.runFraction > 0.0f || settings.evaluationBand == 2 || clipGetUpEval) {
         names.insert(names.end(), std::begin(TrackedRunClips), std::end(TrackedRunClips));
     }
     // (05/11: o sprint para a frente - so o sprint_maximo, rastreado.)
@@ -10301,10 +10686,26 @@ void TrackingGetUpAmpTraining3D::setLocomotionFire(float share, std::array<float
     m_impl->settings.locoFireLevels = levels;
     m_impl->settings.locoFireRelief = std::max(0.0f, relief);
 }
+void TrackingGetUpAmpTraining3D::setCrookedNoFire(bool on) { m_impl->settings.crookedNoFire = on; }
+void TrackingGetUpAmpTraining3D::setCrookedFixSpan(float seconds) { m_impl->settings.crookedFixSpan = std::max(0.5f, seconds); }
+void TrackingGetUpAmpTraining3D::setLocomotionFireGaps(float scale) { m_impl->settings.locoFireGapScale = std::clamp(scale, 0.1f, 10.0f); }
 void TrackingGetUpAmpTraining3D::setCrookedStart(float share, float bonus, float close) {
     m_impl->settings.crookedStartShare = std::clamp(share, 0.0f, 1.0f);
     m_impl->settings.crookedStartBonus = std::max(0.0f, bonus);
     m_impl->settings.crookedFixClose = std::clamp(close, 0.0f, 1.0f);
+}
+void TrackingGetUpAmpTraining3D::setCommandGetUp(bool on, float runShare) {
+    m_impl->settings.commandGetUp = on;
+    m_impl->settings.commandRunGetUpShare = std::clamp(runShare, 0.0f, 1.0f);
+}
+void TrackingGetUpAmpTraining3D::setGetUpGo(float share, float minMeters, float maxMeters) {
+    m_impl->settings.getUpGoShare = std::clamp(share, 0.0f, 1.0f);
+    m_impl->settings.getUpGoMin = std::max(0.5f, minMeters);
+    m_impl->settings.getUpGoMax = std::max(m_impl->settings.getUpGoMin, maxMeters);
+}
+void TrackingGetUpAmpTraining3D::setRunHandoffAtStand(bool on, float afterSeconds) {
+    m_impl->settings.runHandoffAtStand = on;
+    m_impl->settings.runAfterSeconds = afterSeconds;
 }
 void TrackingGetUpAmpTraining3D::setStarRework(float pathWeight, float pathWidth, float curveShare, float curveMin, float curveMax) {
     m_impl->settings.starPathWeight = std::clamp(pathWeight, 0.0f, 1.0f);
@@ -10872,8 +11273,66 @@ void TrackingGetUpAmpTraining3D::setAdaptiveTiming(float timeMinimum, float time
     m_impl->settings.adaptiveTimeMax = std::max(m_impl->settings.adaptiveTimeMin, timeMaximum);
     m_impl->settings.runImpulseBonus = std::max(0.0f, runImpulse);
 }
+void TrackingGetUpAmpTraining3D::setAdaptiveTimingRun(float timeMinimum, float timeMaximum) {
+    m_impl->settings.adaptiveTimeMinRun = std::max(0.0f, timeMinimum);
+    m_impl->settings.adaptiveTimeMaxRun = std::max(m_impl->settings.adaptiveTimeMinRun, timeMaximum);
+}
+void TrackingGetUpAmpTraining3D::setAdaptiveTimeFall(float seconds) { m_impl->settings.adaptiveTimeFall = std::max(0.1f, seconds); }
+void TrackingGetUpAmpTraining3D::setAdaptiveTimeFire(float slack) { m_impl->settings.adaptiveTimeFireSlack = slack; }
+void TrackingGetUpAmpTraining3D::setGetUpFireReleaseAtFirm(bool on) { m_impl->settings.fireReleaseAtFirm = on; }
+void TrackingGetUpAmpTraining3D::setGetUpPalm(float weight) { m_impl->settings.getUpPalmWeight = std::max(0.0f, weight); }
+void TrackingGetUpAmpTraining3D::setIdlePelvisLevel(float weight) {
+    Impl& impl = *m_impl;
+    impl.settings.idlePelvisLevelWeight = std::max(0.0f, weight);
+    for (std::size_t i = 0; i < impl.profile->links.size(); ++i) {
+        if (impl.profile->links[i].id == "LeftThigh") impl.thighLinks[0] = i;
+        if (impl.profile->links[i].id == "RightThigh") impl.thighLinks[1] = i;
+    }
+}
+std::vector<float> TrackingGetUpAmpTraining3D::getUpFormTable(std::uint32_t exercise) const {
+    std::vector<float> out;
+    if (exercise < m_impl->clipGetUpForm.size())
+        for (const auto& s : m_impl->clipGetUpForm[exercise]) out.insert(out.end(), { s.head, s.pitch, s.roll, s.twist, s.lean, s.gaze, s.tilt });
+    return out;
+}
+std::vector<float> TrackingGetUpAmpTraining3D::getUpFormNow(std::size_t world) const {
+    const Impl& impl = *m_impl;
+    const Impl::World& w = impl.worlds.at(world);
+    const auto s = impl.upperForm(w.body->links, impl.floorUnder(w));
+    return { s.head, s.pitch, s.roll, s.twist, s.lean, s.gaze, s.tilt, impl.getUpFormScore(w, w.body->links, impl.floorUnder(w), s.head > 1.4f),
+        impl.palmScore(w.body->links, impl.floorUnder(w)), impl.pelvisRoll(w.body->links) };
+}
+void TrackingGetUpAmpTraining3D::setGetUpForm(float weight) {
+    Impl& impl = *m_impl;
+    if (weight > 0.0f && impl.clipGetUpClips.empty()) throw std::runtime_error("setGetUpForm: chame setClipGetUp antes");
+    impl.settings.getUpFormWeight = std::max(0.0f, weight);
+    impl.clipGetUpForm.assign(impl.clipGetUpClips.size(), {});
+    impl.clipGetUpStand.assign(impl.clipGetUpClips.size(), { 0.0f, 0.0f });
+    for (std::size_t i = 0; i < impl.profile->links.size(); ++i) {
+        if (impl.profile->links[i].id == "LeftHand") impl.handLinksForm[0] = i;
+        if (impl.profile->links[i].id == "RightHand") impl.handLinksForm[1] = i;
+    }
+    TrackingClipFrame3D f;
+    for (std::size_t k = 0; k < impl.clipGetUpClips.size() && weight > 0.0f; ++k) {
+        const TrackingClipReference3D& reference = *impl.references[impl.clipGetUpClips[k]];
+        for (float t = 0.0f; t <= reference.durationSeconds(); t += 1.0f / 30.0f) {
+            reference.frame(t, {}, 0.0f, f);
+            impl.clipGetUpForm[k].push_back(impl.upperForm(f.links, 0.0f));
+        }
+        const std::size_t tail = std::min<std::size_t>(9, impl.clipGetUpForm[k].size());
+        for (std::size_t i = impl.clipGetUpForm[k].size() - tail; i < impl.clipGetUpForm[k].size(); ++i) {
+            impl.clipGetUpStand[k][0] += impl.clipGetUpForm[k][i].head / static_cast<float>(tail);
+            impl.clipGetUpStand[k][1] += impl.clipGetUpForm[k][i].tilt / static_cast<float>(tail);
+        }
+    }
+}
+void TrackingGetUpAmpTraining3D::setSettleCalm(float weight) { m_impl->settings.settleCalmWeight = std::clamp(weight, 0.0f, 1.0f); }
 void TrackingGetUpAmpTraining3D::setAdaptiveRetry(bool on) { m_impl->settings.adaptiveRetry = on; }
 void TrackingGetUpAmpTraining3D::setFireRunHeadwindCap(float fraction) { m_impl->settings.fireRunHeadwindCap = std::max(0.0f, fraction); }
+void TrackingGetUpAmpTraining3D::setGetUpFireEarly(float share, float window) {
+    m_impl->settings.fireEarlyShare = std::clamp(share, 0.0f, 1.0f);
+    m_impl->settings.fireEarlyWindow = std::max(0.1f, window);
+}
 void TrackingGetUpAmpTraining3D::setGetUpFireExtras(int shoveSeries, float legShare, float wallShare, float wallMinimum,
     float wallMaximum, float turnShare, float turnSeconds, float afterStandShare, float slipShare, float grabShare, float grabFraction,
     float seriesGapMin, float seriesGapMax, float shoveSecondsMin, float shoveSecondsMax, float shoveNewtonsMin, float shoveNewtonsMax) {
@@ -11055,6 +11514,24 @@ TrackingGetUpAmpWorldView3D TrackingGetUpAmpTraining3D::worldView(std::size_t wo
     view.startKind = w.startKind;
     view.hasTarget = w.startKind == 3 || w.startKind == 5;
     view.target = w.target;
+    if (w.getUpGo && !w.body->links.empty()) {
+        // (12/11 19h10, o levantar e ir: "ir ate um ponto proximo... marcado no mapa") O ponto, a linha ate ele (um ponto a cada ~1 m) e o
+        // texto: o lado, o normal ou correndo, a distancia e o que falta.
+        const Vec3 root = w.body->links[m_impl->rootLink].position;
+        const float dx = w.goTarget.x - root.x, dy = w.goTarget.y - root.y, left = std::hypot(dx, dy);
+        view.hasTarget = true;
+        view.target = w.goTarget;
+        const int marks = std::max(1, static_cast<int>(left));
+        for (int k = 1; k <= marks; ++k)
+            view.path.push_back({ root.x + dx * static_cast<float>(k) / static_cast<float>(marks),
+                                  root.y + dy * static_cast<float>(k) / static_cast<float>(marks), 0.0f });
+        static constexpr const char* Sides[4] { "de costas", "de bruços", "correndo de costas", "correndo de bruços" };
+        char text[160];
+        std::snprintf(text, sizeof text, "levantar e ir · %s · %s · ponto a %.1f m · falta %.1f m%s", Sides[std::min<std::size_t>(3, w.clipExercise)],
+            m_impl->clipRunExercise(w.clipExercise) ? "depois correndo" : "depois no trote", w.goDistance, left,
+            w.goArrivedAt >= 0.0f ? " · chegou" : w.clipHandedAt >= 0.0f ? " · locomoção" : " · levantar");
+        view.commandText = text;
+    }
     view.commandSpeed = w.commandSpeed;
     if (w.commandSpeed > 0.0f) {
         const float move = m_impl->moveDirection(w);

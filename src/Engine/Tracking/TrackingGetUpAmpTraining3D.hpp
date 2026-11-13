@@ -138,6 +138,39 @@ struct TrackingGetUpAmpSettings3D {
     // com o tempo da tentativa entre adaptiveTimeMin e adaptiveTimeMax (encolhidos pelo trecho do clipe que falta, na tentativa que
     // comeca no meio), caindo a zero em 0,5 s (escalados) fora dela - mais rapido ou mais lento.
     float adaptiveTimeMin = 0.0f, adaptiveTimeMax = 0.0f;
+    // (13/11 07h45, ele: "o tempo de levantar, no de costas e de brucos em 1,3-1,4 s e os de levantar correndo em 1,2 s") A faixa dos
+    // correndo a parte; com adaptiveTimeMaxRun 0, a de pe vale para todos.
+    float adaptiveTimeMinRun = 0.0f, adaptiveTimeMaxRun = 0.0f;
+    // (13/11 07h55, ele: a meta de 1,5 s "nem mais, nem menos") Em quantos segundos fora da faixa o premio dela zera (era fixo em 0,5 s; o de
+    // costas a 0,85 s ficava 0,6 s abaixo de 1,45 e sem sinal nenhum).
+    float adaptiveTimeFall = 0.5f;
+    // (13/11 10h55, medido: o tempo para levantar no treino, limpo x sob fogo - costas 1,09 x 1,27 s, brucos 1,36 x 1,93, correndo
+    // 1,11 x 1,41 e 1,07 x 1,91.) A faixa valia nos dois, e a rede, sem saber de antemao se vem pancada, ficava no meio: o fogo puxava
+    // para mais rapido, o limpo para mais devagar, e dobrar o premio nao movia nada. Com isto >= 0, no levantar com fogo (fireKind != 0)
+    // a faixa vira so um teto - o maximo dela mais esta folga (s) -, sem piso; o ritmo dele fica pelos limpos. < 0: a faixa nos dois.
+    float adaptiveTimeFireSlack = -1.0f;
+    // (13/11 11h30, ele: "essa cabeca e peito torto quando levanta" - o de costas. Medido na subida, cabeca a 0,9-1,5 m: a cabeca
+    // 8-13 graus para tras da linha do tronco (o clipe: 20-39 a frente), tombada de lado 30-37 (o clipe 6-25), o peito torcido contra
+    // os quadris 25-63 (o clipe 10-32); o de brucos perto do clipe. O adaptativo nao media nada disso e o juiz, saturado, nao via.)
+    // A forma da cabeca e do peito: no levantar adaptativo com a recuperacao no comando e a cabeca acima de 0,6 m, um custo por passo
+    // de peso x (1 - forma); a forma compara a cabeca contra o peito (para tras, de lado) o peito contra a pelve (torcao e, 12h25, arqueado para tras) e o olhar para cima com a media
+    // do proprio clipe NA MESMA ALTURA DA CABECA (nao no tempo: o ritmo e a tecnica seguem dele), com folga. 0: nada.
+    float getUpFormWeight = 0.0f;
+    // (13/11 13h30, ele: "sem melhoras nenhuma quanto a mao" - medido: 100% dos de costas ainda apoiam a esquerda virada depois de 45 min;
+    // dentro da forma a mao custava ~2 por levantar, ~10x menos que a subida que mudou) A mao virada com peso proprio: por passo,
+    // isto x (1 - nota da mao), fora da forma. 0: a mao dentro da nota da forma (metade dela com mao apoiada).
+    float getUpPalmWeight = 0.0f;
+    // (13/11 14h, ele: "no treino do parado, gostaria de que o quadril dele ficasse retinho alinhado" - medido: no parado a linha dos
+    // quadris caida -14,9 graus em media, acima de 5 graus 96% do tempo; o clipe 0; os pes 21 / 38 cm para os lados contra 31 / 31) No
+    // parado (a locomocao no comando, sem pedido de movimento, de pe), um custo por passo de peso x (1 - e^-(inclinacao/6 graus)^2), a
+    // inclinacao de lado da pelve nos eixos do corpo. 0: nada.
+    float idlePelvisLevelWeight = 0.0f;
+    // (13/11 07h45, ele: "reforcar melhor a postura nao estabanada e auto-equilibrio no pos levantar"; medido: de pe, 1,5 s depois de
+    // levantar o centro de massa a 0,6-0,9 m/s, o peito girando 3 rad/s, ~4 passos e o ponto de captura fora da base 80% do tempo; 19-31%
+    // caiam depois.) No levantar de pe, de pe com a recuperacao no comando (o firme e a janela de firmeza): a nota de ficar de pe vira
+    // (1 - peso) x ela + peso x a calma (o centro de massa parado, o peito sem girar, o ponto de captura na base, os dois pes no chao). 0
+    // desliga.
+    float settleCalmWeight = 0.0f;
     // (13h45, ele: "bonifica consideravelmente o impulso tambem para pegada de velocidade pos levantar... quando ele esta quase de pe que
     // se impulsiona para frente") Nos correndo, na entrega: isto x a velocidade ao alvo de 60% (zero) a 100% (inteiro) do pedido.
     float runImpulseBonus = 0.0f;
@@ -161,6 +194,11 @@ struct TrackingGetUpAmpSettings3D {
     // (12/11 07h55) O soltar da forca continua do fogo depois da entrega (s, linear ate zero). Com 0,15 s a rede de agora inclinada
     // contra 0,75 do peso caia de qualquer jeito - a janela de firmeza sozinha piorou o firme (28% -> 8-15%, sonda r88413).
     float fireReleaseSeconds = 0.15f;
+    // (13/11 12h55, com a troca direta - adaptiveSettleSeconds 0 -: sob fogo, 42-51% dos de pe caiam depois da entrega, 68-85% deles
+    // 0,4-1 s depois - inclinados contra o continuo que sumia ja com o idle no comando; limpos 0-4%.) Com isto, o soltar comeca na
+    // primeira vez que ele fica firme de pe (a do riseFirmFrom), nao na entrega: com fireReleaseSeconds = o firme da entrega (0,2 s), a
+    // forca acaba ainda com a rede do levantar e o idle recebe o corpo solto. (13h15) E nenhuma pancada nova depois do firme.
+    bool fireReleaseAtFirm = false;
     // (12/11 08h20, ele: "tentar se levantar novamente, APOS fracassar nas tentativas anteriores (nunca desistir)") No adaptativo, o
     // fracasso abre uma nova tentativa: o relogio do clipe ja no ponto de entrega (ja devia estar de pe) e a cabeca abaixo de
     // RetryHeadMeters por RetrySeconds (a queda pela pancada, o continuo derrubando, ele mesmo caindo; 09h00: antes, a cabeca 0,6 m
@@ -210,6 +248,11 @@ struct TrackingGetUpAmpSettings3D {
     // (13h40, ele: "da para deixar as medias de 350-800, ficaria melhor") A forca da pancada fora da prova sorteada entre estes dois (N),
     // igual nos quatro exercicios, no lugar do nivel em m/s; 0: pelo nivel.
     float fireShoveNewtonsMin = 0.0f, fireShoveNewtonsMax = 0.0f;
+    // (13/11 09h35, ele: "as pancadas secas do fogo deveriam ocorrer mais cedo, entre 0s - 1s que e o periodo que de fato ele esta
+    // levantando ainda (nao que nao possa ser depois, mas a maioria)") fireEarlyShare: a fracao dos episodios em que a primeira pancada vem
+    // pelo tempo, de 0,05 s a fireEarlyWindow; o resto pela altura da cabeca (o meio ou o quase fim, meio a meio). 0: o sorteio de antes
+    // (um terco cada, o tempo de 0,15 a 0,6 s). Medido antes (r105700): 32-62% das pancadas no primeiro segundo.
+    float fireEarlyShare = 0.0f, fireEarlyWindow = 1.0f;
     // (11/11 16h25) O peso de cada exercicio no sorteio do treino (de costas, de brucos, correndo de costas, correndo de brucos) -
     // o Python poe pela dificuldade (--levantar-unreal-prioridade).
     // (Vazio: os exercicios iguais.)
@@ -404,6 +447,12 @@ struct TrackingGetUpAmpSettings3D {
     // (o lugar - a base, o giro, o peito na vertical, a altura - >= crookedFixClose, a coluna alinhada >= 0,6 e quieto por 0,3 s), cheio no
     // comeco e zero em 2,5 s.
     float crookedStartShare = 0.0f, crookedStartBonus = 0.0f, crookedFixClose = 0.8f;
+    // (12/11 20h15) O parado torto sem o fogo da locomocao: ele e um exercicio de postura (reajustar e ficar no idle); com o fogo em 90%
+    // dos episodios a postura do parado limpo se desfez em 15 min (a semelhanca 0,61 -> 0,51, o reajuste 37% -> 12%).
+    bool crookedNoFire = false;
+    // (12/11 20h45, a revisao com o Codex) O premio da rapidez do reajuste do torto zera em crookedFixSpan s: em 2,5 s, com o reajuste
+    // tipico em 2,7-3,6 s, ele quase nunca pagava e o reajuste ficou sem sinal (37-50% -> 16-25% em 10 min, o parado normal estavel).
+    float crookedFixSpan = 2.5f;
     // (12/11 17h20, ele, a estrela de 8 pontas: "tirar o encerramento automatico do exercicio por distanciamento do alvo... ao inves disso
     // seria interessante recompensar o nao distanciamento" e "nas intercalacoes dos alvos da estrela, botar alguns com a obrigatoriedade
     // de fazer curva, podendo ser mais aberta ou mais fechada... sinalizando adequadamente a curva") starPathWeight > 0: sair do caminho
@@ -411,9 +460,35 @@ struct TrackingGetUpAmpSettings3D {
     // pela ponta e da meia-volta); a chegada a ponta pede estar a ate 1,5 m dela ou do caminho. starCurveShare: a fatia das pernas que sao
     // um arco (a flecha entre starCurveMin e starCurveMax da corda, para um lado sorteado); o pedido segue a tangente do arco.
     float starPathWeight = 0.0f, starPathWidth = 1.2f, starCurveShare = 0.0f, starCurveMin = 0.15f, starCurveMax = 0.45f;
+    // (12/11 18h, ele: no COMANDO "a conexao entre os dois brains, o da locomocao e do levantar... em perfeita harmonia") commandGetUp:
+    // caiu no comando, a cabeca do levantar levanta (o clipe de pe do lado do corpo, no trecho da pose, adaptativo, sem fogo) e, de pe e
+    // firme, devolve a locomocao no idle alerta com o jogador parado; a queda nao encerra (a multa fica). false: como antes.
+    bool commandGetUp = false;
+    // (12/11 18h, ele: "levantar correndo... quando ele ta caido mas quer correr") A fracao das quedas andando em que o jogador segue
+    // segurando a tecla: o levantar correndo, e a troca ja correndo na frente da vista.
+    float commandRunGetUpShare = 0.5f;
+    // (12/11 18h40, ele: na troca do levantar correndo "o correto e assim que ele comeca ficar de pe ja trocar para a locomocao.. nunca
+    // deixar o brain do levantar ser usado para a locomocao em si" e "cortar o exercicio... pegar os primeiros dois passos so apos
+    // levantar com sucesso e pronto") runHandoffAtStand: no correndo a entrega e a troca no de pe (cabeca acima de 1,3 m, tronco a
+    // menos de ~45 graus, 0,2 s) sem exigir a velocidade e sem a janela depois; runAfterSeconds (>= 0) o tempo da locomocao depois
+    // da troca no exercicio do correndo (os dois passos), no lugar do clipGetUpAfterSeconds. false / -1: como antes.
+    bool runHandoffAtStand = false;
+    float runAfterSeconds = -1.0f;
+    // (12/11 19h10, ele: "um exercicio que treina focado na TROCA de brains... inicia caido, de costas ou brucos, e precisa levantar,
+    // haver a troca de brain para o da locomocao e ele ir ate um ponto proximo se locomovendo, marcado no mapa, coisa de 5 - 10
+    // metros... aleatorio se vai ser de costas ou brucos, e se vai ser normal ou correndo (se for correndo, ai a locomocao tambem e
+    // correndo)") getUpGoShare: a fracao dos levantares pelo clipe que sao o "levantar e ir" - deitado no quadro 0, sem o fogo do
+    // levantar, o ponto a getUpGoMin-Max m para onde o clipe termina virado (de pe, +-60 graus) ou correndo (+-20); depois da troca
+    // a locomocao vai ate ele (o trote no de pe, a corrida no correndo), o rumo virando para o ponto; chegar a 1 m e o sucesso e
+    // encerra. Na avaliacao, com >= 1: todos, e o exercicio sorteado. No registro o comeco vira 11. 0: como antes.
+    float getUpGoShare = 0.0f, getUpGoMin = 5.0f, getUpGoMax = 10.0f;
     float locoFireShare = 0.0f;
     std::array<float, 6> locoFireLevels { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
     float locoFireRelief = 0.0f;
+    // (12/11 20h, a revisao do fogo) A escala do intervalo depois de cada evento do fogo da locomocao (1: 1,5-3,5 s andando, 1,0-2,5 s
+    // parado). Com o evento seguinte logo depois, a forca estava la quase o episodio todo e a rede andava sempre travada - a velocidade e a
+    // postura do limpo cairam; com intervalos maiores o certo e reagir.
+    float locoFireGapScale = 1.0f;
     bool locoFireExam = false;
     float locoFireExamLevel = 1.0f;
     // (11/11 09h50, ele: "o treino do giro parado esta errado: deveria fazer giros fixos de tipo 60, 90, 180, 360 graus, em
@@ -1096,6 +1171,11 @@ struct TrackingGetUpAmpEpisode3D {
     float crooked = 0.0f, crookedFixedAt = -1.0f;
     // (12/11 17h20, a estrela) A distancia media ao caminho da perna (m; -1 fora da estrela) e as pernas em curva feitas.
     float starPathError = -1.0f, starCurves = 0.0f;
+    // (12/11 18h, settings.commandGetUp) No comando: as quedas, os levantares de volta e o tempo medio deles (s; -1 sem).
+    float commandFalls = 0.0f, commandRises = 0.0f, commandRiseSeconds = -1.0f, commandRunRises = 0.0f;
+    // (12/11 19h10, settings.getUpGoShare) O levantar e ir: 1 de pe, 2 correndo (0 fora dele), quando chegou ao ponto (s; -1 nao chegou)
+    // , a distancia do ponto no comeco e a que faltava no fim (m).
+    float getUpGo = 0.0f, goArrivedAt = -1.0f, goDistance = -1.0f, goLeft = -1.0f;
 };
 
 // O que o visualizador do laboratorio desenha de um mundo: como comecou, o alvo (o levantar em movimento, enquanto o
@@ -1334,9 +1414,15 @@ public:
     void setParkedOnLocomotion(bool on);
     // (12/11 16h30, o fogo da locomocao - ver TrackingGetUpAmpSettings3D::locoFireShare.)
     void setLocomotionFire(float share, std::array<float, 6> levels, float relief);
+    void setLocomotionFireGaps(float scale);
+    void setCrookedNoFire(bool on);
+    void setCrookedFixSpan(float seconds);
     void setLocomotionFireExam(bool on, float level);
     void setCrookedStart(float share, float bonus, float close);
     void setStarRework(float pathWeight, float pathWidth, float curveShare, float curveMin, float curveMax);
+    void setCommandGetUp(bool on, float runShare = 0.5f);
+    void setRunHandoffAtStand(bool on, float afterSeconds);
+    void setGetUpGo(float share, float minMeters, float maxMeters);
     void setTurnVariety(bool on, float spineReward);
     void setStillCost(float weight);
     void setIdleStatic(bool on);
@@ -1498,13 +1584,26 @@ public:
     void setClipGetUpAdaptive(bool on);
     void setAdaptiveSpeedBonus(float bonus);
     void setAdaptiveTiming(float timeMinimum, float timeMaximum, float runImpulse);
+    void setAdaptiveTimingRun(float timeMinimum, float timeMaximum);
+    void setAdaptiveTimeFall(float seconds);
+    void setAdaptiveTimeFire(float slack);
+    void setGetUpForm(float weight);
+    void setGetUpPalm(float weight);
+    void setIdlePelvisLevel(float weight);
+    // (13/11 11h30) Para as sondas: a tabela da forma do clipe do exercicio (altura da cabeca, cabeca para a frente, de lado, torcao do
+    // peito, peito contra a pelve, olhar para cima; 6 por amostra) e a forma de agora de um mundo (as mesmas 6 e a nota 0-1).
+    [[nodiscard]] std::vector<float> getUpFormTable(std::uint32_t exercise) const;
+    [[nodiscard]] std::vector<float> getUpFormNow(std::size_t world) const;
+    void setSettleCalm(float weight);
     void setRunPostRise(float speedReward, float settleSeconds);
     void setGetUpPoseVariety(float fraction);
     void setCalmHandoff(float calmSpeed, float maxSeconds, float maxSecondsRun);
     void setAdaptiveSettle(float seconds, float release = 0.15f);
+    void setGetUpFireReleaseAtFirm(bool on);
     void setAdaptiveRetry(bool on);
     void setFireRunHeadwindCap(float fraction);
     void setGetUpArena(float minimumMeters, float maximumMeters);
+    void setGetUpFireEarly(float share, float window);
     void setGetUpFireExtras(int shoveSeries, float legShare, float wallShare, float wallMinimum, float wallMaximum, float turnShare,
         float turnSeconds, float afterStandShare = 0.0f, float slipShare = 0.0f, float grabShare = 0.0f, float grabFraction = 0.3f,
         float seriesGapMin = 0.4f, float seriesGapMax = 1.2f, float shoveSecondsMin = 0.1f, float shoveSecondsMax = 0.2f,

@@ -77,6 +77,9 @@ public:
     // correndo estes; as avaliacoes 11 a 14 do treino.)
     static constexpr const char* RunGetUpBackDrill = "levantar_correndo_costas";
     static constexpr const char* RunGetUpFrontDrill = "levantar_correndo_brucos";
+    // (12/11 19h20, ele: o "levantar e ir" - deitado, levanta, a troca para a locomocao e vai ate um ponto marcado a 5-10 m; de costas ou
+    // de brucos, normal ou correndo, sorteados) A avaliacao 11 com o levantar e ir em todos os episodios.
+    static constexpr const char* GetUpGoDrill = "levantar_e_ir";
     // (18h) O quinto: de costas rolando para brucos (o Kimodo), a avaliacao 15.
     static constexpr const char* RollGetUpDrill = "levantar_costas_rolando";
     // Se o treino da pasta tem o levantar pelo clipe (v2.levantar_unreal > 0).

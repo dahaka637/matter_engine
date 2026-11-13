@@ -131,6 +131,9 @@ struct TrackingViewer3D::Impl {
     std::filesystem::file_time_type partnerWrite {};
     std::string partnerLabel;
     bool partnerActive = false;
+    // (12/11 19h30) O treino do levantar pelo clipe (v2.levantar_unreal): a troca e a da propria rede - a cabeca da locomocao, no lote -,
+    // sem a rede "parceira" de outro treino.
+    bool clipRun = false;
     float partnerTime = 0.0f;
     float firmSeconds = 0.0f;
     // (A troca so depois de levantar do chao, como no treino: a cabeca abaixo de 1 m em algum momento do episodio.)
@@ -178,6 +181,11 @@ struct TrackingViewer3D::Impl {
     void checkHandoff() {
         // (Na sequencia de clipes nao ha troca de rede: os clipes seguem ate o fim do episodio.)
         if (sequenceActive) return;
+        // (12/11 19h30, ele: "nitidamente ha um problema na troca de brain, ele nao troca para o da locomocao, parece estar tentando andar
+        // pelo brain do levantar": no levantar pelo clipe a troca e a do treino, dentro do lote - a cabeca da locomocao da mesma rede. Esta
+        // troca de 01/11 passava o corpo parado de pe para a rede de OUTRO treino, a locomocao antiga, e o texto dizia "rede do levantar"
+        // o tempo todo antes dela.)
+        if (clipRun) return;
         if (TrackingViewer3D::sceneryPresetOf(getUpDrill) >= 0 || getUpDrill == SceneryDrill || getUpDrill == AvoidSceneryDrill) return;
         const RagdollProfile3D& profile = getUp->profile();
         const RagdollState3D& body = getUp->body(0);
@@ -499,6 +507,9 @@ struct TrackingViewer3D::Impl {
                 // (11/11: sem freio - a ordem de parar vai direto ao idle alerta -, o parado unico e a nota nova dele, como no treino.)
                 getUp->setStopToIdle(cyclesRun["v2"].value("parada_direto_idle", false));
                 getUp->setIdleAfterStop(cyclesRun["v2"].value("idle_depois_freada", false));
+                // (12/11 17h35, ele: "porque apos frear ele fica com a coluna torta, ao inves de ficar na pose IDLE?" - o laboratorio nao tinha
+                // o parado_na_locomocao: depois da parada o corpo ia para a cabeca do LEVANTAR, como no treino antes das 16h.)
+                getUp->setParkedOnLocomotion(cyclesRun["v2"].value("parado_na_locomocao", false));
                 getUp->setTurnVariety(cyclesRun["v2"].value("giro_variado", false), cyclesRun["v2"].value("giro_coluna", 0.0f));
                 getUp->setStillCost(cyclesRun["v2"].value("quieto_custos", 0.0f));
                 getUp->setIdleStatic(cyclesRun["v2"].value("parado_estatico", false));
@@ -556,6 +567,7 @@ struct TrackingViewer3D::Impl {
                             end = start;
                         }
                         getUp->setLocomotionFire(1.0f, levels, v.value("locomocao_fogo_liberdade", 0.0f));
+                        getUp->setLocomotionFireGaps(v.value("locomocao_fogo_intervalo", 1.0f));
                     }
                 }
             }
@@ -600,6 +612,10 @@ struct TrackingViewer3D::Impl {
                     // (12/11 07h55) A firmeza depois da entrega e o soltar da forca, como no treino.
                     if (v.contains("levantar_fogo_soltar"))
                         getUp->setAdaptiveSettle(v.value("levantar_adaptativo_firmeza", 0.0f), v.value("levantar_fogo_soltar", 0.15f));
+                    // (13/11 14h) A troca quando calmo (o idle so assume com o centro de massa abaixo de VEL, ou no maximo em MAX s).
+                    if (v.contains("levantar_troca_calma") && v["levantar_troca_calma"].is_array() && v["levantar_troca_calma"].size() == 3)
+                        getUp->setCalmHandoff(v["levantar_troca_calma"][0].get<float>(), v["levantar_troca_calma"][1].get<float>(),
+                            v["levantar_troca_calma"][2].get<float>());
                     // (12/11 08h30, ele: "tentar se levantar novamente, APOS fracassar... (nunca desistir)") A nova tentativa, como no treino.
                     if (v.value("levantar_tentar", false)) getUp->setAdaptiveRetry(true);
                     // (12/11 17h20, a estrela sem o encerramento por sair do caminho e com as pernas em curva - como no treino.)
@@ -607,9 +623,21 @@ struct TrackingViewer3D::Impl {
                         && v.contains("estrela_curvas") && v["estrela_curvas"].is_array() && v["estrela_curvas"].size() == 3)
                         getUp->setStarRework(v["estrela_caminho"][0].get<float>(), v["estrela_caminho"][1].get<float>(),
                             v["estrela_curvas"][0].get<float>(), v["estrela_curvas"][1].get<float>(), v["estrela_curvas"][2].get<float>());
+                    // (12/11 18h, ele: no comando, os dois cerebros ligados - caiu, o levantar levanta e devolve - como no treino.)
+                    if (v.value("comando_levantar", false)) getUp->setCommandGetUp(true, v.value("comando_levantar_correndo", 0.5f));
+                    // (12/11 18h40, ele: no levantar correndo a troca para a locomocao assim que fica de pe e o exercicio cortado nos dois
+                    // passos depois - como no treino.)
+                    if (v.value("levantar_correndo_troca", -1.0f) >= 0.0f) getUp->setRunHandoffAtStand(true, v.value("levantar_correndo_troca", -1.0f));
+                    // (12/11 19h20, o levantar e ir: no exercicio dele, todo episodio - o lado e o normal/correndo sorteados - com o ponto
+                    // na distancia do treino.)
+                    if (getUpDrill == GetUpGoDrill) {
+                        const bool listed = v.contains("levantar_e_ir") && v["levantar_e_ir"].is_array() && v["levantar_e_ir"].size() == 3;
+                        getUp->setGetUpGo(1.0f, listed ? v["levantar_e_ir"][1].get<float>() : 5.0f, listed ? v["levantar_e_ir"][2].get<float>() : 10.0f);
+                    }
                     // (12/11 17h, ele: o parado nascendo torto para aprender a se reajustar - como no treino.)
                     if (v.contains("parado_torto") && v["parado_torto"].is_array() && v["parado_torto"].size() == 3)
                         getUp->setCrookedStart(v["parado_torto"][0].get<float>(), v["parado_torto"][1].get<float>(), v["parado_torto"][2].get<float>());
+                    getUp->setCrookedNoFire(v.value("parado_torto_sem_fogo", false));
                     // (14h30) Os comecos em pose variada, como no treino (o laboratorio roda como avaliacao: aqui so se o treino tiver).
                     if (v.value("levantar_pose_variada", 0.0f) > 0.0f) getUp->setGetUpPoseVariety(v.value("levantar_pose_variada", 0.0f));
                     // (14h05) A janela dos correndo depois de ficar de pe, como no treino.
@@ -626,6 +654,11 @@ struct TrackingViewer3D::Impl {
                         getUp->setGetUpFireExtras(static_cast<int>(at(0, 1.0f)), at(1, 0.0f), at(2, 0.0f), at(3, 0.5f), at(4, 3.0f), at(5, 0.0f),
                             at(6, 1.5f), at(7, 0.0f), at(8, 0.0f), at(9, 0.0f), at(10, 0.3f), at(11, 0.4f), at(12, 1.2f), at(13, 0.1f), at(14, 0.2f), at(15, 0.0f), at(16, 0.0f));
                     }
+                    // (13/11 09h40, ele: a maioria das pancadas no primeiro segundo) A primeira pancada cedo, como no treino.
+                    if (v.contains("levantar_fogo_pancada_cedo") && v["levantar_fogo_pancada_cedo"].is_array() && v["levantar_fogo_pancada_cedo"].size() == 2)
+                        getUp->setGetUpFireEarly(v["levantar_fogo_pancada_cedo"][0].get<float>(), v["levantar_fogo_pancada_cedo"][1].get<float>());
+                    // (13/11 13h05) O soltar do continuo do fogo no primeiro firme de pe (com a troca direta).
+                    if (v.value("levantar_fogo_soltar_firme", false)) getUp->setGetUpFireReleaseAtFirm(true);
                     if (v.contains("levantar_paredes") && v["levantar_paredes"].is_array() && v["levantar_paredes"].size() == 2)
                         getUp->setGetUpArena(v["levantar_paredes"][0].get<float>(), v["levantar_paredes"][1].get<float>());
                     if (v.contains("levantar_fogo") && v["levantar_fogo"].is_array() && v["levantar_fogo"].size() == 4
@@ -1124,8 +1157,10 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
         impl.getUpDrill = drill;
         // (11/11 14h: com o levantar pelo clipe no treino, os quatro exercicios dele - as avaliacoes 11 a 14.)
         const bool clipGetUp = clipGetUpRun(impl.getUpDirectory);
+        impl.clipRun = clipGetUp;
         impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == LyingBackDrill ? (clipGetUp ? 11u : 9u)
             : drill == LyingFrontDrill ? (clipGetUp ? 12u : 10u) : drill == RunGetUpBackDrill ? 13u : drill == RunGetUpFrontDrill ? 14u
+            : drill == GetUpGoDrill ? 11u
             : drill == RollGetUpDrill ? 15u
             : drill == AvoidFallDrill || isAvoidSceneryDrill(drill) ? 2u
             : drill == BalanceDrill                                                                     ? 3u
@@ -1165,7 +1200,7 @@ bool TrackingViewer3D::clipGetUpRun(const std::filesystem::path& runDirectory) {
 
 bool TrackingViewer3D::isGetUpDrill(const std::string& drill) {
     return drill == GetUpDrill || drill == MovingGetUpDrill || drill == LyingBackDrill || drill == LyingFrontDrill
-        || drill == RunGetUpBackDrill || drill == RunGetUpFrontDrill || drill == RollGetUpDrill || drill == AvoidFallDrill || drill == BalanceDrill || drill == EquilibriumDrill
+        || drill == RunGetUpBackDrill || drill == RunGetUpFrontDrill || drill == RollGetUpDrill || drill == GetUpGoDrill || drill == AvoidFallDrill || drill == BalanceDrill || drill == EquilibriumDrill
         || drill == LocomotionFallDrill || drill == SceneryDrill || drill == AvoidSceneryDrill || sceneryPresetOf(drill) >= 0 || isLocomotionDrill(drill);
 }
 
@@ -1358,7 +1393,8 @@ void TrackingViewer3D::step() {
         for (const TrackingGetUpAmpEpisode3D& episode : impl.getUp->takeEpisodes()) {
             ++impl.getUpFalls;
             // (O levantar pelo clipe: a troca no fim do clipe e de pe com a locomocao depois.)
-            const bool good = impl.getUpKind >= 11 ? episode.handoffSeconds >= 0.0f && !episode.partnerFell
+            const bool good = episode.getUpGo > 0.0f ? episode.goArrivedAt >= 0.0f
+                : impl.getUpKind >= 11 ? episode.handoffSeconds >= 0.0f && !episode.partnerFell
                 : impl.getUpKind == 1 ? episode.reachedSeconds >= 0.0f
                 : impl.getUpKind >= 2             ? !episode.fellAfterStanding
                                                   : episode.firstStandSeconds >= 0.0f;

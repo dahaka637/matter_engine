@@ -86,6 +86,8 @@ public:
     void setManualSpeed(std::optional<float> metersPerSecond);
     // (12/11 05h30) A caixa "Empurroes" do visualizador (os testes: o fogo do levantar desenhado).
     void setViewerPushes(bool on);
+    // A caixa no visualizador aberto agora (false sem visualizador do levantar v2).
+    [[nodiscard]] bool viewerPushes() const;
     void setDisplay(Display display) {
         m_display = display;
         m_dirty = true;
@@ -278,6 +280,11 @@ private:
         std::vector<float> trainRecovered, evalRecovered;
         // (12/11 16h50, o fogo da locomocao) No grupo do exercicio mostrado: sob fogo nao caiu e o firme (%, treino) e o nivel L (0-1).
         std::vector<float> locoFireStood, locoFireFirm, locoFireLevel;
+        // (12/11 18h55, ele: o grafico do sucesso "ter 2 linhas, a do limpo e a do fogo... para TODOS os exercicios, ate os de levantar") O
+        // sucesso sob fogo do exercicio mostrado (o limpo fica em sceneryStood; no levantar, o firme limpo e o firme sob fogo).
+        std::vector<float> sceneryStoodFire, trainFirmClean, trainFirmFire;
+        // (12/11 19h) O teste sem ruido do levantar nos limpos (o firme dos limpos da avaliacao).
+        std::vector<float> evalFirmClean;
         bool getUpFire = false;
         bool clipGetUp = false;
         // A locomocao na rede do levantar (na ordem de TrackingViewer3D::LocomotionDrills): o primeiro grafico e o sem
@@ -404,6 +411,8 @@ private:
     bool m_chartsExpanded = false;
     // (04/11 12h40, ele: no expandido, "mostrar exigencias" - o minimo para descer a forca auxiliar em cada grafico.)
     bool m_showRequirements = false;
+    // (12/11 18h45) A caixa "Empurroes" marcada vale para todo exercicio que abrir (cada visualizador novo nasce com ela).
+    bool m_viewerPushes = false;
     int m_chartWindow = 5;
     std::string m_notice;
     float m_noticeSeconds = 0.0f;

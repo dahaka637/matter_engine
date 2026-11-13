@@ -333,6 +333,14 @@ int realRun(const std::filesystem::path& out) {
     if (const char* fire = std::getenv("MATTER_RL_TEST_FIRE")) {
         screen.setViewerPushes(std::getenv("MATTER_RL_TEST_LIMPO") == nullptr);
         screen.waitUntilLoaded();
+        // (12/11 18h45, ele: marcada, a caixa vale para todo exercicio aberto depois) MATTER_RL_TEST_DRILL2: troca de exercicio e confere.
+        if (const char* other = std::getenv("MATTER_RL_TEST_DRILL2")) {
+            screen.showDrill(other);
+            screen.waitUntilLoaded();
+            require(screen.viewerPushes() == (std::getenv("MATTER_RL_TEST_LIMPO") == nullptr),
+                "a caixa Empurroes deveria seguir marcada no exercicio novo");
+            std::cout << "empurroes no exercicio novo (" << other << "): " << (screen.viewerPushes() ? "marcada" : "desmarcada") << '\n';
+        }
         std::filesystem::create_directories(out);
         const int frames = static_cast<int>(std::strtof(fire, nullptr) / 0.2f);
         for (int k = 1; k <= frames; ++k) {
