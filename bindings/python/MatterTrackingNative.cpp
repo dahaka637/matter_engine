@@ -346,11 +346,13 @@ NB_MODULE(matter_tracking_native, m) {
                 float weightFraction, float runFraction, float sprintFraction, float locomotionClipFraction,
                 float locomotionSeconds, bool locomotionTermination,
                 int evaluationBand, float speedRampPower, float imitationWeight, const std::string& onlyClip, float clipBlend,
-                bool protectiveFall, bool getUpGuide, float getUpSeconds, float rollBlend, std::array<float, 6> scenery, float avoidSceneryFraction, bool evaluationScenery, bool separateSkills, float trackingTermination, bool locomotionResidual, bool taughtHeadings, bool balanceObservation, bool stepChannels, bool idleAnchorObservation) {
+                bool protectiveFall, bool getUpGuide, float getUpSeconds, float rollBlend, std::array<float, 6> scenery, float avoidSceneryFraction, bool evaluationScenery, bool separateSkills, float trackingTermination, bool locomotionResidual, bool taughtHeadings, bool balanceObservation, bool stepChannels, bool idleAnchorObservation, bool clipVariantObservation, bool fireObservation) {
                 TrackingGetUpAmpSettings3D settings;
+                settings.clipVariantObservation = clipVariantObservation;
                 settings.balanceObservation = balanceObservation;
                 settings.stepChannels = stepChannels;
                 settings.idleAnchorObservation = idleAnchorObservation;
+                settings.fireObservation = fireObservation;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
                 settings.threads = threads;
@@ -445,7 +447,7 @@ NB_MODULE(matter_tracking_native, m) {
             "locomotion_termination"_a = false,
             "evaluation_band"_a = -1, "speed_ramp_power"_a = 0.5f, "imitation_weight"_a = 0.0f, "only_clip"_a = std::string(), "clip_blend"_a = 1.0f,
             "protective_fall"_a = false, "get_up_guide"_a = false, "get_up_seconds"_a = 1.7f, "roll_blend"_a = 1.0f,
-            "scenery"_a = std::array<float, 6> { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, "avoid_scenery_fraction"_a = 0.0f, "evaluation_scenery"_a = false, "separate_skills"_a = false, "tracking_termination"_a = 0.0f, "locomotion_residual"_a = false, "taught_headings"_a = false, "balance_observation"_a = false, "step_channels"_a = false, "idle_anchor_observation"_a = false)
+            "scenery"_a = std::array<float, 6> { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, "avoid_scenery_fraction"_a = 0.0f, "evaluation_scenery"_a = false, "separate_skills"_a = false, "tracking_termination"_a = 0.0f, "locomotion_residual"_a = false, "taught_headings"_a = false, "balance_observation"_a = false, "step_channels"_a = false, "idle_anchor_observation"_a = false, "clip_variant_observation"_a = false, "fire_observation"_a = false)
         .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
         // As quedas da locomocao (01/11): [n, links, 13] - a posicao, a orientacao (xyzw) e as velocidades linear e
         // angular de cada link no instante da queda (take_fall_states do lote da locomocao).
@@ -590,6 +592,18 @@ NB_MODULE(matter_tracking_native, m) {
         .def("set_idle_unified", &TrackingGetUpAmpTraining3D::setIdleUnified, "on"_a)
         .def("set_stop_to_idle", &TrackingGetUpAmpTraining3D::setStopToIdle, "on"_a)
         .def("set_idle_after_stop", &TrackingGetUpAmpTraining3D::setIdleAfterStop, "on"_a)
+        .def("set_parked_on_locomotion", &TrackingGetUpAmpTraining3D::setParkedOnLocomotion, "on"_a)
+        .def("set_locomotion_fire", &TrackingGetUpAmpTraining3D::setLocomotionFire, "share"_a, "levels"_a, "relief"_a)
+        .def("set_locomotion_fire_gaps", &TrackingGetUpAmpTraining3D::setLocomotionFireGaps, "scale"_a)
+        .def("set_crooked_no_fire", &TrackingGetUpAmpTraining3D::setCrookedNoFire, "on"_a)
+        .def("set_crooked_fix_span", &TrackingGetUpAmpTraining3D::setCrookedFixSpan, "seconds"_a)
+        .def("set_locomotion_fire_exam", &TrackingGetUpAmpTraining3D::setLocomotionFireExam, "on"_a, "level"_a)
+        .def("set_crooked_start", &TrackingGetUpAmpTraining3D::setCrookedStart, "share"_a, "bonus"_a, "close"_a)
+        .def("set_command_get_up", &TrackingGetUpAmpTraining3D::setCommandGetUp, "on"_a, "run_share"_a = 0.5f)
+        .def("set_run_handoff_at_stand", &TrackingGetUpAmpTraining3D::setRunHandoffAtStand, "on"_a, "after_seconds"_a)
+        .def("set_get_up_go", &TrackingGetUpAmpTraining3D::setGetUpGo, "share"_a, "min_meters"_a, "max_meters"_a)
+        .def("set_star_rework", &TrackingGetUpAmpTraining3D::setStarRework, "path_weight"_a, "path_width"_a, "curve_share"_a, "curve_min"_a,
+             "curve_max"_a)
         .def("set_turn_variety", &TrackingGetUpAmpTraining3D::setTurnVariety, "on"_a, "spine_reward"_a)
         .def("set_still_cost", &TrackingGetUpAmpTraining3D::setStillCost, "weight"_a)
         .def("set_idle_static", &TrackingGetUpAmpTraining3D::setIdleStatic, "on"_a)
@@ -770,6 +784,45 @@ NB_MODULE(matter_tracking_native, m) {
             [](TrackingGetUpAmpTraining3D& b, const std::vector<std::string>& clips) { return b.addStyleClips(clips); },
             "clips"_a)
         .def("set_lying_starts", &TrackingGetUpAmpTraining3D::setLyingStarts, "stand_clips"_a, "run_clips"_a)
+        .def("set_clip_get_up", &TrackingGetUpAmpTraining3D::setClipGetUp, "clips"_a, "fraction"_a, "mid_start_fraction"_a,
+            "after_seconds"_a, "start_noise"_a, "softness"_a, "com_velocity_width"_a)
+        .def("clip_get_up_ends", &TrackingGetUpAmpTraining3D::clipGetUpEnds)
+        .def("set_clip_get_up_weights", &TrackingGetUpAmpTraining3D::setClipGetUpWeights, "weights"_a)
+        .def("clip_get_up_probe", &TrackingGetUpAmpTraining3D::clipGetUpProbe, "exercise"_a, "reference_time"_a, "body_time"_a,
+            "lift"_a = 0.0f, "vertical_speed"_a = 0.0f, "twist"_a = 0.0f, "pitch"_a = 0.0f, "legs"_a = 0.0f, "travel_scale"_a = 1.0f,
+            "speed_scale"_a = 1.0f, "arm_offset"_a = 0.0f)
+        .def("set_clip_get_up_parts", &TrackingGetUpAmpTraining3D::setClipGetUpParts, "on"_a)
+        .def("set_clip_get_up_variants", &TrackingGetUpAmpTraining3D::setClipGetUpVariants, "variants"_a)
+        .def("set_clip_get_up_deliver", &TrackingGetUpAmpTraining3D::setClipGetUpDeliver, "seconds"_a)
+        .def("set_clip_get_up_emphasis", &TrackingGetUpAmpTraining3D::setClipGetUpEmphasis, "emphasis"_a)
+        .def("set_clip_get_up_agility", &TrackingGetUpAmpTraining3D::setClipGetUpAgility, "agility"_a)
+        .def("set_clip_get_up_adaptive", &TrackingGetUpAmpTraining3D::setClipGetUpAdaptive, "on"_a)
+        .def("set_adaptive_speed_bonus", &TrackingGetUpAmpTraining3D::setAdaptiveSpeedBonus, "bonus"_a)
+        .def("set_adaptive_timing", &TrackingGetUpAmpTraining3D::setAdaptiveTiming, "time_minimum"_a, "time_maximum"_a, "run_impulse"_a)
+        .def("set_adaptive_timing_run", &TrackingGetUpAmpTraining3D::setAdaptiveTimingRun, "time_minimum"_a, "time_maximum"_a)
+        .def("set_adaptive_time_fall", &TrackingGetUpAmpTraining3D::setAdaptiveTimeFall, "seconds"_a)
+        .def("set_adaptive_time_fire", &TrackingGetUpAmpTraining3D::setAdaptiveTimeFire, "slack"_a)
+        .def("set_get_up_form", &TrackingGetUpAmpTraining3D::setGetUpForm, "weight"_a)
+        .def("set_get_up_palm", &TrackingGetUpAmpTraining3D::setGetUpPalm, "weight"_a)
+        .def("set_idle_pelvis_level", &TrackingGetUpAmpTraining3D::setIdlePelvisLevel, "weight"_a)
+        .def("set_get_up_fire_release_at_firm", &TrackingGetUpAmpTraining3D::setGetUpFireReleaseAtFirm, "on"_a)
+        .def("get_up_form_table", &TrackingGetUpAmpTraining3D::getUpFormTable, "exercise"_a)
+        .def("get_up_form_now", &TrackingGetUpAmpTraining3D::getUpFormNow, "world"_a)
+        .def("set_settle_calm", &TrackingGetUpAmpTraining3D::setSettleCalm, "weight"_a)
+        .def("set_run_post_rise", &TrackingGetUpAmpTraining3D::setRunPostRise, "speed_reward"_a, "settle_seconds"_a)
+        .def("set_get_up_pose_variety", &TrackingGetUpAmpTraining3D::setGetUpPoseVariety, "fraction"_a)
+        .def("set_calm_handoff", &TrackingGetUpAmpTraining3D::setCalmHandoff, "calm_speed"_a, "max_seconds"_a, "max_seconds_run"_a)
+        .def("set_adaptive_settle", &TrackingGetUpAmpTraining3D::setAdaptiveSettle, "seconds"_a, "release"_a = 0.15f)
+        .def("set_adaptive_retry", &TrackingGetUpAmpTraining3D::setAdaptiveRetry, "on"_a)
+        .def("set_fire_run_headwind_cap", &TrackingGetUpAmpTraining3D::setFireRunHeadwindCap, "fraction"_a)
+        .def("set_get_up_arena", &TrackingGetUpAmpTraining3D::setGetUpArena, "minimum_meters"_a, "maximum_meters"_a)
+        .def("set_get_up_fire_early", &TrackingGetUpAmpTraining3D::setGetUpFireEarly, "share"_a, "window"_a)
+        .def("set_get_up_fire_extras", &TrackingGetUpAmpTraining3D::setGetUpFireExtras, "shove_series"_a, "leg_share"_a, "wall_share"_a,
+            "wall_minimum"_a, "wall_maximum"_a, "turn_share"_a, "turn_seconds"_a, "after_stand_share"_a = 0.0f, "slip_share"_a = 0.0f,
+            "grab_share"_a = 0.0f, "grab_fraction"_a = 0.3f, "series_gap_min"_a = 0.4f, "series_gap_max"_a = 1.2f,
+            "shove_seconds_min"_a = 0.1f, "shove_seconds_max"_a = 0.2f, "shove_newtons_min"_a = 0.0f, "shove_newtons_max"_a = 0.0f)
+        .def("set_get_up_fire", &TrackingGetUpAmpTraining3D::setGetUpFire, "shares"_a, "levels"_a, "exam"_a)
+        .def("set_clip_get_up_start_bias", &TrackingGetUpAmpTraining3D::setClipGetUpStartBias, "bias"_a)
         .def("set_moving_handoff", &TrackingGetUpAmpTraining3D::setMovingHandoff, "handoff"_a)
         // (07/11) O juiz com o Motion Matching: os bancos, a previsao, os quadros de cada grupo e as consultas por mundo.
         .def("build_motion_matching",
@@ -867,7 +920,18 @@ NB_MODULE(matter_tracking_native, m) {
                 // (05/11 23h: a 42, o pe cruzado na corrida - footCross.)
                 // (08/11: a 43 e a 44, as pernas e a fase da estrela; a 45, se caiu num empurrao ou ate 2 s depois dele.)
                 // (08/11 15h20: a 46, o erro da parada no fim - m; < 0 sem parada.)
-                constexpr std::size_t width = 47;
+                // (12/11 03h20: a 47 e a 48, no levantar pelo clipe, os segundos do clipe percorridos ate a entrega e o ponto dela.)
+                // (12/11 04h40, a fase de fogo do levantar: 49-56 o cenario, o momento, o rumo, a fracao, o tamanho, se foi ao chao,
+                // quando levantou firme e o instante do clipe do comeco.)
+                // (12/11 08h20: a 57, as tentativas do levantar adaptativo; 09h45: a 58, o tempo da ultima tentativa ate levantar.)
+                // (12/11 12h30: a 59, os bits das adversidades novas do fogo.)
+                // (12/11 16h30: 60-63, o fogo da locomocao - se teve, o nivel, as adversidades e a fracao seguindo a tarefa.)
+                // (12/11 17h: 64-65, o parado torto - se nasceu torto e quando reajustou.)
+                // (12/11 17h20: 66-67, a estrela - a distancia media ao caminho e as pernas em curva feitas.)
+                // (12/11 18h: 68-70, o comando ligado ao levantar - as quedas, os levantares de volta e o tempo medio deles.)
+                // (12/11 18h: 71, os levantares correndo de volta no comando.)
+                // (12/11 19h10: 72-75, o levantar e ir - 1 de pe, 2 correndo -, quando chegou ao ponto, a distancia dele e a que faltava no fim.)
+                constexpr std::size_t width = 76;
                 auto out = owned<float>({ episodes.size(), width });
                 float* d = out.data();
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
@@ -883,7 +947,10 @@ NB_MODULE(matter_tracking_native, m) {
                         e.travelError, static_cast<float>(e.endCause), e.meanImitation, e.meanStability,
                         static_cast<float>(e.recoverySteps), static_cast<float>(e.settleSteps), e.balanceDrill ? 1.0f : 0.0f,
                         static_cast<float>(e.pushes), e.worstCaptureOut, e.quietAgainSeconds, e.arrivalQuality, e.footCross,
-                        static_cast<float>(e.starLegs), static_cast<float>(e.starPhase), e.fellInPush ? 1.0f : 0.0f, e.stopError };
+                        static_cast<float>(e.starLegs), static_cast<float>(e.starPhase), e.fellInPush ? 1.0f : 0.0f, e.stopError,
+                        e.getUpCovered, e.getUpTarget, e.fireKind, e.fireTiming, e.fireDirection, e.fireFraction, e.fireSize,
+                        e.fireDown, e.upSeconds, e.clipStartSeconds, e.attempts, e.retrySeconds, e.fireExtras,
+                        e.locoFire, e.locoFireLevel, e.locoFireEvents, e.locoFireKeep, e.crooked, e.crookedFixedAt, e.starPathError, e.starCurves, e.commandFalls, e.commandRises, e.commandRiseSeconds, e.commandRunRises, e.getUpGo, e.goArrivedAt, e.goDistance, e.goLeft };
                     std::copy(row, row + width, d + i * width);
                 }
                 return out;

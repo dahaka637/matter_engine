@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <random>
+#include <string_view>
 #include <vector>
 
 namespace MatterEngine {
@@ -408,6 +409,10 @@ struct TrackingViewer3D::Impl {
             // (04/11 15h, os passos: o layout levantar-v7 - as entradas do equilibrio, os canais do passo - e o gerador, a
             // autoridade sob ameaca e a chegada do levantar como no treino; o equilibrio parado no nivel dele.)
             s.balanceObservation = s.stepChannels = s.balanceSteps = v2.value("equilibrio", false);
+            // (11/11 18h05: a variante do levantar pelo clipe na entrada, como no treino - o rolando com 1.)
+            s.clipVariantObservation = v2.value("levantar_unreal_variante", false);
+            // (12/11 06h40: as entradas do fogo, como no treino.)
+            s.fireObservation = v2.value("levantar_fogo_entrada", false);
             s.idleThroughPushes = v2.value("empurrao_idle", false);
             s.idleThreatReach = v2.value("idle_alcance_ameaca", 0.0f);
             s.avoidOnIdle = v2.value("evitar_idle", false);
@@ -532,6 +537,79 @@ struct TrackingViewer3D::Impl {
             {
                 getUp->setVelocityActions(velocityRun["v2"].value("acao_velocidade", false));
                 getUp->setRecoveryVelocity(velocityRun["v2"].value("levantar_velocidade", false));
+                // (11/11 14h: o levantar pelo clipe - os clipes e as opcoes do treino, LEVANTAR_UNREAL do levantar_amp.py.)
+                if (velocityRun["v2"].value("levantar_unreal", 0.0) > 0.0) {
+                    const nlohmann::json& v = velocityRun["v2"];
+                    const std::vector<std::string> clips { "levantar/levantar_costas", "levantar/levantar_brucos",
+                        "levantar/levantar_correndo_costas", "levantar/levantar_correndo_brucos", "levantar/levantar_costas_rolando" };
+                    getUp->addStyleClips(clips);
+                    getUp->setClipGetUp(clips, 0.0f, 0.0f, v.value("levantar_unreal_depois", 1.5f), 0.0f,
+                        v.value("levantar_unreal_largura", 2.0f), v.value("levantar_unreal_vel", 1.5f));
+                    getUp->setClipGetUpVariants({ 0.0f, 0.0f, 0.0f, 0.0f, 1.0f });
+                    getUp->setClipGetUpParts(v.value("levantar_unreal_partes", false));
+                    // (12/11 04h30, ele: "os levantares correndo estao terminando muito cedo": sem o relogio da agilidade do treino, a
+                    // rede - mais rapida que o clipe - ficava longe dele e o laboratorio encerrava aos 1,0-1,3 s.) Os pontos de entrega e
+                    // a agilidade do treino (levantar_unreal_entrega, levantar_unreal_agilidade: parado, correndo, rampa).
+                    if (v.contains("levantar_unreal_entrega") && v["levantar_unreal_entrega"].is_array()) {
+                        std::vector<float> deliver;
+                        for (const auto& x : v["levantar_unreal_entrega"]) deliver.push_back(x.get<float>());
+                        getUp->setClipGetUpDeliver(deliver);
+                    }
+                    if (v.contains("levantar_unreal_agilidade") && v["levantar_unreal_agilidade"].is_array()
+                        && v["levantar_unreal_agilidade"].size() >= 2) {
+                        const float stand = v["levantar_unreal_agilidade"][0].get<float>(), run = v["levantar_unreal_agilidade"][1].get<float>();
+                        getUp->setClipGetUpAgility({ stand, stand, run, run, 0.0f });
+                    }
+                    // (12/11 04h40, a fase de fogo do levantar: o levantar adaptativo e o fogo como no treino.)
+                    // (05h30, ele: "se eu marcar a checkbox Empurroes eu devo ver os treinos que ocorrem com os empurroes/pancadas (de
+                    // diferentes tipos que temos)... caso o checkbox do empurroes esteja desativo eu vejo so os cenarios limpos") Marcada:
+                    // so os cenarios com fogo - pancada, continuo, os dois e os de cima, nas fatias do treino - nos niveis de agora do
+                    // treino (a ultima linha do log com fogo_levantar; sem ela, os de partida); desmarcada: so os limpos.
+                    if (v.value("levantar_adaptativo", false)) getUp->setClipGetUpAdaptive(true);
+                    if (v.contains("levantar_fogo") && v["levantar_fogo"].is_array() && v["levantar_fogo"].size() == 4
+                        && v.contains("levantar_fogo_prova") && v["levantar_fogo_prova"].is_object()) {
+                        std::vector<float> shares;
+                        for (const auto& x : v["levantar_fogo"]) shares.push_back(x.get<float>());
+                        nlohmann::json current = v["levantar_fogo_prova"];
+                        {
+                            std::ifstream log(getUpDirectory / "log.jsonl", std::ios::binary | std::ios::ate);
+                            const std::streamoff size = log ? static_cast<std::streamoff>(log.tellg()) : 0;
+                            const std::streamoff from = std::max<std::streamoff>(0, size - 600000);
+                            std::string tail(static_cast<std::size_t>(size - from), '\0');
+                            if (log) {
+                                log.seekg(from);
+                                log.read(tail.data(), static_cast<std::streamsize>(tail.size()));
+                            }
+                            for (std::size_t end = tail.size(); end > 0;) {
+                                const std::size_t start = tail.rfind('\n', end - 1);
+                                const std::size_t begin = start == std::string::npos ? 0 : start + 1;
+                                const std::string_view line(tail.data() + begin, end - begin);
+                                if (line.find("\"fogo_levantar\"") != std::string_view::npos) {
+                                    const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
+                                    if (!row.is_discarded() && row.contains("fogo_levantar") && row["fogo_levantar"].is_object()) {
+                                        current = row["fogo_levantar"];
+                                        break;
+                                    }
+                                }
+                                if (start == std::string::npos) break;
+                                end = start;
+                            }
+                        }
+                        std::vector<float> levels;
+                        for (const char* key : { "lev_levantar_costas", "lev_levantar_brucos", "lev_levantar_correndo_costas",
+                                 "lev_levantar_correndo_brucos" }) {
+                            const nlohmann::json& level = current.value(key, nlohmann::json::array());
+                            for (std::size_t k = 0; k < 4; ++k) levels.push_back(k < level.size() ? level[k].get<float>() : 0.0f);
+                        }
+                        levels.insert(levels.end(), 4, 0.0f);
+                        const float above = v.value("levantar_fogo_de_cima", 0.0f);
+                        if (shares[1] + shares[2] + shares[3] > 0.0f)
+                            getUp->setGetUpFire(pushes ? std::vector<float> { 0.0f, shares[1], shares[2], shares[3], above }
+                                                       : std::vector<float> { 1.0f, 0.0f, 0.0f, 0.0f, 0.0f },
+                                levels, false);
+                    }
+                    getUp->reset(seed);
+                }
                 // (07/11: os comecos deitados do treino - os mesmos clipes de LYING_STAND e LYING_RUN do levantar_amp.py.)
                 if (velocityRun["v2"].value("deitado", false)) {
                     const std::vector<std::string> stand { "referencias_unreal/ragdoll_getup_stand_b", "referencias_unreal/ragdoll_getup_stand_f" };
@@ -982,7 +1060,11 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
         impl.assets = assetsDirectory;
         impl.seed = seed;
         impl.getUpDrill = drill;
-        impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == LyingBackDrill ? 9u : drill == LyingFrontDrill ? 10u
+        // (11/11 14h: com o levantar pelo clipe no treino, os quatro exercicios dele - as avaliacoes 11 a 14.)
+        const bool clipGetUp = clipGetUpRun(impl.getUpDirectory);
+        impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == LyingBackDrill ? (clipGetUp ? 11u : 9u)
+            : drill == LyingFrontDrill ? (clipGetUp ? 12u : 10u) : drill == RunGetUpBackDrill ? 13u : drill == RunGetUpFrontDrill ? 14u
+            : drill == RollGetUpDrill ? 15u
             : drill == AvoidFallDrill || isAvoidSceneryDrill(drill) ? 2u
             : drill == BalanceDrill                                                                     ? 3u
             : drill == EquilibriumDrill                                                                 ? 8u
@@ -1012,8 +1094,16 @@ bool TrackingViewer3D::isAvoidSceneryDrill(const std::string& drill) {
     return drill == AvoidSceneryDrill || std::find(ControlledAvoidDrills.begin(), ControlledAvoidDrills.end(), drill) != ControlledAvoidDrills.end();
 }
 
+bool TrackingViewer3D::clipGetUpRun(const std::filesystem::path& runDirectory) {
+    std::ifstream file(runDirectory / "run.json");
+    const nlohmann::json run = nlohmann::json::parse(file, nullptr, false);
+    return !run.is_discarded() && run.is_object() && run.contains("v2") && run["v2"].is_object()
+        && run["v2"].value("levantar_unreal", 0.0) > 0.0;
+}
+
 bool TrackingViewer3D::isGetUpDrill(const std::string& drill) {
-    return drill == GetUpDrill || drill == MovingGetUpDrill || drill == LyingBackDrill || drill == LyingFrontDrill || drill == AvoidFallDrill || drill == BalanceDrill || drill == EquilibriumDrill
+    return drill == GetUpDrill || drill == MovingGetUpDrill || drill == LyingBackDrill || drill == LyingFrontDrill
+        || drill == RunGetUpBackDrill || drill == RunGetUpFrontDrill || drill == RollGetUpDrill || drill == AvoidFallDrill || drill == BalanceDrill || drill == EquilibriumDrill
         || drill == LocomotionFallDrill || drill == SceneryDrill || drill == AvoidSceneryDrill || sceneryPresetOf(drill) >= 0 || isLocomotionDrill(drill);
 }
 
@@ -1205,7 +1295,9 @@ void TrackingViewer3D::step() {
         impl.getUp->step(impl.getUpAction, impl.rewards, impl.terminated, impl.truncated);
         for (const TrackingGetUpAmpEpisode3D& episode : impl.getUp->takeEpisodes()) {
             ++impl.getUpFalls;
-            const bool good = impl.getUpKind == 1 ? episode.reachedSeconds >= 0.0f
+            // (O levantar pelo clipe: a troca no fim do clipe e de pe com a locomocao depois.)
+            const bool good = impl.getUpKind >= 11 ? episode.handoffSeconds >= 0.0f && !episode.partnerFell
+                : impl.getUpKind == 1 ? episode.reachedSeconds >= 0.0f
                 : impl.getUpKind >= 2             ? !episode.fellAfterStanding
                                                   : episode.firstStandSeconds >= 0.0f;
             if (good) ++impl.getUpStood;
@@ -1328,7 +1420,33 @@ BodyWorldView3D TrackingViewer3D::view() const {
         // locomocao, o rumo pedido do corpo: a camera e o olho seguem ele, como nos exercicios do B21.)
         view.command.moveVelocity = world.moveVelocity;
         if (world.hasFace) view.command.faceHeading = world.faceYaw;
-        if (world.pushing && impl.chest < body.links.size()) {
+        if (world.clipGetUp && world.fireKind > 0) {
+            // (12/11 05h30) O fogo do levantar, desenhado a parte (ReinforcementLearningScreen) - sem a seta antiga do empurrao.
+            GetUpFireView3D& fire = view.fire;
+            fire.active = true;
+            fire.kind = world.fireKind;
+            fire.timing = world.fireTiming;
+            fire.direction = world.fireDirection;
+            fire.shoveLink = world.fireShoveLink;
+            fire.abovePitch = world.fireAbovePitch;
+            fire.fraction = world.fireFraction;
+            fire.size = world.fireSize;
+            fire.shoveSize = world.fireShoveSize;
+            fire.hold = world.fireHold;
+            fire.shoveForce = world.fireShoveForce;
+            fire.aim = world.fireAim;
+            fire.shoveAt = world.fireShoveAt;
+            fire.shoveSeconds = world.fireShoveSeconds;
+            fire.shoveDone = world.fireShoveDone;
+            fire.time = world.time;
+            fire.budget = world.fireBudget;
+            fire.upAt = world.upAt;
+            fire.deliveredAt = world.deliveredAt;
+            fire.downAt = world.downAt;
+            fire.weight = world.weight;
+            fire.levelHold = world.fireLevelHold;
+            fire.levelShove = world.fireLevelShove;
+        } else if (world.pushing && impl.chest < body.links.size()) {
             view.pushLink = static_cast<int>(impl.chest);
             view.pushForce = world.pushForce;
             view.pushFade = 1.0f;

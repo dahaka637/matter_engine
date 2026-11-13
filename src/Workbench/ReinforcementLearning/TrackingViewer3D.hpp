@@ -73,6 +73,14 @@ public:
     // avaliacoes 9 e 10 do treino; com o v2.deitado do run.json, o levantar em movimento tambem comeca deitado).
     static constexpr const char* LyingBackDrill = "levantar_costas";
     static constexpr const char* LyingFrontDrill = "levantar_brucos";
+    // (11/11 14h, o levantar pelo clipe - com o v2.levantar_unreal do run.json: de costas e de brucos sao os dois de cima, e os
+    // correndo estes; as avaliacoes 11 a 14 do treino.)
+    static constexpr const char* RunGetUpBackDrill = "levantar_correndo_costas";
+    static constexpr const char* RunGetUpFrontDrill = "levantar_correndo_brucos";
+    // (18h) O quinto: de costas rolando para brucos (o Kimodo), a avaliacao 15.
+    static constexpr const char* RollGetUpDrill = "levantar_costas_rolando";
+    // Se o treino da pasta tem o levantar pelo clipe (v2.levantar_unreal > 0).
+    [[nodiscard]] static bool clipGetUpRun(const std::filesystem::path& runDirectory);
     // O equilibrio parado (31/10 21h25): de pe, um empurrao com a regua do parado com empurrao forte do B21.
     static constexpr const char* BalanceDrill = "equilibrio_parado";
     // (04/11 15h, os passos de recuperacao) O equilibrio parado com empurroes, sem a mao, no nivel do curriculo do treino (a

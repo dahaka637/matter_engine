@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace MatterEngine {
@@ -128,6 +129,28 @@ void buildSelfCollisionFilter(JPH::RagdollSettings& settings,
     }
 }
 
+// O colisor do perfil na forma do Jolt (o principal e os extras).
+PhysicsShape3D toShape(const RagdollCapsuleDefinition3D& source) {
+    PhysicsShape3D collider;
+    collider.type = source.shape == RagdollColliderShape3D::Box ? PhysicsShapeType3D::Box
+        : source.shape == RagdollColliderShape3D::ConvexHull     ? PhysicsShapeType3D::ConvexHull
+                                                                 : PhysicsShapeType3D::Capsule;
+    collider.halfExtents = source.boxHalfExtents;
+    collider.hullPoints = source.hullPoints;
+    collider.convexRadius = source.convexRadiusMeters;
+    collider.radius = source.radiusMeters;
+    // Conica: a tampa +X do perfil vira a +Y do Jolt (a rotacao abaixo).
+    collider.capsuleTopRadius = source.radiusAtPositiveXMeters;
+    collider.capsuleHalfHeight = std::max(0.001f, ragdollCapsuleHalfSegment3D(source));
+    collider.localPosition = source.localPosition;
+    collider.localOrientation = source.localOrientation;
+    // Ragdoll assets use longitudinal X, unlike the general PhysicsShape capsule (Y).
+    if (collider.type == PhysicsShapeType3D::Capsule)
+        collider.localOrientation = collider.localOrientation * Quaternion::fromAxisAngle({0,0,1}, -JPH::JPH_PI * 0.5f);
+    collider.materialId = source.materialId;
+    return collider;
+}
+
 } // namespace
 
 RagdollHandle3D PhysicsScene3D::createRagdoll(const RagdollProfile3D& profile, const RagdollSpawnDefinition3D& spawn) {
@@ -162,24 +185,42 @@ RagdollHandle3D PhysicsScene3D::createRagdoll(const RagdollProfile3D& profile, c
     for (std::size_t i = 0; i < profile.links.size(); ++i) {
         const auto& link = profile.links[i];
         settings.mSkeleton->AddJoint(link.id.c_str(), link.parentIndex);
-        PhysicsShape3D collider;
-        collider.type = link.collider.shape == RagdollColliderShape3D::Box ? PhysicsShapeType3D::Box
-            : link.collider.shape == RagdollColliderShape3D::ConvexHull     ? PhysicsShapeType3D::ConvexHull
-                                                                            : PhysicsShapeType3D::Capsule;
-        collider.halfExtents = link.collider.boxHalfExtents;
-        collider.hullPoints = link.collider.hullPoints;
-        collider.convexRadius = link.collider.convexRadiusMeters;
-        collider.radius = link.collider.radiusMeters;
-        // Conica: a tampa +X do perfil vira a +Y do Jolt (a rotacao abaixo).
-        collider.capsuleTopRadius = link.collider.radiusAtPositiveXMeters;
-        collider.capsuleHalfHeight = std::max(0.001f, ragdollCapsuleHalfSegment3D(link.collider));
-        collider.localPosition = link.collider.localPosition;
-        collider.localOrientation = link.collider.localOrientation;
-        // Ragdoll assets use longitudinal X, unlike the general PhysicsShape capsule (Y).
-        if (collider.type == PhysicsShapeType3D::Capsule)
-            collider.localOrientation = collider.localOrientation * Quaternion::fromAxisAngle({0,0,1}, -JPH::JPH_PI * 0.5f);
-        collider.materialId = link.collider.materialId;
-        auto shape = createJoltShape(collider, false);
+        const PhysicsShape3D collider = toShape(link.collider);
+        // Os colisores a mais do link (a mao: a palma no principal, os dedos aqui) formam um composto com o principal; sem eles, a
+        // forma de sempre. Presos a ossos (os dedos que acompanham a pose da mao), o composto e o que muda: cada parte fica na pose
+        // de repouso dos ossos ate setRagdollBoneRotations.
+        JPH::RefConst<JPH::Shape> shape;
+        const bool posable = std::any_of(link.extraColliders.begin(), link.extraColliders.end(),
+            [](const RagdollCapsuleDefinition3D& extra) { return extra.bone >= 0; });
+        if (!posable) {
+            std::vector<PhysicsShape3D> shapes { collider };
+            for (const RagdollCapsuleDefinition3D& extra : link.extraColliders) shapes.push_back(toShape(extra));
+            shape = createJoltBodyShape(shapes, false);
+        } else {
+            JPH::MutableCompoundShapeSettings compound;
+            const auto addPart = [&](const PhysicsShape3D& placed) {
+                PhysicsShape3D raw = placed;
+                raw.localPosition = {};
+                raw.localOrientation = {};
+                compound.AddShape(toJolt(placed.localPosition), toJolt(placed.localOrientation.normalized()),
+                    createJoltShape(raw, false).GetPtr());
+                return static_cast<std::uint32_t>(compound.mSubShapes.size() - 1);
+            };
+            Impl::RagdollRecord::PosableShape posed;
+            posed.link = static_cast<std::uint32_t>(i);
+            for (const RagdollPosableBone3D& bone : link.posableBones) posed.rotations.push_back(bone.restRotation);
+            const std::vector<RagdollBoneFrame3D> frames = ragdollPosableBoneFrames3D(link);
+            (void)addPart(collider);
+            for (std::size_t k = 0; k < link.extraColliders.size(); ++k) {
+                const std::uint32_t part = addPart(toShape(ragdollExtraColliderInLink3D(link, k, frames)));
+                if (link.extraColliders[k].bone >= 0) posed.parts.emplace_back(part, static_cast<std::uint32_t>(k));
+            }
+            auto result = compound.Create();
+            if (result.HasError()) throw std::runtime_error(result.GetError().c_str());
+            shape = result.Get();
+            posed.compound = static_cast<JPH::MutableCompoundShape*>(const_cast<JPH::Shape*>(shape.GetPtr()));
+            record->posableShapes.push_back(std::move(posed));
+        }
         const auto comOffset = toJolt(link.centerOfMassLocal) - shape->GetCenterOfMass();
         if (!comOffset.IsNearZero()) {
             auto result = JPH::OffsetCenterOfMassShapeSettings(comOffset, shape).Create();
@@ -301,4 +342,37 @@ void PhysicsScene3D::resetRagdollState(RagdollHandle3D h, std::span<const Physic
     r->externalForceMagnitude = 0.0f;
     m_impl->publishRagdoll(*r);
 }
+void PhysicsScene3D::setRagdollBoneRotations(RagdollHandle3D h, std::span<const std::string> names,
+    std::span<const Quaternion> rotations) {
+    auto* r = m_impl->ragdoll(h);
+    if (!r || r->posableShapes.empty() || names.size() != rotations.size()) return;
+    auto& bodies = m_impl->system->GetBodyInterface();
+    for (Impl::RagdollRecord::PosableShape& posed : r->posableShapes) {
+        const RagdollLinkDefinition3D& link = r->profile.links[posed.link];
+        bool changed = false;
+        for (std::size_t b = 0; b < link.posableBones.size(); ++b)
+            for (std::size_t k = 0; k < names.size(); ++k) {
+                const Quaternion& given = rotations[k];
+                if (names[k] != link.posableBones[b].name
+                    || !(std::isfinite(given.x) && std::isfinite(given.y) && std::isfinite(given.z) && std::isfinite(given.w)))
+                    continue;
+                const Quaternion q = given.normalized();
+                const Quaternion& was = posed.rotations[b];
+                if (std::abs(q.x - was.x) + std::abs(q.y - was.y) + std::abs(q.z - was.z) + std::abs(q.w - was.w) < 1e-6f) continue;
+                posed.rotations[b] = q;
+                changed = true;
+            }
+        if (!changed) continue;
+        const std::vector<RagdollBoneFrame3D> frames = ragdollPosableBoneFrames3D(link, posed.rotations);
+        const JPH::BodyID id = r->links[posed.link];
+        const JPH::Vec3 centerOfMass = bodies.GetShape(id)->GetCenterOfMass();
+        for (const auto& [part, extra] : posed.parts) {
+            const PhysicsShape3D placed = toShape(ragdollExtraColliderInLink3D(link, extra, frames));
+            posed.compound->ModifyShape(part, toJolt(placed.localPosition), toJolt(placed.localOrientation.normalized()));
+        }
+        // O centro de massa do composto nao muda (sem AdjustCenterOfMass): so as caixas do broadphase.
+        bodies.NotifyShapeChanged(id, centerOfMass, false, JPH::EActivation::DontActivate);
+    }
+}
+
 } // namespace MatterEngine

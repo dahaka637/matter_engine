@@ -126,6 +126,18 @@ struct InspectionArrow {
     float lineWidthPixels = 0.0f;
 };
 
+// (12/11 05h30, o fogo do levantar no laboratorio - ele: "um visual muito mais bonito... de onde vem a pancada/empurrao, a forca,
+// direcao") Um feixe de forca em qualquer direcao (de cima inclusive): a faixa virada para a camera - le-se de qualquer lado -, com o
+// brilho largo e fraco (glow 0 sem), o miolo e a ponta (head). width e a largura do miolo (m).
+struct InspectionBeam {
+    Vec3 from;
+    Vec3 to;
+    Color color = rgb(250, 185, 60);
+    float width = 0.05f;
+    float glow = 1.0f;
+    bool head = true;
+};
+
 // Os alvos de uma sequencia (o de agora e os proximos, em ordem): o de agora
 // cheio, os seguintes cada vez mais fracos e baixos, ligados por um traco fino
 // de aro a aro com a ponta no que vem depois. Os ja alcancados (o mais novo
@@ -164,6 +176,7 @@ struct InspectionScene {
     std::span<const Highlight> highlights;
     std::span<const InspectionMarker> markers;
     std::span<const InspectionArrow> arrows;
+    std::span<const InspectionBeam> beams;
     std::span<const InspectionEye> eyes;
     std::span<const InspectionWires> wires;
     // Os grupos do sombreamento liso da malha, se ja feitos (na quina do

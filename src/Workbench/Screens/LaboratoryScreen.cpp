@@ -2000,6 +2000,15 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                 instance.visualRotations = instance.visualPose.update(character, visualInput);
                 if (instance.previousVisualRotations.size() != instance.visualRotations.size())
                     instance.previousVisualRotations = instance.visualRotations;
+                // (11/11) Os dedos da fisica acompanham a pose da mao (os colisores presos aos ossos dos dedos, posableBones):
+                // as mesmas rotacoes dos ossos visuais, pelo nome. Entre os passos (o desenho vem depois da simulacao).
+                if (m_physicsScene && m_physicsScene->contains(instance.physicsRagdoll)) {
+                    static thread_local std::vector<std::string> boneNames;
+                    boneNames.clear();
+                    for (const RagdollVisualBone3D& bone : character.visualBones) boneNames.push_back(bone.name);
+                    if (boneNames.size() == instance.visualRotations.size())
+                        m_physicsScene->setRagdollBoneRotations(instance.physicsRagdoll, boneNames, instance.visualRotations);
+                }
             }
             instance.skinMatrices=buildRagdollSkinMatrices3D(character,positions,orientations,
                 instance.visualRotations);

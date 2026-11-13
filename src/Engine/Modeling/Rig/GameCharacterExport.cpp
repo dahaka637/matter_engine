@@ -819,6 +819,12 @@ bool exportGameCharacter(const LoadedPlayerModel& loaded, const std::filesystem:
             if (entry.at("id").get<std::string>() != profile.links[i].id) throw std::runtime_error("o perfil fora da ordem dos links");
             entry["position"] = vector3(linkPosition[i] + lift);
             if (profile.links[i].parentIndex >= 0) entry.at("joint")["anchor"] = vector3(anchor[i] + lift);
+            // (11/11) Os links com colisores a mais (a mao: a palma, o polegar e os dedos ajustados a malha por
+            // tools/fisica/colisores_mao.py) ficam como estao - a forma deles nao sai da medida daqui; reajustar com a ferramenta.
+            if (entry.contains("extraColliders")) {
+                report.lines.push_back(profile.links[i].id + ": colisores mantidos (extraColliders; reajuste: tools/fisica/colisores_mao.py)");
+                continue;
+            }
             const Collider& c = colliders[i];
             const Quaternion linkInverse = profile.links[i].modelOrientation.normalized().conjugate();
             if (c.hull && !entry.contains("hull")) {

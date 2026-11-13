@@ -574,6 +574,7 @@ if(MATTERENGINE_BUILD_RL)
         src/Engine/Tracking/TrackingClipReference3D.cpp
         src/Engine/Tracking/TrackingBasePosture3D.cpp
         src/Engine/Tracking/TrackingGetUp3D.cpp
+        src/Engine/Tracking/TrackingClipGetUp3D.cpp
         src/Engine/Tracking/TrackingGetUpTraining3D.cpp
         src/Engine/Tracking/TrackingGetUpAmp3D.cpp
         src/Engine/Tracking/TrackingGetUpAmpTraining3D.cpp
@@ -1086,6 +1087,10 @@ if(MATTERENGINE_BUILD_TESTS)
     target_link_libraries(MatterRagdollJointCouplingTests PRIVATE MatterPhysics)
     target_compile_definitions(MatterRagdollJointCouplingTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.RagdollJointCoupling COMMAND MatterRagdollJointCouplingTests)
+    add_executable(MatterRagdollExtraCollidersTests tests/Physics/RagdollExtraCollidersTests.cpp)
+    target_link_libraries(MatterRagdollExtraCollidersTests PRIVATE MatterPhysics)
+    target_compile_definitions(MatterRagdollExtraCollidersTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.RagdollExtraColliders COMMAND MatterRagdollExtraCollidersTests)
     target_link_libraries(MatterEngineTests PRIVATE MatterEngine)
     target_compile_definitions(MatterEngineTests PRIVATE
         MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")

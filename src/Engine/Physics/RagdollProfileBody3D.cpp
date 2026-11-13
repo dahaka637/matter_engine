@@ -222,6 +222,20 @@ RagdollProfile3D bodyRagdollProfile3D(const RagdollProfile3D& base, const Player
             for (Vec3& point : collider.hullPoints) point = point * s;
             prepareRagdollConvexHull3D(collider);
         }
+        // Os colisores a mais (a mao: o polegar e os dedos) e os ossos que os movem so com a escala do corpo (a mao nao tem
+        // grossura propria).
+        for (RagdollPosableBone3D& bone : link.posableBones) bone.localPosition = bone.localPosition * s;
+        for (RagdollCapsuleDefinition3D& extra : link.extraColliders) {
+            extra.localPosition = extra.localPosition * s;
+            extra.radiusMeters *= s;
+            if (extra.radiusAtPositiveXMeters > 0.0f) extra.radiusAtPositiveXMeters *= s;
+            extra.lengthMeters *= s;
+            extra.boxHalfExtents = extra.boxHalfExtents * s;
+            if (extra.shape == RagdollColliderShape3D::ConvexHull) {
+                for (Vec3& point : extra.hullPoints) point = point * s;
+                prepareRagdollConvexHull3D(extra);
+            }
+        }
         // A massa e os motores (a carga).
         link.massFraction = mass[i] / total;
         for (RagdollAxisDefinition3D& axis : link.inboundJoint.axes) {

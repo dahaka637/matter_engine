@@ -57,7 +57,9 @@ TRACKING_TERMS = ("nota", "pelve", "pernas", "tronco", "bracos", "pes", "velocid
                   # (08/11 23h55) O portao da velocidade da nota andando (0: a nota andando nao foi calculada).
                   "portao_velocidade",
                   # (09/11 01h20) O joelho para dentro da linha quadril-tornozelo alem do clipe (m).
-                  "joelho_dentro")
+                  "joelho_dentro",
+                  # (12/11 16h30) A liberdade sob o fogo da locomocao (0-1; ver --locomocao-fogo-liberdade).
+                  "fogo_liberdade")
 # Os rumos da locomocao (31/10 22h35, os basicos do B21) por exercicio: o rumo pedido (0 a frente, de 45 em 45 graus
 # para a esquerda) - as diagonais com os dois lados, como no B21.
 HEADINGS = {"frente": (0,), "diagonal_frente": (1, 7), "esquerda": (2,), "diagonal_costas": (3, 5), "tras": (4,),
@@ -531,6 +533,329 @@ UNREAL_KEEP_RECOVERY = ()
 # os comecos deitados, o quadro 0 destas levantadas (de costas primeiro, de brucos depois: a ordem das avaliacoes 9 e 10).
 LYING_STAND = [f"{UNREAL_FOLDER}/ragdoll_getup_stand_b", f"{UNREAL_FOLDER}/ragdoll_getup_stand_f"]
 LYING_RUN = [f"{UNREAL_FOLDER}/ragdoll_getup_run_{side}" for side in ("b", "f", "l", "r")]
+# (11/11 14h, ele: "Zerar absolutamente o brain do levantar-se... Serao 4 exercicios: levantar de costas, de brucos e o levantar
+# correndo de costas, de brucos... Todos os levantares serao pelos clipes do unreal engine"; 13h45: o correndo "apenas ate a parte
+# que ele fica de pe") O levantar pelo clipe (--levantar-unreal; o comeco 9 do C++, TrackingClipGetUp3D): os quatro clipes da Unreal
+# com o chao corrigido para o nosso corpo e cortados de pe (build-profile/tmp/levantar_unreal_auditoria/corrigir_rapido.py; vault
+# 04_locomocao/plano_levantar_unreal_11_11.md), na ordem dos exercicios 0 a 3 (as avaliacoes 11 a 14).
+# (11/11 18h, ele: "mais um exercicio... de levantar de costas em que ele rola para ficar de brucos, ensinando esse ato de rolar" e
+# "se nao me engano NAO e pelo do unreal esse rolar.. foi feito no kimodo": o quinto, o stand_up_back_kimodo - o "Levantar de costas"
+# do visualizador dele -, reretargeteado do BVH com o pulso anatomico e o chao corrigido.)
+# (12/11 02h50, ele: "o levantar de costas rolando nao vai funcionar bem.. ele ja esta todo torto e ferrado.. tira ele dos treinos")
+# O rolando saiu (era o ultimo: os indices dos quatro ficam); o clipe, a variante e o rolamento livre seguem no codigo, parados.
+LEVANTAR_UNREAL = [f"levantar/{name}" for name in ("levantar_costas", "levantar_brucos", "levantar_correndo_costas",
+                                                     "levantar_correndo_brucos")]
+LEVANTAR_UNREAL_KEYS = ("lev_levantar_costas", "lev_levantar_brucos", "lev_levantar_correndo_costas", "lev_levantar_correndo_brucos")
+LEVANTAR_UNREAL_PREFIXES = ("lu_costas_", "lu_brucos_", "lu_correndo_costas_", "lu_correndo_brucos_")
+# (18h05, ele: o rolando "parece estar imitando o levantar de costas normal") A entrada levantar.variante de cada exercicio
+# (--levantar-unreal-variante): 1 no rolando, 0 nos outros - os dois de costas comecam iguais e sem ela a rede nao sabia qual fazer.
+LEVANTAR_UNREAL_VARIANTS = (0.0, 0.0, 0.0, 0.0)
+# (18h22) O vies dos comecos no meio do clipe (o expoente): no rolando, metade antes de ~0,8 s - onde ele rola.
+LEVANTAR_UNREAL_START_BIAS = (1.0, 1.0, 1.0, 1.0)
+# (12/11 00h35) O ponto de entrega de cada exercicio (s do clipe; 0: no fim dele). O correndo no clipe longo (1,90 e 1,80 s,
+# levantar_v2/) com a entrega no corte dele (1,70 e 1,57 s, a pose da imagem dele): a estatistica conta ali e o clipe segue - desde
+# que o episodio acabava na troca, a pose do fim tinha se perdido (de 1,4 a 1,75 s, de 9-16 cm a 24-47 cm).
+# (12/11 04h05) Os de pe tambem entregam ao ficar de pe - a cabeca do clipe a 95% da final (costas 2,00 s, quadro 60; brucos 2,20 s,
+# quadro 66), nao no fim do clipe: de 2,0 a 2,5 s (costas) e de 1,75 a 2,5 s (brucos) o clipe so assenta, o relogio da agilidade
+# passava ali a 1,00x (medido r85750) e o tempo para levantar nunca chegaria aos 1,6 s dele. So a contagem: a troca segue no fim.
+LEVANTAR_UNREAL_DELIVER = (60 / 30, 66 / 30, 51 / 30, 47 / 30)
+# (12/11 03h20) Quais dos quatro sao o levantar correndo (o peso da agilidade deles e o segundo de --levantar-unreal-agilidade).
+LEVANTAR_UNREAL_RUN = (False, False, True, True)
+
+
+def clip_get_up_agility(args, counters: dict | None, full: bool = False) -> list:
+    """(12/11 03h20, ele: "recompensar a velocidade e agilidade com que ele consegue levantar"; no correndo, "estimular extremamente
+    tambem o IMPULSO de arrancada") O peso da agilidade de cada exercicio (TrackingClipGetUp3D::AgilityMaxRate): de pe e correndo,
+    subindo de ~0 ao alvo em N atualizacoes desde a primeira com ela (o comeco nos contadores); full: o alvo (as avaliacoes, so o
+    relogio importa). O piso de 0,001 deixa o relogio que acompanha o corpo ligado desde o comeco da rampa; sem os contadores (a
+    montagem do lote, antes deles), o piso."""
+    stand, run, ramp = args.levantar_unreal_agilidade
+    if stand <= 0 and run <= 0:
+        return [0.0] * len(LEVANTAR_UNREAL_RUN)
+    frac = 1.0 if full else 0.0
+    if not full and counters is not None:
+        start = counters.setdefault("agilidade_inicio", counters["atualizacao"])
+        frac = min(1.0, (counters["atualizacao"] - start) / max(1.0, float(ramp)))
+    return [max(1e-3, (run if r else stand) * frac) if (run if r else stand) > 0 else 0.0 for r in LEVANTAR_UNREAL_RUN]
+
+
+# (12/11 04h40, ele: a fase de fogo do levantar - vault 04_locomocao/plano_fogo_do_levantar_12_11.md) Os quatro niveis de cada exercicio:
+# o continuo (fracao do peso) e as pancadas do comeco, do meio e do quase fim (m/s ao centro de massa); o teto fisico do continuo.
+FIRE_GETUP_TYPES = ("continuo", "pancada_comeco", "pancada_meio", "pancada_fim")
+FIRE_OBSERVATION_SIZE = 6  # (TrackingGetUpAmpTraining3D::FireObservationSize: a forca externa e a aceleracao, logo antes da habilidade)
+# (05h40, ele: "calibrar a forca adequadamente para garantir que derrube e impeca o levantar 100% das vezes": nos correndo a de 100% e
+# 0,55 do peso - o teto de 0,35 saiu.)
+# (12/11 09h00) O continuo abaixo do atrito do corpo deitado no concreto (dinamico 0,58, estatico 0,72 - MaterialLibrary makeConcrete):
+# com 0,83 do peso (o de costas, subido pela escada pelo levantou) o corpo deitado deslizava acelerando ~2,5 m/s2 e em ~6 s caia pela
+# borda do chao a 60 m - 54 dos 334 de costas deitados com fogo (r89300) acabaram a -27..-160 m.
+# (13h30, ele: "as pancadas... estao muito fortes (jogando o boneco de um lado para o outro)") As pancadas ate 2,5 m/s ao centro de massa
+# (um tranco forte no futebol; antes ate 9 - a faixa da fase 2 levou o de costas a 7,9).
+FIRE_GETUP_CAP = (0.55, 2.5, 2.5, 2.5)
+
+
+def get_up_fire_state(args, counters: dict) -> dict | None:
+    """O estado do fogo do levantar nos contadores (uma vez, do JSON de --levantar-fogo-niveis: os niveis de partida da F0, a forca em
+    que a rede falhava ~100% - a ideia dele): os niveis de agora, os da prova (os de partida, fixos) e desde quando cada um."""
+    if max(args.levantar_fogo) <= 0:
+        return None
+    state = counters.get("fogo_levantar")
+    if not args.levantar_fogo_niveis:
+        if state is None:
+            raise SystemExit("--levantar-fogo pede --levantar-fogo-niveis (o JSON da F0)")
+        return state
+    start = json.loads(Path(args.levantar_fogo_niveis).read_text())
+    # (05h40) Uma versao nova do JSON (a calibracao refeita) recomeca os niveis e a prova dele; a mesma versao segue o treino.
+    version = int(start.get("_versao", 1))
+    if state is None or int(state.get("versao", 1)) != version:
+        state = {"niveis": {k: [float(x) for x in start[k]] for k in LEVANTAR_UNREAL_KEYS},
+                 "prova": {k: [float(x) for x in start[k]] for k in LEVANTAR_UNREAL_KEYS},
+                 "desde": {k: [int(counters["atualizacao"])] * 4 for k in LEVANTAR_UNREAL_KEYS}, "versao": version}
+        counters["fogo_levantar"] = state
+        print(f"fogo do levantar: niveis da versao {version} do JSON", flush=True)
+    for key in LEVANTAR_UNREAL_KEYS:
+        for t in range(4):
+            if state["niveis"][key][t] > FIRE_GETUP_CAP[t]:
+                print(f"fogo do levantar: {key} {FIRE_GETUP_TYPES[t]} {state['niveis'][key][t]} -> {FIRE_GETUP_CAP[t]} (o teto)", flush=True)
+                state["niveis"][key][t] = FIRE_GETUP_CAP[t]
+    return state
+
+
+def fire_levels_flat(levels: dict) -> list:
+    return [float(x) for k in LEVANTAR_UNREAL_KEYS for x in levels[k]]
+
+
+FIRE_GETUP_FLOOR = (0.05, 0.3, 0.3, 0.3)
+FIRE_WINDOWS = [0]  # (12h55) as janelas do log desde que este processo comecou - a escada pula as duas primeiras
+
+
+def fire_extras(args) -> tuple:
+    """(12/11 12h30, a fase 2) Os argumentos de set_get_up_fire_extras: a serie, a rasteira, o prensado (fracao, min, max), o vento
+    (fracao, segundos) e a pancada de depois de ficar de pe."""
+    return (int(args.levantar_fogo_serie), float(args.levantar_fogo_rasteira), *[float(x) for x in args.levantar_fogo_prensado],
+            *[float(x) for x in args.levantar_fogo_vento], float(args.levantar_fogo_depois_de_pe), float(args.levantar_fogo_escorregadio),
+            *[float(x) for x in args.levantar_fogo_agarrao], *[float(x) for x in args.levantar_fogo_serie_intervalo],
+            *[float(x) for x in args.levantar_fogo_pancada_duracao], *[float(x) for x in args.levantar_fogo_pancada_newtons])
+FIRE_GETUP_MASTERED, FIRE_GETUP_STUCK = 0.90, 0.10
+
+
+def get_up_fire_step(state: dict, rows: np.ndarray, update: int, band: tuple | None = None, frozen: bool = False) -> list:
+    """(12/11 07h15, ele: "nossa meta e que ele consiga se levantar de forma dinamica e inteligente mediante adversidades 100% das vezes.
+    Depois disso, aumentamos um pouco mais as adversidades, e garantimos a adaptacao".) A escada do fogo do levantar, partindo dos niveis
+    da recalibracao de 10-30%: por exercicio, nas tentativas deitadas (a coluna 56) da faixa de cima (a fracao sorteada >= 0,8), o
+    continuo medido nos episodios so com ele e cada momento da pancada no combinado. Dominado (o levantou menos 1,5 erro-padrao >= 90%,
+    ~95% lido, com o ruido do treino) por >= 100 atualizacoes no nivel: sobe 10% (ate o teto). A guarda da adaptacao: travado (mais
+    1,5 erro-padrao < 10%) por >= 200 atualizacoes: desce 10% (ate o piso). >= 40 episodios na janela do log (20 atualizacoes)."""
+    changes = []
+    if not len(rows) or rows.shape[1] < 57:
+        return changes
+    for e, key in enumerate(LEVANTAR_UNREAL_KEYS):
+        sel = rows[(rows[:, 1] == 9) & (rows[:, 26] == e) & (rows[:, 56] <= 0.05)
+                   & (((rows[:, 59].astype(int) & 128) == 0) if rows.shape[1] >= 60 else True)]
+        if not len(sel):
+            continue
+        # (12/11 13h25, a guarda do limpo: na fase 2 o limpo do correndo de costas caiu de 100% a 5% em ~40 min - a rede desaprendeu o
+        # levantar soterrada pelas adversidades.) O limpo deitado (o cenario 0) abaixo de 90% em >= 10 episodios: as pancadas do
+        # exercicio descem 15% (>= 40 atualizacoes no nivel) e nada sobe; a forca so sobe com o limpo >= 95%.
+        clean = sel[sel[:, 49] == 0]
+        clean_rate = float((clean[:, 18] >= 0).mean()) if len(clean) >= 10 else 1.0
+        if clean_rate < 0.90:
+            for t in range(1, 4):
+                if update - state["desde"][key][t] >= 40:
+                    old = state["niveis"][key][t]
+                    new = round(max(FIRE_GETUP_FLOOR[t], old / 1.15), 4)
+                    if new != old:
+                        state["niveis"][key][t] = new
+                        state["desde"][key][t] = int(update)
+                        changes.append(f"{key} {FIRE_GETUP_TYPES[t]} {old} -> {new} (guarda do limpo: {clean_rate:.2f} em {len(clean)})")
+            continue
+        clean_ok = clean_rate >= 0.95 and not frozen
+        # (07h55: o dominio e levantar E continuar de pe - "firme", sem queda depois da entrega. Medido: so com o continuo o de costas
+        # levantava 99% e ficava firme 38% (inclinado contra 0,75 do peso, a forca sumindo); a escada subia pelo levantou.)
+        # (08h02: a guarda pelo levantou - travado e nao conseguir nem ficar de pe; com a janela de firmeza o firme comeca baixo de
+        # proposito e a guarda pelo firme baixava a forca enquanto ele aprendia a se firmar.)
+        kind, timing, top = sel[:, 49], sel[:, 50], sel[:, 52] >= 0.8
+        stood = sel[:, 18] >= 0
+        handed = stood & ~np.isin(sel[:, 32], (1, 2, 3, 4, 8))
+        for t in range(4):
+            m = top & ((kind == 2) if t == 0 else (((kind == 1) | (kind == 3)) & (timing == t)))
+            if m.sum() < 40:
+                continue
+            rate, old, held = float(handed[m].mean()), state["niveis"][key][t], update - state["desde"][key][t]
+            up = float(stood[m].mean())
+            # (Com ~55 episodios por momento da pancada, 20% de verdade le 10% ou 34%: so mexe com 1,5 erro-padrao de margem.)
+            margin = 1.5 * max(0.02, float(np.sqrt(rate * (1.0 - rate) / m.sum())))
+            up_margin = 1.5 * max(0.02, float(np.sqrt(up * (1.0 - up) / m.sum())))
+            if band is not None:
+                # (12/11 12h30, a fase 2 - ele: "as forcas e adversidades... para uma taxa de 30-50% de sucesso apenas") A calibracao: o
+                # levantou (a definicao dele) segurado na faixa, +-15% a cada >= 40 atualizacoes com 1,5 erro-padrao de margem.
+                if held < 40:
+                    continue
+                if up - up_margin > band[1] and clean_ok:
+                    new = round(min(FIRE_GETUP_CAP[t], old * 1.15), 4)
+                elif up + up_margin < band[0]:
+                    new = round(max(FIRE_GETUP_FLOOR[t], old / 1.15), 4)
+                else:
+                    continue
+            elif rate - margin >= FIRE_GETUP_MASTERED and held >= 100 and clean_ok:
+                new = round(min(FIRE_GETUP_CAP[t], old * 1.10), 4)
+            elif up + up_margin < FIRE_GETUP_STUCK and held >= 200:
+                new = round(max(FIRE_GETUP_FLOOR[t], old / 1.10), 4)
+            else:
+                continue
+            if new != old:
+                state["niveis"][key][t] = new
+                state["desde"][key][t] = int(update)
+                changes.append(f"{key} {FIRE_GETUP_TYPES[t]} {old} -> {new} ({handed[m].mean():.2f} em {int(m.sum())})")
+    return changes
+
+
+assert fire_levels_flat({k: [1, 2, 3, 4] for k in LEVANTAR_UNREAL_KEYS})[:5] == [1.0, 2.0, 3.0, 4.0, 1.0]
+
+
+def clip_get_up_summary(rows: np.ndarray, prefix: str = "") -> dict:
+    """(11/11 14h) O levantar pelo clipe (comeco 9) nas colunas dos episodios: 18 a troca no fim do clipe (s; < 0 sem ela), 19 caiu
+    na locomocao depois dela, 33 a nota media do clipe, 12 a velocidade do centro de massa na troca, 41 o voo de pe (s, os dois pes
+    no ar com a cabeca acima de 1,2 m), 32 o fim (8: longe do clipe)."""
+    if not len(rows) or rows.shape[1] < 42:
+        return {}
+    handed = rows[:, 18] >= 0
+    kept = handed & (rows[:, 19] < .5)
+    # (20h45: a coluna 33 e -1 sem nenhuma amostra rastreada - o rolando que acaba no rolamento livre sem virar -; a media com eles
+    # dava -0,45. A semelhanca e a dos episodios com o clipe seguido; quem nao chegou la aparece em levantou/entregou.)
+    tracked = rows[:, 33] >= 0
+    out = {"episodios": int(len(rows)), "levantou": float(handed.mean()), "entregou": float(kept.mean()),
+           "semelhanca": float(rows[tracked, 33].mean()) if tracked.any() else 0.0, "rastreados": float(tracked.mean()),
+           "longe": float((rows[:, 32] == 8).mean()), "voo_s": float(rows[:, 41].mean())}
+    if handed.any():
+        out.update(tempo_troca=float(rows[handed, 18].mean()), vel_troca=float(rows[handed, 12].mean()))
+    # (12/11 03h20, ele: "um novo dado e grafico de velocidade para levantar, dizendo quantos segundos demora") O tempo para levantar:
+    # o ponto da entrega (s do clipe) dividido pelo ritmo - os segundos do clipe percorridos (47) pelos reais (18), somados nos
+    # episodios que entregaram; nas avaliacoes (do quadro 0) e o tempo real ate a entrega. 48 o ponto da entrega.
+    if rows.shape[1] >= 49:
+        timed = handed & (rows[:, 47] > 0.05) & (rows[:, 18] > 0)
+        if timed.any():
+            pace = float(rows[timed, 47].sum() / rows[timed, 18].sum())
+            out.update(levantar_s=float(rows[timed, 48].mean() / max(1e-6, pace)), ritmo=pace)
+    # (12/11 04h30, ele: "os levantares correndo estao terminando muito cedo, antes dele engatar a postura ereta de corrida": desde as
+    # 00h35 nada depois da entrega contava como queda, e os correndo caiam 100% uns 0,6-1,2 s depois dela - medido nas capturas de 01h05,
+    # 01h42, 04h00 e 04h25 -, escondido.) "firme": entregou e o episodio nao acabou em queda depois (a corrida ereta engatada com a
+    # locomocao; de pe, firme ate o fim). O grafico "De pe com a locomocao depois da troca" (de_pe) volta a dizer isso.
+    firm = handed & ~np.isin(rows[:, 32], (1, 2, 3, 4, 8))  # (8: longe do clipe depois da entrega - o correndo que mergulha)
+    out["firme"] = float(firm.mean())
+    # (12/11 04h40, a fase de fogo do levantar - colunas 49-56) O levantou por cenario, a media deles com o mesmo peso ("sob fogo", o
+    # grafico dele: "a media de todos os cenarios de levantar daquele exercicio que conseguiram"), o recuperou depois de ir ao chao e, no
+    # levantar adaptativo, o tempo para levantar = quando ficou firme, nos limpos deitados do quadro 0.
+    if rows.shape[1] >= 57:
+        kind = rows[:, 49]
+        # (12/11 07h05: metade do treino comeca no meio do clipe, ja meio de pe - --levantar-unreal-meio 0,5 -, e inflava o "sob fogo" do
+        # treino a ~55% com a prova e a calibracao v4 deitadas em ~20%. As medidas do fogo sao das tentativas deitadas (a coluna 56, o
+        # comeco no clipe); o meio fica em sob_fogo_meio. Nas avaliacoes todas sao deitadas.)
+        lying_start = rows[:, 56] <= 0.05
+        # (14h30) O comeco em pose variada (bit 128) fica fora dos deitados - medido a parte em pose_variada.
+        varied = (rows[:, 59].astype(int) & 128) != 0 if rows.shape[1] >= 60 else np.zeros(len(rows), bool)
+        if varied.any():
+            out["pose_variada"] = float(handed[varied].mean())
+            out["pose_variada_firme"] = float(firm[varied].mean())
+            t = rows[varied & handed, 55]
+            if (t >= 0).any():
+                out["pose_variada_s"] = float(t[t >= 0].mean())
+        lying_start = lying_start & ~varied
+
+        def fire_mean(sel):
+            per = {name: float(handed[sel & (kind == c)].mean()) for c, name in enumerate(("limpo", "pancada", "continuo", "combinado"))
+                   if (sel & (kind == c)).any()}
+            fire = [v for k, v in per.items() if k != "limpo"]
+            return per, (float(np.mean(fire)) if fire else None)
+        per, under = fire_mean(lying_start)
+        out.update({f"fogo_{k}": v for k, v in per.items()})
+        # (06h50, ele: "que apenas 10-30% das tentativas sob fogo tenham sucesso": o "sob fogo" so dos cenarios com fogo - os limpos, que dao
+        # ~100%, ficam em fogo_limpo.)
+        if under is not None:
+            out["sob_fogo"] = under
+        under_mid = fire_mean(~lying_start)[1]
+        if under_mid is not None:
+            out["sob_fogo_meio"] = under_mid
+        # (12/11 07h50: a coluna 54 com o codigo do C++ - 1 foi ao chao e nao levantou depois, 2 foi ao chao e levantou depois, 3 levantou
+        # e foi ao chao depois. O "recuperou" contava os 2 e os 3: medido nas linhas do treino, a recuperacao de verdade era ~0% (1 em 139)
+        # e o resto, quem levantou e caiu depois.) O recuperou: dos que foram ao chao antes de levantar, os que levantaram depois.
+        code = rows[:, 54]
+        # (12/11 08h30, ele: "tentar se levantar novamente, APOS fracassar nas tentativas anteriores (nunca desistir)") Com a coluna 57 (as
+        # tentativas, settings.adaptiveRetry): o fracasso e a queda antes de levantar ou uma tentativa nova; o recuperou, quem levantou
+        # depois dele; tentou_de_novo, os episodios com fogo deitados que tiveram outra tentativa.
+        retried = rows[:, 57] > 1.5 if rows.shape[1] >= 58 else np.zeros(len(rows), bool)
+        first = lying_start & (np.isin(code, (1.0, 2.0)) | retried)
+        if first.any():
+            out["recuperou"] = float(((code[first] == 2.0) | (retried[first] & handed[first])).mean())
+            out["chao_n"] = int(first.sum())
+        if rows.shape[1] >= 58 and (lying_start & (kind != 0)).any():
+            out["tentou_de_novo"] = float(retried[lying_start & (kind != 0)].mean())
+        # (12/11 12h30, a fase 2) O levantou por adversidade nova (a coluna 59, bits); a pancada de depois de ficar de pe pelo firme.
+        if rows.shape[1] >= 60:
+            bits = rows[:, 59].astype(int)
+            for bit, name in ((1, "serie"), (2, "rasteira"), (4, "prensado"), (8, "vento"), (32, "escorregadio"), (64, "agarrao")):
+                sel = lying_start & ((bits & bit) != 0)
+                if sel.any():
+                    out[f"fogo_{name}"] = float(handed[sel].mean())
+            sel = lying_start & ((bits & 16) != 0)
+            if sel.any():
+                out["fogo_depois_de_pe"] = float(firm[sel].mean())
+        # (09h45) O tempo da ultima tentativa ate levantar (s), nos que levantaram numa tentativa nova.
+        if rows.shape[1] >= 59 and (lying_start & (rows[:, 58] >= 0)).any():
+            out["denovo_s"] = float(rows[lying_start & (rows[:, 58] >= 0), 58].mean())
+        # O firme dado que levantou (so a durabilidade depois da entrega - a janela de firmeza -, sem o efeito da nova tentativa).
+        fire_up = lying_start & (kind != 0) & handed
+        if fire_up.any():
+            out["firme_se_levantou"] = float(firm[fire_up].mean())
+        # O firme sob fogo: levantou e nao caiu depois (a media dos cenarios com fogo, como o sob fogo) - o de costas so com o continuo
+        # levantava 87% e caia depois 64%.
+        # (18h55, ele: o sucesso com as linhas do limpo e do fogo "ate os de levantar") O firme limpo: levantou e nao caiu depois, sem fogo.
+        if (lying_start & (kind == 0)).any():
+            out["firme_limpo"] = float(firm[lying_start & (kind == 0)].mean())
+        firm_fire = [float(firm[lying_start & (kind == c)].mean()) for c in (1, 2, 3) if (lying_start & (kind == c)).any()]
+        if firm_fire:
+            out["firme_sob_fogo"] = float(np.mean(firm_fire))
+        above = lying_start & (kind != 0) & (rows[:, 51] >= 8)  # (12/11 05h15: a forca de cima - o rumo + 8)
+        if above.any():
+            out["fogo_de_cima"] = float(handed[above].mean())
+        lying = (kind == 0) & lying_start & (rows[:, 55] >= 0)
+        if lying.any():
+            out["levantar_s"] = float(rows[lying, 55].mean())
+    out.update(de_pe=out["firme"], pose=out["semelhanca"], **({"tempo": out["tempo_troca"]} if "tempo_troca" in out else {}))
+    return {f"{prefix}{k}": v for k, v in out.items()}
+
+
+# (12/11 19h10, ele: o "levantar e ir" - "inicia caido, de costas ou brucos, e precisa levantar, haver a troca de brain para o da
+# locomocao e ele ir ate um ponto proximo... 5 - 10 metros") O prefixo da avaliacao dele.
+LEVANTAR_E_IR_PREFIX = "lu_ir_"
+
+
+def get_up_go_summary(rows: np.ndarray, prefix: str = "") -> dict:
+    """(12/11 19h10) O levantar e ir (comeco 11 no registro) nas colunas: 18 a entrega/troca (s), 72 o tipo (1 de pe, 2 correndo), 73
+    quando chegou ao ponto (s; -1 nao), 74 a distancia dele, 12 a velocidade na troca, 32 o fim, 49 o fogo do levantar (0 limpo). O
+    sucesso (de_pe, e nos limpos firme_limpo): chegou ao ponto sem cair - a chegada encerra o episodio; 75 o que faltava no fim (m)."""
+    if not len(rows) or rows.shape[1] < 76:
+        return {}
+    handed = rows[:, 18] >= 0
+    arrived = rows[:, 73] >= 0
+    fell = handed & ~arrived & np.isin(rows[:, 32], (1, 2, 3, 4, 8))
+    clean, run = rows[:, 49] == 0, rows[:, 72] > 1.5
+    out = {"episodios": int(len(rows)), "levantou": float(handed.mean()), "chegou": float(arrived.mean()), "de_pe": float(arrived.mean()),
+           "distancia": float(rows[:, 74].mean())}
+    miss = ~arrived
+    if miss.any():
+        out["faltou_m"] = float(rows[miss, 75].mean())
+    if handed.any():
+        out.update(caiu_depois=float(fell[handed].mean()), levantar_s=float(rows[handed, 18].mean()), vel_troca=float(rows[handed, 12].mean()))
+    if arrived.any():
+        out.update(tempo=float(rows[arrived, 73].mean()), percurso_s=float((rows[arrived, 73] - rows[arrived, 18]).mean()))
+    if clean.any():
+        out["firme_limpo"] = float(arrived[clean].mean())
+    if (~clean).any():
+        out["firme_sob_fogo"] = float(arrived[~clean].mean())
+    for name, sel in (("normal", ~run), ("correndo", run)):
+        if sel.any():
+            out[f"chegou_{name}"] = float(arrived[sel].mean())
+    return {f"{prefix}{k}": v for k, v in out.items()}
 
 
 JUIZ_UNREAL_VERSAO = "unreal_corrida6"
@@ -574,6 +899,96 @@ def finite_json(value):
 
 MANEUVERS = ("lev_troca_suave", "lev_troca_media", "lev_troca_forte", "lev_troca_livre", "lev_curva_suave", "lev_curva_s",
              "lev_curva_fechada")
+
+
+CALIBRATION_STRATEGIES = ("professor", "professor_ruido", "professor_solta", "deitado_parado", "acao_meio", "rede")
+
+
+def calibrate_clip_get_up(model, evaluations: dict, device: torch.device, out: Path, training_batch=None) -> dict:
+    """(11/11 14h, ele: "se as recompensas NOVAS DIFERENTES estarao devidamente calibradas") Os jeitos de agir no levantar pelo
+    clipe, com a recuperacao no comando (depois da troca, a locomocao da rede): o professor nos motores (os alvos do clipe uma
+    decisao a frente, velocidade alvo zero), o professor com ruido de 0,15 rad, o professor solto no meio do clipe (a acao do meio
+    dali: cai), deitado parado (os alvos do quadro 0 o tempo todo), a acao do meio da faixa e a rede de agora. A ordem certa:
+    professor > com ruido > solto > deitado parado. A nota de cada episodio ate a troca: a media do clipe (coluna 33) vezes as
+    decisoes da recuperacao."""
+    results = {}
+    joints = len(model.joint_names) if model.joint_names else 39
+    for name in (() if os.environ.get("CALIBRAR_SO_TROCA") else CALIBRATION_STRATEGIES):
+        for exercise, prefix in enumerate(LEVANTAR_UNREAL_PREFIXES):
+            b = evaluations[prefix]
+            b.reset(12345)
+            n, dt = b.num_envs, b.policy_dt
+            ends = b.clip_get_up_ends()
+            half_time = 0.5 * ends[3 * exercise]
+            done, first, steps = {}, None, 0
+            gen = torch.Generator(device="cpu").manual_seed(7)
+            for _ in range(int(b.episode_seconds / dt) + 2):
+                obs = torch.as_tensor(b.observations(), device=device)
+                with torch.no_grad():
+                    net = model.env_action(model.actor(model.norm(obs)), obs)
+                clip = torch.as_tensor(b.locomotion_targets(), device=device, dtype=net.dtype).reshape(n, -1)
+                if first is None:
+                    first = clip.clone()
+                middle = model.action_mid.to(net.dtype).expand_as(net).clone()
+                middle[:, joints:] = 0.0
+                if name == "professor":
+                    act = clip
+                elif name == "professor_ruido":
+                    act = clip.clone()
+                    act[:, :joints] += 0.15 * torch.randn(n, joints, generator=gen).to(device)
+                elif name == "professor_solta":
+                    act = clip if steps * dt < half_time else middle
+                elif name == "deitado_parado":
+                    act = first
+                elif name == "acao_meio":
+                    act = middle
+                else:
+                    act = net
+                action = torch.where(obs[:, -1:] < .5, act, net)
+                b.step(action.cpu().numpy().astype(np.float32))
+                steps += 1
+                for row in b.finished_episodes().tolist():
+                    done.setdefault(int(row[0]), row)
+                if len(done) >= n:
+                    break
+            rows = np.array(list(done.values()))
+            summary = clip_get_up_summary(rows)
+            recovery_seconds = np.where(rows[:, 18] >= 0, rows[:, 18], rows[:, 4])
+            summary["nota_ate_troca"] = float((rows[:, 33] * recovery_seconds / dt).mean())
+            summary["segundos"] = float(rows[:, 4].mean())
+            results[f"{name}/{LEVANTAR_UNREAL_KEYS[exercise]}"] = summary
+            print(f"calibracao {name:16s} {LEVANTAR_UNREAL_KEYS[exercise]:30s} levantou {summary['levantou']:.2f} entregou "
+                  f"{summary['entregou']:.2f} nota/passo {summary['semelhanca']:.3f} nota ate a troca {summary['nota_ate_troca']:6.1f} "
+                  f"longe {summary['longe']:.2f} voo {summary['voo_s']:.2f}s vel_troca {summary.get('vel_troca', float('nan')):.2f}",
+                  flush=True)
+    if training_batch is not None:
+        # (A troca: no lote do treino - metade comeca no meio do clipe -, o professor nos motores ate o fim do clipe e a locomocao da
+        # rede depois; os episodios do levantar pelo clipe que terminam em ~20 s de jogo.)
+        b = training_batch
+        b.reset(4321)
+        n, dt, rows = b.num_envs, b.policy_dt, []
+        for _ in range(int(20.0 / dt)):
+            obs = torch.as_tensor(b.observations(), device=device)
+            with torch.no_grad():
+                net = model.env_action(model.actor(model.norm(obs)), obs)
+            clip = torch.as_tensor(b.locomotion_targets(), device=device, dtype=net.dtype).reshape(n, -1)
+            b.step(torch.where(obs[:, -1:] < .5, clip, net).cpu().numpy().astype(np.float32))
+            rows += [r for r in b.finished_episodes().tolist() if int(r[1]) == 9]
+        rows = np.array(rows)
+        for exercise, key in enumerate(LEVANTAR_UNREAL_KEYS):
+            summary = clip_get_up_summary(rows[rows[:, 26] == exercise]) if len(rows) else {}
+            results[f"troca_professor/{key}"] = summary
+            mine = rows[rows[:, 26] == exercise] if len(rows) else rows
+            if len(mine):
+                causes = {int(c): int((mine[:, 32] == c).sum()) for c in np.unique(mine[:, 32])}
+                print(f"   fins {causes} (0 tempo, 1 caiu, 8 longe); segundos {mine[:, 4].mean():.2f} (max {mine[:, 4].max():.2f}); cabeca no "
+                      f"fim {mine[:, 7].mean():.2f} m; nota {mine[:, 33].mean():.2f}", flush=True)
+            print(f"troca professor  {key:30s} episodios {summary.get('episodios', 0)} levantou {summary.get('levantou', 0):.2f} "
+                  f"entregou {summary.get('entregou', 0):.2f} vel_troca {summary.get('vel_troca', float('nan')):.2f} "
+                  f"voo {summary.get('voo_s', 0):.2f}s", flush=True)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(results, indent=1, ensure_ascii=False))
+    return results
 
 
 def summarize_scenery(rows: np.ndarray, student_only: bool = True) -> dict:
@@ -635,6 +1050,24 @@ def summarize_scenery(rows: np.ndarray, student_only: bool = True) -> dict:
                 else 7.9 if kind in (6, 7) else 5.9
             out[key] = dict(summarize(selected, ""), episodios=len(selected), segundos=float(seconds.mean()),
                             ate_o_fim=float((seconds >= limit).mean()))
+            # (12/11 18h45, ele: o grafico "Ate o fim neste exercicio" deve "refletir corretamente o sucesso efetivo.. se ele conseguiu
+            # completar sem cair etc.. e tudo mais") O sucesso: o episodio inteiro (o parado no dele, nao nos 6 s antigos), sem cair, sem
+            # fim antes da hora (virado, fora do rumo, lento, pose perdida), no comando sem nenhuma queda (ali a queda nao encerra) e na
+            # estrela perto do caminho (ali sair dele nao encerra mais).
+            full = STAR_SECONDS[0] if key.startswith("lev_estrela") else COMMAND_SECONDS[0] if key == COMMAND_KEY \
+                else 8.0 if kind in (6, 7) else IDLE_SECONDS[0]
+            ok = (seconds >= full - 0.1) & (selected[:, 13] < 0.5) & (selected[:, 32] == 0)
+            if key == COMMAND_KEY and selected.shape[1] > 68:
+                ok &= selected[:, 68] == 0
+            if key.startswith("lev_estrela") and STAR_PATH_WIDTH[0] > 0 and selected.shape[1] > 66:
+                ok &= selected[:, 66] <= STAR_PATH_WIDTH[0]
+            out[key]["sucesso"] = float(ok.mean())
+            # (18h55, ele: "ter 2 linhas, a do limpo e a do fogo") O sucesso nos limpos e nos com o fogo da locomocao (a coluna 60).
+            if selected.shape[1] > 60:
+                fire = selected[:, 60] > 0
+                for name, sel in (("sucesso_limpo", ~fire), ("sucesso_fogo", fire)):
+                    if sel.sum() >= 3:
+                        out[key][name] = float(ok[sel].mean())
             if kind == 6:
                 # (04/11 12h35, ele: o grafico da velocidade em % do pedido - a medida da regua da forca, cada episodio ate 1.)
                 out[key]["vel_pedido"] = float(np.clip(selected[:, 12] / np.maximum(selected[:, 10], 0.1), 0.0, 1.0).mean())
@@ -655,6 +1088,19 @@ def summarize_scenery(rows: np.ndarray, student_only: bool = True) -> dict:
                 out[key].update(professora=float(selected[:, 27].mean()), retomadas=float(selected[:, 28].mean()),
                                 desvio_rumo=float(selected[:, 31].mean()),
                                 desvio_rumo_abs=float(np.abs(selected[:, 31]).mean()))
+        elif len(selected):
+            # (13/11 08h25, ele: "porque ha treinos desativados?" - com 75% dos episodios no levantar, os exercicios raros da locomocao
+            # ficam com 1-7 episodios por janela e saiam da linha: o laboratorio os pintava de cinza. So a contagem: o ativo ve, os
+            # graficos nao ganham o ponto ruidoso.)
+            out[key] = {"episodios": int(len(selected))}
+    # (11/11 14h: o levantar pelo clipe, por exercicio - a coluna 26.)
+    for exercise, key in enumerate(LEVANTAR_UNREAL_KEYS):
+        selected = rows[(rows[:, 1] == 9) & (rows[:, 26] == exercise)]
+        if len(selected):
+            out[key] = clip_get_up_summary(selected)
+    # (12/11 19h20: o levantar e ir - o comeco 11 no registro.)
+    if rows.shape[1] >= 76 and (rows[:, 1] == 11).any():
+        out["lev_levantar_e_ir"] = get_up_go_summary(rows[rows[:, 1] == 11])
     return out
 
 
@@ -672,6 +1118,9 @@ STAR_SECONDS = [14.0]
 # (36, 08/11 14h40: o comando - o jogador emulado, a manobra 12 - e a duracao do episodio dele, s.)
 COMMAND_KEY = "lev_comando"
 COMMAND_SECONDS = [20.0]
+# (12/11 18h45) A duracao do episodio do parado (s; --parado-segundos, 0 = a de sempre) e a largura do caminho da estrela (m).
+IDLE_SECONDS = [6.0]
+STAR_PATH_WIDTH = [0.0]
 DRILL_KEYS = tuple([f"lev_trote_{h}" for h in range(8)] + [f"lev_corrida_{h}" for h in range(8)] + list(MANEUVERS)
                    + ["lev_giro", "lev_parado"] + list(RUN_CURVES) + ["lev_sprint", "lev_levantar"] + list(STAR_KEYS)
                    + [COMMAND_KEY])
@@ -805,6 +1254,270 @@ def fire_ratio(rows: np.ndarray) -> tuple[float, float, float, int, int]:
     with_push = float(ok[pushed].mean()) if pushed.any() else float("nan")
     without = float(ok[~pushed].mean()) if (~pushed).any() else float("nan")
     return with_push / max(without, 1e-6), with_push, without, int(pushed.sum()), int((~pushed).sum())
+
+
+# (12/11 16h30, ele: "descongelar o brain do RL da locomocao... com a implementacao da fase de FOGO, igual nos fizemos aqui... nesse
+# primeiro momento sera algo bem mais SUTIL... a meta e que no final consigamos trazer exatamente o mesmo tipo e niveis de forca que o
+# levantar ja sofre") O fogo da locomocao v1 (vault 04_locomocao/plano_fogo_da_locomocao_12_11.md): um nivel L (0 sutil - 1 o fogo
+# do levantar) por grupo de FIRE_GROUPS. As colunas 60-63 dos episodios de locomocao (o comando fora - ele nunca tem fogo): se teve
+# fogo, o nivel, as adversidades e a fracao do tempo seguindo a tarefa (com fogo desde a primeira adversidade; sem, desde 1,5 s).
+# O sucesso dele: nao caiu. O firme (a qualidade): nao caiu e seguiu a tarefa em >= min(LOCO_FIRE_KEEP, LOCO_FIRE_RELATIVE x o seguiu
+# do limpo do grupo) - a regua relativa ao limpo mede o efeito do fogo, nao a dificuldade do exercicio (16h45: nos laterais e nas
+# manobras o limpo segue 50-60% e a regua absoluta reprovava o grupo inteiro).
+# A escada (a do levantar): +0,1 com o firme - 1,5 EP >= LOCO_FIRE_MASTERED ha >= LOCO_FIRE_DWELL atualizacoes no nivel e o limpo do
+# grupo perto da base dele; -0,1 pela guarda do limpo (o nao caiu do limpo + 1,5 EP abaixo da base do grupo - LOCO_FIRE_CLEAN_DROP; a
+# base: a primeira medida com >= LOCO_FIRE_BASE_N limpos) ou travado (nao caiu + 1,5 EP < LOCO_FIRE_STUCK ha >= 2 x LOCO_FIRE_DWELL).
+# (12/11 19h55, a revisao do fogo: em 2 h nenhum grupo subiu - o firme de 0,85 nao vinha nem no L 0,3 (giro/parado 0,55, os outros
+# 0,7-0,95 de nao caiu, o firme abaixo). Dominado agora em 0,75.)
+LOCO_FIRE_MASTERED, LOCO_FIRE_KEEP, LOCO_FIRE_RELATIVE, LOCO_FIRE_STUCK = 0.75, 0.7, 0.85, 0.6
+# (12/11 23h50, a vigia: em 3,5 h no L 0,5 o firme da frente, lado, costas e outros ficou em 0,2-0,4 sem subir - o firme pede seguir o
+# comando durante o empurrao (>= 85% do seguiu do limpo) e a nota, de proposito, solta a velocidade enquanto ele empurra (a liberdade):
+# a escada cobrava o que a recompensa libera. Dominado agora: nao caiu >= LOCO_FIRE_MASTERED_OK e o seguir frouxo (>= LOCO_FIRE_RELATIVE_
+# LOOSE do seguiu do limpo, no maximo LOCO_FIRE_KEEP_LOOSE) >= LOCO_FIRE_MASTERED_LOOSE, os dois com 1,5 EP.)
+LOCO_FIRE_MASTERED_OK, LOCO_FIRE_MASTERED_LOOSE, LOCO_FIRE_KEEP_LOOSE, LOCO_FIRE_RELATIVE_LOOSE = 0.80, 0.5, 0.5, 0.6
+# (12/11 19h55, ele: "reduzir a intensidade da fase de fogo da locomocao para 50%... conforme ela for melhorando e se adaptando, vamos
+# aumentando gradualmente ate 100%") A versao 2 do estado recomeca os niveis no --locomocao-fogo-nivel uma vez; e a guarda da velocidade do
+# limpo (a capacidade, a rede media sem fogo): a escada so sobe com o trote, a corrida e o trote de lado a LOCO_FIRE_SPEED_TOL da referencia
+# (--locomocao-fogo-guarda-velocidade) - de 17h55 a 19h30, com o fogo em 90%, a corrida caiu 0,855 -> 0,75 e o trote de lado 0,64 -> 0,47
+# e a guarda so via quedas.
+# (13/11 05h30: com a fatia em 0,9 a corrida ficou 1 h entre 0,79 e 0,81 - 6% abaixo das 17h55 (0,842), no limite de 0,05; ele: "nao
+# depreciar velocidade". Tolerancia 0,03 - o ruido da medida e ~0,01 com 144 episodios por marcha.)
+LOCO_FIRE_VERSION, LOCO_FIRE_SPEED_TOL = 2, 0.03
+# (20h30: com o torto limpo, 10 min de 90% de fogo ainda levaram o parado 0,61 -> 0,54, o torto 47% -> 16% e a corrida 0,83 -> 0,79 - o
+# mesmo das 17h55-18h30 em L 0,3; com 35% de fogo (16h35-17h55) o limpo subia. A fatia agora e conquistada: comeca em
+# --locomocao-fogo-fatia-inicial e o piso desce a 0,3.)
+LOCO_FIRE_SIM_TOL, LOCO_FIRE_CROOKED_TOL, LOCO_FIRE_SHARE_MIN, LOCO_FIRE_SHARE_STEP = 0.05, 0.15, 0.3, 0.1
+LOCO_FIRE_CLEAN_DROP, LOCO_FIRE_BASE_N, LOCO_FIRE_CLEAN_DECAY = 0.08, 60, 0.85
+LOCO_FIRE_STEP, LOCO_FIRE_DWELL, LOCO_FIRE_MIN = 0.1, 100, 30
+LOCO_FIRE_WINDOWS = [0]
+
+
+def loco_fire_extras(b, args) -> None:
+    """(16h40) As adversidades e as faixas que o fogo da locomocao usa (as do levantar: a serie, a rasteira, o prensado, o vento, a grama
+    molhada, o agarrao, os intervalos, a duracao e os newtons da pancada) e o limite contra a corrida - no lote do treino o main as poe
+    junto com o levantar; nos outros (a prova, as sondas), por aqui."""
+    if hasattr(b, "set_get_up_fire_extras"):
+        b.set_get_up_fire_extras(*fire_extras(args))
+    if args.levantar_fogo_contra_corrida > 0 and hasattr(b, "set_fire_run_headwind_cap"):
+        b.set_fire_run_headwind_cap(args.levantar_fogo_contra_corrida)
+
+
+def loco_fire_ok(rows: np.ndarray) -> np.ndarray:
+    """Nao caiu: nem a queda que encerra (as causas 1-4) nem a que nao encerra (a coluna 13)."""
+    return ~np.isin(rows[:, 32], (1, 2, 3, 4)) & (rows[:, 13] <= 0)
+
+
+def loco_fire_groups(rows: np.ndarray) -> np.ndarray:
+    return np.array([fire_group(r) for r in rows], dtype=int) if len(rows) else np.zeros(0, dtype=int)
+
+
+def loco_fire_state(args, counters: dict) -> dict | None:
+    if args.locomocao_fogo <= 0:
+        return None
+    state = counters.get("fogo_locomocao")
+    if state is None:
+        state = {"niveis": [float(args.locomocao_fogo_nivel)] * len(FIRE_GROUPS),
+                 "desde": [int(counters["atualizacao"])] * len(FIRE_GROUPS), "limpo_base": [None] * len(FIRE_GROUPS), "versao": 1}
+        counters["fogo_locomocao"] = state
+        print(f"fogo da locomocao: niveis de partida {state['niveis']}", flush=True)
+    state.setdefault("limpo_base", [None] * len(FIRE_GROUPS))
+    if int(state.get("versao", 1)) < LOCO_FIRE_VERSION:
+        state["niveis"] = [float(args.locomocao_fogo_nivel)] * len(FIRE_GROUPS)
+        state["desde"] = [int(counters["atualizacao"])] * len(FIRE_GROUPS)
+        state["versao"] = LOCO_FIRE_VERSION
+        print(f"fogo da locomocao: versao {LOCO_FIRE_VERSION}, os niveis recomecam em {state['niveis']}", flush=True)
+    lo, hi = float(args.locomocao_fogo_faixa[0]), float(args.locomocao_fogo_faixa[1])
+    # (12/11 22h35) O piso proprio de um grupo (--locomocao-fogo-piso-grupo): abaixo da faixa geral, so para ele.
+    floors = {name: float(value) for name, value in (args.locomocao_fogo_piso_grupo or [])}
+    state["pisos"] = floors
+    for g, name in enumerate(FIRE_GROUPS):
+        level = min(hi, max(min(lo, floors.get(name, lo)), float(state["niveis"][g])))
+        if abs(level - float(state["niveis"][g])) > 1e-9:
+            print(f"fogo da locomocao: {name} {state['niveis'][g]} -> {level} (a faixa {lo}-{hi})", flush=True)
+            state["niveis"][g] = round(level, 3)
+            state["desde"][g] = int(counters["atualizacao"])
+    state["faixa"] = [lo, hi]
+    return state
+
+
+def loco_fire_split(rows: np.ndarray):
+    """(os grupos, nao caiu, a mascara do fogo e a do limpo) dos episodios de locomocao elegiveis (parado, rumos sem o comando, giro)."""
+    # (12/11 18h: o comando entrou no fogo - ele e do grupo "outros".)
+    loco = np.isin(rows[:, 1], (2, 6, 7))
+    return (loco_fire_groups(rows), loco_fire_ok(rows), loco & (rows[:, 60] > 0) & (rows[:, 62] > 0),
+            loco & (rows[:, 60] <= 0) & (rows[:, 63] >= 0))
+
+
+def loco_fire_threshold(rows: np.ndarray, clean: np.ndarray) -> float:
+    keep = rows[clean, 63]
+    return min(LOCO_FIRE_KEEP, LOCO_FIRE_RELATIVE * float(keep.mean())) if len(keep) >= LOCO_FIRE_MIN else LOCO_FIRE_KEEP
+
+
+def loco_fire_summary(rows: np.ndarray) -> dict:
+    """Por grupo: o limpo (n, nao caiu, seguiu) e o fogo (n, nao caiu, firme, seguiu, o nivel medio e o nao caiu por adversidade)."""
+    out: dict = {}
+    if not len(rows) or rows.shape[1] < 64:
+        return out
+    groups, ok, fire, clean = loco_fire_split(rows)
+    for g, name in enumerate(FIRE_GROUPS):
+        f, c = fire & (groups == g), clean & (groups == g)
+        entry = {"n_limpo": int(c.sum()), "limpo": round(float(ok[c].mean()), 3) if c.any() else None,
+                 "limpo_seguiu": round(float(rows[c, 63].mean()), 3) if c.any() else None, "n_fogo": int(f.sum())}
+        if f.any():
+            keep = rows[f, 63]
+            ck = rows[c, 63]
+            loose_bar = (min(LOCO_FIRE_KEEP_LOOSE, LOCO_FIRE_RELATIVE_LOOSE * float(ck.mean())) if len(ck) >= LOCO_FIRE_MIN
+                         else LOCO_FIRE_KEEP_LOOSE)
+            entry.update(sem_cair=round(float(ok[f].mean()), 3),
+                         frouxo=round(float((ok[f] & (keep >= loose_bar)).mean()), 3),
+                         firme=round(float((ok[f] & (keep >= loco_fire_threshold(rows, c))).mean()), 3),
+                         seguiu=round(float(keep[keep >= 0].mean()), 3) if (keep >= 0).any() else None,
+                         nivel=round(float(rows[f, 61].mean()), 3))
+            bits = rows[f, 59].astype(int)
+            for bit, key in ((1, "serie"), (2, "rasteira"), (4, "prensado"), (8, "vento"), (32, "molhado"), (64, "agarrao")):
+                m = (bits & bit) > 0
+                if m.any():
+                    entry[key] = round(float(ok[f][m].mean()), 3)
+        out[name] = entry
+    return out
+
+
+def loco_fire_clean(capacity: dict) -> dict | None:
+    """O limpo da capacidade a 0% (a rede media, sem fogo): a velocidade sobre a pedida e a semelhanca com o clipe do trote, da corrida
+    (rumos 0,1,3,4,5,7) e do trote de lado (2,6), a semelhanca do parado e o reajuste do parado torto."""
+    c = (capacity or {}).get("0") or {}
+
+    def mean(keys, field):
+        v = [c[k][field] for k in keys if isinstance(c.get(k), dict) and c[k].get(field) is not None]
+        return float(np.mean(v)) if v else None
+    tro, cor, lat = [f"lev_trote_{d}" for d in "013457"], [f"lev_corrida_{d}" for d in "013457"], ["lev_trote_2", "lev_trote_6"]
+    out = {"trote": mean(tro, "vel"), "corrida": mean(cor, "vel"), "lado": mean(lat, "vel"), "trote_sem": mean(tro, "sem"),
+           "corrida_sem": mean(cor, "sem"), "lado_sem": mean(lat, "sem"), "parado_sem": mean(["parado_limpo"], "sem"),
+           "torto": mean(["parado_torto"], "reajustou"), "torto_sem": mean(["parado_torto"], "sem")}
+    return out if None not in (out["trote"], out["corrida"], out["lado"]) else None
+
+
+def loco_fire_clean_ok(now: dict | None, base: dict | None, reference) -> tuple[bool, str]:
+    """A guarda do limpo (12/11 20h05, ele: "nao depreciar velocidade e postura (semelhanca com o clipe nos exercicios limpos)"): a
+    velocidade a ate LOCO_FIRE_SPEED_TOL da referencia (--locomocao-fogo-guarda-velocidade), a semelhanca a ate LOCO_FIRE_SIM_TOL da base
+    (a primeira medida depois de 12/11 20h, o ponto das 17h55) e o reajuste do torto a ate LOCO_FIRE_CROOKED_TOL dela. Sem referencia
+    (zeros), passa; com ela e sem medida ainda, segura."""
+    if not any(r > 0 for r in reference):
+        return True, ""
+    if not now:
+        return False, "sem medida da capacidade ainda"
+    low = [f"{k} {now[k]:.2f}<{r - LOCO_FIRE_SPEED_TOL:.2f}" for k, r in zip(("trote", "corrida", "lado"), reference)
+           if r > 0 and now.get(k) is not None and now[k] < r - LOCO_FIRE_SPEED_TOL]
+    # (20h15, a calibracao: na marcha a semelhanca quase nao separa a rede boa da estragada - trote 0,174 contra 0,164 -, fica como rede
+    # de seguranca relativa; no parado separa - 0,61 contra 0,43 - e o reajuste do torto 37% contra 0%.)
+    # (20h45: o lado_sem de 0,05 contra 0,06 segurou a fatia com o lado mais rapido - 15% de 0,07 e ruido; 30%.)
+    # (21h15: o lado_sem fora - o direito (rumo 6) fica em 0,01-0,03 desde sempre e o esquerdo oscila 0,06-0,25 entre medidas de 24.)
+    # (21h55: o reajuste do torto e um limiar - pontos vizinhos da mesma rede deram 0,33, 0,26 e 0,37 com 96 mundos -: a guarda usa a media
+    # das 3 ultimas medidas (o chamador poe em now["torto"]) e a semelhanca do torto, continua e estavel (0,551 -> 0,553-0,57).)
+    for k, tol in (("trote_sem", 0.3), ("corrida_sem", 0.3), ("parado_sem", None), ("torto_sem", None), ("torto", None)):
+        if not (base and base.get(k) is not None and now.get(k) is not None):
+            continue
+        floor = base[k] * (1.0 - tol) if tol is not None else base[k] - (LOCO_FIRE_CROOKED_TOL if k == "torto" else LOCO_FIRE_SIM_TOL)
+        if now[k] < floor:
+            low.append(f"{k} {now[k]:.2f}<{floor:.2f}")
+    return not low, ", ".join(low)
+
+
+def loco_fire_protect(prot: dict, ok: bool, top: float) -> str:
+    """(12/11 20h05; 20h15 a cada medida ruim, o parado se desfez em 15 min) A protecao do limpo pela fatia do fogo: medida abaixo da guarda, a fatia desce LOCO_FIRE_SHARE_STEP
+    (ate LOCO_FIRE_SHARE_MIN); tres seguidas boas, volta a subir ate a da receita (top). Devolve a mudanca em texto."""
+    prot["fatia"] = min(float(prot.get("fatia", top)), top)
+    prot["ruins"], prot["boas"] = (0, prot.get("boas", 0) + 1) if ok else (prot.get("ruins", 0) + 1, 0)
+    if prot["ruins"] >= 1 and prot["fatia"] > LOCO_FIRE_SHARE_MIN + 1e-9:
+        prot["fatia"], prot["ruins"] = round(max(LOCO_FIRE_SHARE_MIN, prot["fatia"] - LOCO_FIRE_SHARE_STEP), 3), 0
+        return f"a fatia do fogo desce para {prot['fatia']} (o limpo abaixo da guarda)"
+    if prot["boas"] >= 3 and prot["fatia"] < top - 1e-9:
+        prot["fatia"], prot["boas"] = round(min(top, prot["fatia"] + LOCO_FIRE_SHARE_STEP), 3), 0
+        return f"a fatia do fogo volta para {prot['fatia']} (o limpo bom tres vezes)"
+    return ""
+
+
+def loco_fire_step(state: dict, rows: np.ndarray, update: int, frozen: bool = False, speed_ok: bool = True) -> list:
+    """O degrau de cada grupo (ver LOCO_FIRE_MASTERED), dentro da faixa do estado (state["faixa"]); devolve as mudancas em texto.
+    Com speed_ok falso (a guarda da velocidade do limpo), nao sobe."""
+    changes = []
+    lo_all, hi = state.get("faixa", [0.0, 1.0])
+    if not len(rows) or rows.shape[1] < 64:
+        return changes
+    groups, ok, fire, clean_rows = loco_fire_split(rows)
+    for g, name in enumerate(FIRE_GROUPS):
+        lo = min(lo_all, float(state.get("pisos", {}).get(name, lo_all)))
+        f, c = fire & (groups == g), clean_rows & (groups == g)
+        level, since = float(state["niveis"][g]), update - int(state["desde"][g])
+        # (12/11 18h, ele: so 10% limpos - poucos por janela: o limpo de cada grupo acumulado com decaimento LOCO_FIRE_CLEAN_DECAY por
+        # janela, o nao caiu e o seguiu.)
+        acc = state.setdefault("limpo_acumulado", [[0.0, 0.0, 0.0] for _ in FIRE_GROUPS])[g]
+        acc[0] = LOCO_FIRE_CLEAN_DECAY * acc[0] + float(c.sum())
+        acc[1] = LOCO_FIRE_CLEAN_DECAY * acc[1] + float(ok[c].sum())
+        acc[2] = LOCO_FIRE_CLEAN_DECAY * acc[2] + float(rows[c, 63].sum())
+        nc = int(acc[0])
+        clean = acc[1] / acc[0] if acc[0] >= LOCO_FIRE_MIN else float("nan")
+        clean_keep = acc[2] / acc[0] if acc[0] >= LOCO_FIRE_MIN else float("nan")
+        if state["limpo_base"][g] is None and nc >= LOCO_FIRE_BASE_N:
+            state["limpo_base"][g] = round(clean, 3)
+            changes.append(f"{name}: a base do limpo e {clean:.3f} (n {nc})")
+        base = state["limpo_base"][g]
+        se_c = math.sqrt(max(clean * (1 - clean), 1e-6) / max(nc, 1)) if clean == clean else 0.0
+        guard = base is not None and clean == clean and clean + 1.5 * se_c < base - LOCO_FIRE_CLEAN_DROP
+        new, why = level, ""
+        if guard and level > lo + 1e-9:
+            new, why = max(lo, level - LOCO_FIRE_STEP), f"guarda do limpo ({clean:.2f} contra a base {base:.2f})"
+        elif f.sum() >= LOCO_FIRE_MIN:
+            n = int(f.sum())
+            standing = float(ok[f].mean())
+            threshold = min(LOCO_FIRE_KEEP, LOCO_FIRE_RELATIVE * clean_keep) if clean_keep == clean_keep else LOCO_FIRE_KEEP
+            firm = float((ok[f] & (rows[f, 63] >= threshold)).mean())
+            loose_bar = min(LOCO_FIRE_KEEP_LOOSE, LOCO_FIRE_RELATIVE_LOOSE * clean_keep) if clean_keep == clean_keep else LOCO_FIRE_KEEP_LOOSE
+            loose = float((ok[f] & (rows[f, 63] >= loose_bar)).mean())
+            se_s, se_f = math.sqrt(max(standing * (1 - standing), 1e-6) / n), math.sqrt(max(firm * (1 - firm), 1e-6) / n)
+            se_l = math.sqrt(max(loose * (1 - loose), 1e-6) / n)
+            clean_ok = base is None or (clean == clean and clean >= base - 0.5 * LOCO_FIRE_CLEAN_DROP)
+            if standing + 1.5 * se_s < LOCO_FIRE_STUCK and since >= 2 * LOCO_FIRE_DWELL and level > lo + 1e-9:
+                new, why = max(lo, level - LOCO_FIRE_STEP), f"travado (nao caiu {standing:.2f}, n {n})"
+            elif (not frozen and speed_ok and not guard and since >= LOCO_FIRE_DWELL and standing - 1.5 * se_s >= LOCO_FIRE_MASTERED_OK
+                  and loose - 1.5 * se_l >= LOCO_FIRE_MASTERED_LOOSE and level < hi - 1e-9 and clean_ok):
+                new, why = min(hi, level + LOCO_FIRE_STEP), (f"dominado (nao caiu {standing:.2f}, seguiu frouxo {loose:.2f}, firme {firm:.2f}, "
+                                                              f"n {n}, limpo {clean:.2f})")
+        if abs(new - level) > 1e-9:
+            state["niveis"][g] = round(new, 3)
+            state["desde"][g] = int(update)
+            changes.append(f"{name} {level:.2f} -> {new:.2f}: {why}")
+    return changes
+
+
+def _loco_fire_selfcheck() -> None:
+    rows = np.zeros((200, 64), dtype=np.float32)
+    rows[:, 1] = 2  # parado
+    rows[:100, 60] = 1
+    rows[:100, 62] = 2
+    rows[:, 63] = 0.9
+    state = {"niveis": [0.0] * 6, "desde": [0] * 6, "limpo_base": [None] * 6}
+    held = loco_fire_step(dict(state, limpo_base=[None] * 6, niveis=[0.0] * 6), rows, 500, speed_ok=False)
+    assert not any("->" in c for c in held), held
+    changes = loco_fire_step(state, rows, 500)
+    assert state["limpo_base"][4] == 1.0 and abs(state["niveis"][4] - 0.1) < 1e-9, (changes, state)
+    cap = {"0": {**{f"lev_trote_{d}": {"vel": 0.9, "sem": 0.8} for d in "01234567"},
+                 **{f"lev_corrida_{d}": {"vel": 0.7, "sem": 0.7} for d in "01234567"},
+                 "parado_limpo": {"sem": 0.9}, "parado_torto": {"reajustou": 0.4}}}
+    sp = loco_fire_clean(cap)
+    assert abs(sp["corrida"] - 0.7) < 1e-9 and abs(sp["torto"] - 0.4) < 1e-9 and loco_fire_clean_ok(sp, sp, (0, 0, 0))[0], sp
+    assert not loco_fire_clean_ok(sp, sp, (0.95, 0.8, 0.6))[0] and loco_fire_clean_ok(sp, sp, (0.92, 0.72, 0.6))[0]
+    worse = dict(sp, parado_sem=0.8)
+    assert not loco_fire_clean_ok(worse, sp, (0.92, 0.72, 0.6))[0] and not loco_fire_clean_ok(None, sp, (0.92, 0.72, 0.6))[0]
+    prot = {"fatia": 0.9}
+    assert "0.8" in loco_fire_protect(prot, False, 0.9) and prot["fatia"] == 0.8
+    assert loco_fire_protect(prot, True, 0.9) == "" == loco_fire_protect(prot, True, 0.9) and "0.9" in loco_fire_protect(prot, True, 0.9)
+    rows[100:, 32] = 1  # o limpo cai todo: a guarda desce
+    changes = loco_fire_step(state, rows, 520)
+    assert abs(state["niveis"][4] - 0.0) < 1e-9, (changes, state)
+
+
+_loco_fire_selfcheck()
 
 
 def star_phase_step(phase: int, end: float, legs: float) -> int:
@@ -1080,6 +1793,8 @@ def run_tracking_settings(b, v2: dict) -> None:
                     b.set_stop_to_idle(bool(v2.get("parada_direto_idle", False)))
                 if hasattr(b, "set_idle_after_stop"):
                     b.set_idle_after_stop(bool(v2.get("idle_depois_freada", False)))
+                if hasattr(b, "set_parked_on_locomotion"):
+                    b.set_parked_on_locomotion(bool(v2.get("parado_na_locomocao", False)))
                 if hasattr(b, "set_turn_variety"):
                     b.set_turn_variety(bool(v2.get("giro_variado", False)), float(v2.get("giro_coluna", 0.0)))
                 if hasattr(b, "set_still_cost"):
@@ -1186,6 +1901,10 @@ def batch_layout(v2: dict) -> dict:
         out.update(get_up_guide=True, get_up_seconds=0.0)
     if v2.get("parado_ancora_obs"):
         out["idle_anchor_observation"] = True
+    if v2.get("levantar_unreal_variante"):
+        out["clip_variant_observation"] = True
+    if v2.get("levantar_fogo_entrada"):
+        out["fire_observation"] = True
     return out
 
 
@@ -1428,6 +2147,10 @@ def evaluate(model: Policy, batch, device: torch.device, prefix: str = "", judge
             break
     rows = np.array(list(done.values()))
     out = summarize(rows, prefix)
+    if len(rows) and rows.shape[1] > 41 and (rows[:, 1] == 9).any():
+        out.update(clip_get_up_summary(rows[rows[:, 1] == 9], prefix))
+    if len(rows) and rows.shape[1] >= 76 and (rows[:, 1] == 11).any():
+        out.update(get_up_go_summary(rows[rows[:, 1] == 11], prefix))
     if judges is not None and judged:
         out[f"{prefix}juiz"] = float(np.mean(list(judged.values())))
         groups: dict[str, list] = {}
@@ -1606,6 +2329,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--taxa-adaptativa", type=float, default=0.0,
                         help="o KL alvo do fim da atualizacao, por cabeca: a taxa de cada cabeca sobe ou desce ate ele "
                              "(entre 1e-6 e 3e-4); 0: a taxa fixa --taxa-ator")
+    parser.add_argument("--taxa-adaptativa-loco", type=float, default=None,
+                        help="(12/11 16h) o KL alvo so da cabeca da locomocao (sem: o --taxa-adaptativa); 0: a locomocao na taxa fixa "
+                             "--taxa-ator (a dela antes de congelar, 11/11), mesmo retomando de um checkpoint com taxa adaptada")
     parser.add_argument("--comeco-clipe", type=float, default=0.25, help="a fatia dos comecos nos clipes de levantar")
     parser.add_argument("--comeco-de-pe", type=float, default=0.15, help="a fatia que comeca de pe (o clipe parado)")
     parser.add_argument("--professor-passos", type=int, default=800,
@@ -1614,6 +2340,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="o peso da imitacao supervisionada dos alvos do clipe na cabeca da locomocao (0: sem)")
     parser.add_argument("--imitar-atualizacoes", type=int, default=300,
                         help="as atualizacoes em que o peso da imitacao cai linearmente a zero")
+    parser.add_argument("--kl-reverter-loco", type=float, default=0.0,
+                        help="(12/11 22h30) depois de cada passo, o KL da cabeca da locomocao no proprio minilote; acima disto o passo e "
+                             "desfeito e a cabeca para na atualizacao (0: sem)")
     parser.add_argument("--kl-max-loco", type=float, default=0.0,
                         help="o freio de KL so da cabeca da locomocao (0: o --kl-max); 03/11 23h30: o 0,02 travava a "
                              "locomocao em toda atualizacao e ela nao aprendia o rumo")
@@ -1710,6 +2439,30 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(08/11) a fatia dos episodios de rumo do treino na estrela de 8 pontas (6 exercicios: trote e corrida, "
                              "peito fixo, livre e girando; cada um com a sua fase 1-4, que sobe com o desempenho)")
     parser.add_argument("--estrela-segundos", type=float, default=14.0, help="a duracao do episodio da estrela (s)")
+    parser.add_argument("--comando-levantar", action="store_true",
+                        help="(12/11 18h, ele: no COMANDO 'a conexao entre os dois brains, o da locomocao e do levantar... em perfeita "
+                             "harmonia') caiu no comando, a cabeca do levantar levanta e devolve a locomocao no idle alerta; a queda nao "
+                             "encerra (a multa fica)")
+    parser.add_argument("--levantar-e-ir", type=float, nargs=3, default=(0.0, 5.0, 10.0), metavar=("FATIA", "MIN_M", "MAX_M"),
+                        help="(12/11 19h10, ele: 'um exercicio que treina focado na TROCA de brains... inicia caido... precisa levantar, haver "
+                             "a troca... e ele ir ate um ponto proximo... 5 - 10 metros') a fracao dos levantares pelo clipe que, depois da "
+                             "troca, vao ate um ponto marcado a MIN-MAX m (o trote no de pe, a corrida no correndo; sem o fogo do levantar); "
+                             "chegar a 1 m e o sucesso")
+    parser.add_argument("--levantar-correndo-troca", type=float, default=-1.0, metavar="DEPOIS_S",
+                        help="(12/11 18h40, ele: no levantar correndo 'assim que ele comeca ficar de pe ja trocar para a locomocao.. nunca "
+                             "deixar o brain do levantar ser usado para a locomocao em si' e cortar o exercicio nos 'primeiros dois passos' "
+                             "depois) >= 0: a troca no de pe (sem a velocidade nem a janela depois) e a locomocao so por estes segundos no "
+                             "exercicio do correndo; < 0: como antes")
+    parser.add_argument("--comando-levantar-correndo", type=float, default=0.5,
+                        help="(12/11 18h, ele: 'levantar correndo... quando ele ta caido mas quer correr') no comando ligado, a fracao das "
+                             "quedas andando em que o jogador segue segurando a tecla: o levantar correndo e a troca ja correndo")
+    parser.add_argument("--estrela-caminho", type=float, nargs=2, default=[0.0, 1.2], metavar=("PESO", "LARGURA"),
+                        help="(12/11 17h20, ele: 'tirar o encerramento automatico... por distanciamento do alvo... recompensar o nao "
+                             "distanciamento') com PESO > 0 sair do caminho da perna nao encerra; a nota andando vezes 1 - PESO + PESO / "
+                             "(1 + (d / LARGURA)^2), d a distancia ao caminho (m)")
+    parser.add_argument("--estrela-curvas", type=float, nargs=3, default=[0.0, 0.15, 0.45], metavar=("FATIA", "MIN", "MAX"),
+                        help="(12/11 17h20, ele: 'botar alguns com a obrigatoriedade de fazer curva, podendo ser mais aberta ou mais "
+                             "fechada') a fatia das pernas da estrela em arco e a flecha dele (fracao da corda, para um lado sorteado)")
     # (08/11 14h40, ele: "preparativos para que essa rede consiga interpretar e responder bem aos comandos" - o jogo.)
     parser.add_argument("--comando", type=float, default=0.0,
                         help="(08/11) a fatia dos episodios de rumo no comando: um jogador emulado - WASD (8 rumos em relacao a vista), "
@@ -1856,6 +2609,46 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(11/11 09h50, ele: 'recompensar ele melhor por manter a coluna toda reta') no giro, o bonus da coluna reta")
     parser.add_argument("--idle-depois-freada", action="store_true",
                         help="(11/11 09h28, ele) a freada como era (a parada livre) e, freado, o idle alerta com a nota do parado")
+    parser.add_argument("--parado-torto", type=float, nargs=3, default=[0.0, 2.0, 0.8], metavar=("FATIA", "PREMIO", "PERTO"),
+                        help="(12/11 17h, ele: o parado nascendo torto - a coluna, os bracos e as pernas - e um pouco acima do chao, para "
+                             "aprender a se REAJUSTAR o mais rapido e ficar firme) a fatia dos parados do treino que nascem tortos, o premio "
+                             "de reajustar (cheio no comeco, zero em 2,5 s) e o perto da pose que conta como reajustado (0,5 forma + 0,5 lugar)")
+    parser.add_argument("--locomocao-fogo", type=float, default=0.0,
+                        help="(12/11 16h30, ele) a fatia dos episodios de locomocao do treino com o fogo da locomocao v1 (rumos, manobras, "
+                             "estrela, giro e parado; o comando nao) - vault 04_locomocao/plano_fogo_da_locomocao_12_11.md")
+    parser.add_argument("--locomocao-fogo-nivel", type=float, default=0.0,
+                        help="o nivel L de partida dos grupos (0 sutil - 1 o fogo do levantar de hoje); so na primeira vez")
+    parser.add_argument("--locomocao-fogo-liberdade", type=float, default=0.0,
+                        help="a liberdade sob o fogo (o rework): a perturbacao p (0-1) vezes isto abre a janela de improviso da nota, "
+                             "solta a firmeza, a inclinacao e o parado; 0 sem")
+    parser.add_argument("--locomocao-fogo-faixa", type=float, nargs=2, default=[0.0, 1.0], metavar=("MIN", "MAX"),
+                        help="(12/11 17h50, ele: 'um passo a mais na fase de fogo, ~30-50%% do que hoje e no de levantar') os niveis L dos "
+                             "grupos ficam nesta faixa: ao carregar, os abaixo sobem ao MIN; a escada nao passa dela")
+    parser.add_argument("--locomocao-fogo-fatia-inicial", type=float, default=0.0,
+                        help="(12/11 20h30) a fatia do fogo da locomocao comeca aqui (a primeira vez) e sobe 0,1 a cada 3 medidas boas do "
+                             "limpo ate --locomocao-fogo; 0: comeca nela")
+    parser.add_argument("--parado-torto-janela", type=float, default=2.5,
+                        help="(12/11 20h45) o premio da rapidez do reajuste do torto zera nestes segundos (era fixo em 2,5)")
+    parser.add_argument("--parado-torto-sem-fogo", action="store_true",
+                        help="(12/11 20h15) o parado que nasce torto fica sem o fogo da locomocao (exercicio de postura)")
+    parser.add_argument("--locomocao-fogo-estilo-livre", action="store_true",
+                        help="(12/11 20h05) enquanto a forca do fogo age (a liberdade), o peso do estilo da locomocao vai para a tarefa")
+    parser.add_argument("--locomocao-fogo-piso-grupo", nargs=2, action="append", metavar=("GRUPO", "PISO"),
+                        help="(12/11 22h35) o piso do nivel de um grupo do fogo da locomocao abaixo da faixa geral (ex.: parado 0.3)")
+    parser.add_argument("--locomocao-fogo-intervalo", type=float, default=1.0,
+                        help="(12/11 20h) a escala do intervalo depois de cada evento do fogo da locomocao (1: 1,5-3,5 s andando, 1,0-2,5 s "
+                             "parado); maior deixa trechos sem forca entre os eventos")
+    parser.add_argument("--locomocao-fogo-guarda-velocidade", type=float, nargs=3, default=[0.0, 0.0, 0.0],
+                        metavar=("TROTE", "CORRIDA", "LADO"),
+                        help="(12/11 19h55) a escada do fogo da locomocao so sobe com a velocidade do limpo (capacidade, sobre a pedida) "
+                             "a 0,05 destas: trote (frente/diagonais), corrida e trote de lado; zeros sem guarda")
+    parser.add_argument("--locomocao-fogo-congelar", action="store_true",
+                        help="a escada do fogo da locomocao sem subir (as guardas ainda descem)")
+    parser.add_argument("--locomocao-fogo-prova", type=float, default=1.0,
+                        help="o nivel L da prova de fogo da locomocao (na capacidade); 0 sem prova")
+    parser.add_argument("--parado-na-locomocao", action="store_true",
+                        help="(12/11 16h) o idle estacionado depois da parada fica na cabeca da locomocao (antes ia para a recuperacao "
+                             "1-2 s depois da ordem de parar)")
     parser.add_argument("--parada-direto-idle", action="store_true",
                         help="(11/11, ele: 'nao existe mais freio... se ele para a locomocao vai para o idle alerta e pronto') a ordem de "
                              "parar poe o alvo direto no idle alerta na vista, sem clipe de parada e sem parada livre")
@@ -2216,6 +3009,156 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(07/11) o juiz da locomocao com o Motion Matching (os bancos densos do Game Animation Sample, "
                              "tools/rl/juiz_mm_bancos.json): o contexto entra no juiz e o lado real e o quadro casado; precisa "
                              "--juiz-unreal e --estilo-loco-proprio; na primeira vez o juiz da locomocao recomeca do zero")
+    parser.add_argument("--levantar-unreal", type=float, default=0.0,
+                        help="(11/11 14h) a fatia dos episodios no levantar pelo clipe: deitado de costas ou de brucos, parado ou "
+                             "correndo, seguindo no tempo o clipe da Unreal corrigido (LEVANTAR_UNREAL), ancorado no mundo; no fim "
+                             "do clipe, de pe, a troca para a locomocao, que comanda por --levantar-unreal-depois s; as avaliacoes "
+                             "lu_costas_, lu_brucos_, lu_correndo_costas_ e lu_correndo_brucos_")
+    parser.add_argument("--levantar-unreal-meio", type=float, default=0.5,
+                        help="(11/11) a fracao dos episodios do levantar pelo clipe que comeca num instante sorteado do clipe (o RSI)")
+    parser.add_argument("--levantar-unreal-depois", type=float, default=1.5,
+                        help="(11/11) os segundos da locomocao depois da troca no levantar pelo clipe (cair neles encerra)")
+    parser.add_argument("--levantar-unreal-ruido", type=float, default=0.2,
+                        help="(11/11) a variacao da coluna e das pernas no comeco deitado (rad)")
+    parser.add_argument("--levantar-unreal-largura", type=float, default=1.0,
+                        help="(11/11) os nucleos da nota do DeepMimic divididos por isto (1: os do artigo)")
+    parser.add_argument("--levantar-unreal-vel", type=float, default=1.5,
+                        help="(11/11) a largura da nota da velocidade do centro de massa contra a do clipe (m/s)")
+    parser.add_argument("--calibrar-levantar", type=str, default="",
+                        help="(11/11) so a calibracao do levantar pelo clipe: os jeitos de agir (o professor nos motores, com ruido, "
+                             "solto no meio, deitado parado, a acao do meio, a rede de agora) nas avaliacoes lu_*, gravados neste "
+                             "JSON; nada treina e nada e salvo")
+    parser.add_argument("--levantar-unreal-variante", action="store_true",
+                        help="(11/11 18h05) a entrada levantar.variante (LEVANTAR_UNREAL_VARIANTS: 1 no de costas rolando) - sem ela os "
+                             "dois de costas comecavam iguais e o rolando imitava o normal; a coluna nova entra no checkpoint com peso zero")
+    parser.add_argument("--levantar-unreal-partes", action="store_true",
+                        help="(11/11 17h40, ele: reforcar a semelhanca com o clipe, em especial o levantar de costas) a nota do levantar "
+                             "pelo clipe com a pose e maos e pes metade do corpo inteiro e metade por parte, e mais peso na semelhanca "
+                             "(TrackingClipGetUp3D::Widths::parts); os graficos seguem na regua de antes")
+    parser.add_argument("--desvio-recuperacao", type=float, default=None,
+                        help="(11/11 20h40, ele: o levantar rolando com boa exploracao para desenvolver o movimento) o desvio da acao da "
+                             "cabeca da recuperacao nos eixos das juntas, uma vez por valor (guardado nos contadores; os reinicios nao "
+                             "repetem): o desvio dela tinha caido a 0,09 - pouco para achar um rolamento")
+    parser.add_argument("--levantar-unreal-reforco", type=float, nargs=2, default=(0.0, 200), metavar=("ALVO", "ATUALIZACOES"),
+                        help="(12/11 02h50, ele: forcar melhor a semelhanca do levantar de costas com o clipe) o reforco da pose do tronco e "
+                             "dos bracos so no de costas (TrackingClipGetUp3D::Widths::emphasis), subindo de 0 ao ALVO em ATUALIZACOES "
+                             "(o comeco guardado nos contadores; 0: nada)")
+    parser.add_argument("--levantar-unreal-agilidade", type=float, nargs=3, default=(0.0, 0.0, 100), metavar=("PARADO", "CORRENDO", "ATUALIZACOES"),
+                        help="(12/11 03h20, ele: recompensar a velocidade e a agilidade de levantar, e no correndo o impulso) o relogio do "
+                             "clipe acompanha o corpo (ate 1,75x) e o premio e o peso x a nota x o adiantamento; o peso dos dois de pe e o "
+                             "dos dois correndo, subindo ao alvo em ATUALIZACOES (o comeco nos contadores; 0 0: o relogio so com o tempo)")
+    parser.add_argument("--levantar-adaptativo", action="store_true",
+                        help="(12/11 04h40, ele: a fase de fogo do levantar, '100%% adaptativo, o clipe perde tanto rigor') os exercicios do "
+                             "clipe sem o rastreio na nota: a do levantar livre (o potencial da subida, de pe, os custos; correndo, o "
+                             "deslocamento pedido) e o juiz no estilo (--peso-estilo), sem o longe; a troca quando firme")
+    parser.add_argument("--levantar-adaptativo-velocidade", type=float, default=0.0,
+                        help="(12/11 05h00, ele: continuar a recompensa da velocidade e da agilidade) no levantar adaptativo, na entrega "
+                             "(depois de firme): isto x a fracao do tempo do clipe ate o ponto de entrega que ele poupou")
+    parser.add_argument("--levantar-tentar", action="store_true",
+                        help="(12/11 08h30, ele: \"tentar se levantar novamente, APOS fracassar... (nunca desistir)\") no levantar adaptativo, o "
+                             "fracasso abre uma nova tentativa (o relogio do clipe ao comeco, no lado em que ele esta; o orcamento recomeca)")
+    # (12/11 12h30, a fase 2 - ele: "deixo tudo a seu criterio a elevacao da fase de fogo") As adversidades novas (so no treino).
+    parser.add_argument("--levantar-fogo-serie", type=int, default=1,
+                        help="ate quantas pancadas por episodio com pancada, antes de ficar de pe (1: so uma, como antes)")
+    parser.add_argument("--levantar-fogo-serie-intervalo", type=float, nargs=2, default=(0.4, 1.2), metavar=("MIN", "MAX"),
+                        help="(13h05) o intervalo da serie: a pancada seguinte MIN-MAX s depois do fim da anterior")
+    parser.add_argument("--levantar-fogo-pancada-duracao", type=float, nargs=2, default=(0.1, 0.2), metavar=("MIN", "MAX"),
+                        help="(13h30) a duracao da pancada fora da prova (s): o mesmo empurrao com menos pico")
+    parser.add_argument("--levantar-fogo-pancada-newtons", type=float, nargs=2, default=(0.0, 0.0), metavar=("MIN", "MAX"),
+                        help="(13h40, ele: 'as medias de 350-800') a forca da pancada fora da prova sorteada entre MIN e MAX N; 0 0: pelo nivel")
+    parser.add_argument("--levantar-fogo-congelar", action="store_true",
+                        help="(13h30, ele: 'nao precisamos intensificar mais') a escada do fogo nao sobe; a guarda do limpo e o travado podem descer")
+    parser.add_argument("--levantar-fogo-rasteira", type=float, default=0.0, help="a fracao das pancadas nas pernas (coxa, canela, pe)")
+    parser.add_argument("--levantar-fogo-prensado", type=float, nargs=3, default=(0.0, 0.5, 3.0), metavar=("FRACAO", "MIN", "MAX"),
+                        help="a fracao dos episodios com o continuo com uma parede do lado para onde ele empurra, a MIN-MAX m")
+    parser.add_argument("--levantar-fogo-vento", type=float, nargs=2, default=(0.0, 1.5), metavar=("FRACAO", "SEGUNDOS"),
+                        help="a fracao dos episodios com o continuo em que ele troca de rumo a cada ~SEGUNDOS")
+    parser.add_argument("--levantar-fogo-depois-de-pe", type=float, default=0.0,
+                        help="a fracao dos episodios com pancada que leva mais uma logo depois de ficar de pe (na janela de firmeza)")
+    parser.add_argument("--levantar-fogo-escorregadio", type=float, default=0.0,
+                        help="a fracao dos episodios com fogo sobre a grama molhada (placa de 20 x 20 m)")
+    parser.add_argument("--levantar-fogo-agarrao", type=float, nargs=2, default=(0.0, 0.3), metavar=("FRACAO", "PESO"),
+                        help="a fracao dos episodios com fogo com um agarrao numa mao (PESO x o peso, 0,5-1,5 s, antes de ficar de pe)")
+    parser.add_argument("--levantar-fogo-faixa", type=float, nargs=2, default=None, metavar=("BAIXO", "ALTO"),
+                        help="a escada do fogo segura o levantou nesta faixa (a calibracao da fase 2: 0.30 0.50); sem: a escada de dominio")
+    parser.add_argument("--levantar-paredes", type=float, nargs=2, default=(0.0, 0.0), metavar=("MIN", "MAX"),
+                        help="(12/11 09h15, ele: paredes a ~20-50 m do nascimento so nos treinos de levantar) no levantar pelo clipe, quatro "
+                             "paredes em quadrado a uma distancia sorteada por episodio entre MIN e MAX m; 0 0: sem")
+    parser.add_argument("--levantar-fogo-contra-corrida", type=float, default=0.0,
+                        help="(12/11 08h45) nos correndo, a parte da forca continua do fogo contra a corrida limitada a isto x o peso (0: sem)")
+    parser.add_argument("--levantar-fogo-soltar", type=float, default=0.15,
+                        help="(12/11 07h55) o soltar da forca continua do fogo depois da entrega (s, linear ate zero)")
+    parser.add_argument("--levantar-tempo-alvo", type=float, nargs=2, default=(0.0, 0.0), metavar=("MIN", "MAX"),
+                        help="(12/11 13h45, ele: os tempos limpos em 1-1,2 s, nem mais rapido nem mais lento) o premio da velocidade vira o da "
+                             "faixa: inteiro com o tempo da tentativa entre MIN e MAX s; 0 0: o premio de antes (mais rapido, mais premio)")
+    parser.add_argument("--levantar-tempo-alvo-correndo", type=float, nargs=2, default=(0.0, 0.0), metavar=("MIN", "MAX"),
+                        help="(13/11 07h45, ele: de costas e de brucos em 1,3-1,4 s, os correndo em 1,2 s) a faixa do tempo dos correndo a "
+                             "parte; 0 0: a de --levantar-tempo-alvo para todos")
+    parser.add_argument("--levantar-fogo-pancada-cedo", type=float, nargs=2, default=(0.0, 1.0), metavar=("FRACAO", "JANELA"),
+                        help="(13/11 09h35, ele: a maioria das pancadas no primeiro segundo, enquanto ainda levanta) a fracao dos episodios "
+                             "com a primeira pancada pelo tempo, de 0,05 s a JANELA s; o resto pela altura da cabeca; 0: o sorteio de antes")
+    parser.add_argument("--levantar-tempo-queda", type=float, default=0.5,
+                        help="(13/11 07h55) em quantos segundos fora da faixa do tempo o premio dela zera (o de antes: 0,5)")
+    parser.add_argument("--parado-quadril-nivel", type=float, default=0.0, metavar="PESO",
+                        help="(13/11 14h, ele: no parado 'o quadril dele retinho alinhado'; medido -14,9 graus de lado, o clipe 0) no parado, "
+                             "um custo por passo de PESO x (1 - e^-(inclinacao de lado da pelve / 6 graus)^2); 0: nada")
+    parser.add_argument("--levantar-forma-mao", type=float, default=0.0, metavar="PESO",
+                        help="(13/11 13h30, ele: sem melhora na mao virada; dentro da forma ela custava ~2 por levantar) com --levantar-forma, a "
+                             "mao apoiada virada com peso proprio: por passo, PESO x (1 - nota da mao); 0: dentro da nota da forma")
+    parser.add_argument("--levantar-fogo-soltar-firme", action="store_true",
+                        help="(13/11 12h55, com a troca direta: sob fogo 42-51%% caiam 0,4-1 s depois da entrega, inclinados contra o continuo que "
+                             "sumia ja no idle) o soltar do continuo (--levantar-fogo-soltar s) comeca no primeiro firme de pe, nao na entrega")
+    parser.add_argument("--levantar-forma", type=float, default=0.0, metavar="PESO",
+                        help="(13/11 11h30, ele: 'essa cabeca e peito torto quando levanta') na subida e na firmeza do levantar adaptativo, "
+                             "um custo por passo de PESO x (1 - forma): a cabeca contra o peito (para tras, de lado) e a torcao do peito contra "
+                             "a pelve, contra a media do clipe na mesma altura da cabeca, com folga de 8 graus; 0: nada")
+    parser.add_argument("--levantar-tempo-fogo", type=float, default=-1.0, metavar="FOLGA",
+                        help="(13/11 10h55, medido: sob fogo o levantar leva 0,2-0,8 s a mais, e a faixa nos dois prendia o tempo no meio) "
+                             "no levantar com fogo a faixa vira so um teto, o maximo dela + FOLGA s, sem piso; o ritmo fica pelos limpos; "
+                             "< 0: a faixa nos dois (o de antes)")
+    parser.add_argument("--levantar-calma", type=float, default=0.0,
+                        help="(13/11 07h45, ele: a postura nao estabanada e o auto-equilibrio no pos levantar) no levantar de pe, de pe com a "
+                             "recuperacao no comando: a nota de ficar de pe vira (1 - isto) x ela + isto x a calma (centro de massa parado, peito "
+                             "sem girar, captura na base, os dois pes no chao); 0: sem")
+    parser.add_argument("--levantar-impulso-corrida", type=float, default=0.0,
+                        help="(13h45) nos correndo, na entrega: isto x a velocidade ao alvo de 60%% (zero) a 100%% (inteiro) do pedido")
+    parser.add_argument("--estilo-limpo", type=float, default=None,
+                        help="(15h20, ele: 'no limpo e interessante que o juiz de estilo recompense adequadamente') o peso do estilo nas linhas "
+                             "do levantar sem forca externa (a entrada do fogo zerada: o limpo e a firmeza depois da forca soltar); sem: o de sempre")
+    parser.add_argument("--levantar-troca-calma", type=float, nargs=3, default=(0.0, 1.5, 1.8), metavar=("VEL", "MAX", "MAX_CORRENDO"),
+                        help="(15h05, a analise: sob fogo 40-80 por cento caiam depois de ficar de pe, na troca por tempo fixo) a troca para a "
+                             "locomocao so quando calmo (de pe: centro de massa < VEL m/s; correndo: ereto e >= 80 por cento do pedido), no "
+                             "maximo MAX s depois da entrega (correndo, MAX_CORRENDO); 0: por tempo, como antes")
+    parser.add_argument("--levantar-pose-variada", type=float, default=0.0,
+                        help="(14h30, ele: levantar independente da posicao) a fracao dos comecos deitados com a pose girada 60-180 graus no "
+                             "comprido do corpo; o clipe pelo lado em que ele ficou")
+    parser.add_argument("--levantar-velocidade-corrida", type=float, nargs=2, default=(0.0, 0.0), metavar=("PESO", "JANELA"),
+                        help="(14h05, ele: premiar a velocidade da corrida pos-levantar) nos correndo, depois de ficar de pe e antes da troca: "
+                             "PESO x a velocidade ao alvo sobre a pedida a cada decisao; JANELA: a janela da rede do levantar nos correndo (s)")
+    parser.add_argument("--levantar-adaptativo-firmeza", type=float, default=0.0,
+                        help="(12/11 07h50) no levantar adaptativo, a rede do levantar segue no controle por isto (s) depois da entrega antes "
+                             "da troca (a entrega e a forca parando seguem no de pe); 0: a troca na entrega")
+    parser.add_argument("--levantar-fogo", type=float, nargs=4, default=(0.0, 0.0, 0.0, 0.0),
+                        metavar=("LIMPO", "PANCADA", "CONTINUO", "COMBINADO"),
+                        help="(12/11 04h40) as fatias dos cenarios do levantar com fogo (vault plano_fogo_do_levantar_12_11); 0: sem fogo")
+    parser.add_argument("--levantar-fogo-entrada", action="store_true",
+                        help="(12/11 06h40, ele: 'forcar a adaptacao inteligente a conseguir enfrentar as adversidades') as 6 entradas do "
+                             "fogo antes da habilidade: a forca externa no corpo (em pesos) e a aceleracao do centro de massa (em g), no rumo "
+                             "do corpo; na primeira vez, colunas em zero (a rede faz o mesmo de antes)")
+    parser.add_argument("--levantar-fogo-de-cima", type=float, default=0.0,
+                        help="(12/11 05h15, ele: 'algumas variantes que vem de CIMA para baixo, mesmo que poucas') a fracao dos cenarios com "
+                             "fogo em que a forca vem de cima, inclinada 45-80 graus para baixo (a pancada no alto do tronco)")
+    parser.add_argument("--levantar-fogo-niveis", type=str, default="",
+                        help="(12/11 04h40) o JSON dos niveis de partida (a F0: a forca que hoje faz falhar ~100%%), uma vez nos contadores")
+    parser.add_argument("--levantar-unreal-prioridade", type=float, default=0.0,
+                        help="(11/11 16h25) > 0: o sorteio dos 4 exercicios do levantar pelo clipe pela dificuldade - o peso de cada um e "
+                             "este piso mais a fracao que nao entrega (ultimos episodios do treino); 0: os quatro iguais")
+    parser.add_argument("--congelar-locomocao", action="store_true",
+                        help="(11/11) com as habilidades separadas, so a cabeca da recuperacao aprende; a da locomocao, o critico "
+                             "dela, o juiz dela e a normalizacao dela ficam como vieram")
+    parser.add_argument("--recuperacao-norma", action="store_true",
+                        help="(11/11) a normalizacao das entradas da recuperacao aprende com as linhas dela (a cabeca do levantar "
+                             "recomecada do zero; sem isto ela fica como veio)")
     parser.add_argument("--levantar-deitado", action="store_true",
                         help="(07/11) os comecos no clipe (--comeco-clipe) deitados de costas ou de brucos e o levantar em movimento "
                              "(--movimento) deitado, das levantadas da Unreal; as avaliacoes costas_ e brucos_ (precisa --juiz-unreal)")
@@ -2246,11 +3189,14 @@ def build_parser() -> argparse.ArgumentParser:
 def aplicar_receita(parser: argparse.ArgumentParser, args) -> None:
     """As validacoes, os padroes derivados e o estado de modulo que a receita liga (10/11: fora do main)."""
     STAR_SECONDS[0] = args.estrela_segundos
+    STAR_PATH_WIDTH[0] = args.estrela_caminho[1] if args.estrela_caminho[0] > 0 else 0.0
     COMMAND_SECONDS[0] = args.comando_segundos
     if args.juiz_mm and not (args.juiz_unreal and args.estilo_loco_proprio):
         raise SystemExit("--juiz-mm precisa de --juiz-unreal e --estilo-loco-proprio")
     if args.levantar_deitado and not args.juiz_unreal:
         raise SystemExit("--levantar-deitado precisa de --juiz-unreal (os clipes deitados sao os da Unreal)")
+    if args.congelar_locomocao and (args.congelar_recuperacao or not args.habilidades_separadas):
+        parser.error("--congelar-locomocao exige --habilidades-separadas e nao combina com --congelar-recuperacao")
     if args.levantar_clipe:
         # (O levantar pelo clipe e o guiado no tempo do proprio clipe, com o exercicio dele na forca dinamica.)
         args.levantar_guiado, args.levantar_segundos = True, 0.0
@@ -2267,10 +3213,15 @@ def aplicar_receita(parser: argparse.ArgumentParser, args) -> None:
         BATCH_EXTRA.update(balance_observation=True, step_channels=True)
     if args.parado_ancora_obs:
         BATCH_EXTRA.update(idle_anchor_observation=True)
+    if args.levantar_unreal_variante:
+        BATCH_EXTRA.update(clip_variant_observation=True)
+    if args.levantar_fogo_entrada:
+        BATCH_EXTRA.update(fire_observation=True)
     if args.parado_segundos > 0:
         # (11/11 10h30: os episodios do parado de 6 para isto - o RL v1, que ficou imovel, treinava 20 s; ficar parado mais de ~5 s
         # quase nunca era treinado. As avaliacoes passam a propria duracao e ficam como estao.)
         BATCH_EXTRA.update(episode_seconds=args.parado_segundos)
+        IDLE_SECONDS[0] = args.parado_segundos
     VELOCITY_ACTIONS[0] = bool(args.acao_velocidade)
 
 
@@ -2280,6 +3231,63 @@ def ler_receita(argv: list[str]):
     args = parser.parse_args(argv)
     aplicar_receita(parser, args)
     return args
+
+
+def configurar_levantar(b, args, fraction: float) -> None:
+    """(12/11 18h, o levantar pelo clipe num lote - o do treino, ou uma sonda/regua que precise dele: o comando ligado ao levantar) Os
+    clipes da Unreal, a fracao dos episodios de levantar (0: so para o levantar do meio do episodio), o adaptativo e o nunca desistir, as
+    janelas e as adversidades - como no main."""
+    b.add_style_clips(LEVANTAR_UNREAL)
+    b.set_clip_get_up(LEVANTAR_UNREAL, fraction, args.levantar_unreal_meio, args.levantar_unreal_depois,
+                          args.levantar_unreal_ruido, args.levantar_unreal_largura, args.levantar_unreal_vel)
+    b.set_clip_get_up_parts(args.levantar_unreal_partes)
+    b.set_clip_get_up_variants(list(LEVANTAR_UNREAL_VARIANTS))
+    if hasattr(b, "set_clip_get_up_deliver"):
+        b.set_clip_get_up_deliver(list(LEVANTAR_UNREAL_DELIVER))
+    if hasattr(b, "set_clip_get_up_agility"):
+        b.set_clip_get_up_agility(clip_get_up_agility(args, None))
+    if args.levantar_adaptativo:
+        b.set_clip_get_up_adaptive(True)
+        b.set_adaptive_speed_bonus(args.levantar_adaptativo_velocidade)
+        if hasattr(b, "set_adaptive_timing"):
+            b.set_adaptive_timing(*args.levantar_tempo_alvo, args.levantar_impulso_corrida)
+        if max(args.levantar_tempo_alvo_correndo) > 0:
+            b.set_adaptive_timing_run(*args.levantar_tempo_alvo_correndo)
+        if args.levantar_tempo_queda != 0.5:
+            b.set_adaptive_time_fall(args.levantar_tempo_queda)
+        if args.levantar_tempo_fogo >= 0:
+            b.set_adaptive_time_fire(args.levantar_tempo_fogo)
+        if args.levantar_forma > 0:
+            b.set_get_up_form(args.levantar_forma)
+        if args.levantar_fogo_soltar_firme:
+            b.set_get_up_fire_release_at_firm(True)
+        if args.levantar_forma_mao > 0:
+            b.set_get_up_palm(args.levantar_forma_mao)
+        if args.levantar_calma > 0:
+            b.set_settle_calm(args.levantar_calma)
+        if hasattr(b, "set_run_post_rise"):
+            b.set_run_post_rise(*args.levantar_velocidade_corrida)
+        if args.levantar_pose_variada > 0:
+            b.set_get_up_pose_variety(args.levantar_pose_variada)
+        if args.levantar_troca_calma[0] > 0:
+            b.set_calm_handoff(*args.levantar_troca_calma)
+        if hasattr(b, "set_adaptive_settle"):
+            b.set_adaptive_settle(args.levantar_adaptativo_firmeza, args.levantar_fogo_soltar)
+        if args.levantar_correndo_troca >= 0 and hasattr(b, "set_run_handoff_at_stand"):
+            b.set_run_handoff_at_stand(True, args.levantar_correndo_troca)
+        if args.levantar_e_ir[0] > 0 and hasattr(b, "set_get_up_go"):
+            b.set_get_up_go(*args.levantar_e_ir)
+        if args.levantar_tentar:
+            b.set_adaptive_retry(True)
+        if args.levantar_fogo_contra_corrida > 0:
+            b.set_fire_run_headwind_cap(args.levantar_fogo_contra_corrida)
+        if max(args.levantar_paredes) > 0:
+            b.set_get_up_arena(*args.levantar_paredes)
+        if hasattr(b, "set_get_up_fire_extras"):
+            b.set_get_up_fire_extras(*fire_extras(args))
+        if args.levantar_fogo_pancada_cedo[0] > 0:
+            b.set_get_up_fire_early(*args.levantar_fogo_pancada_cedo)
+    b.set_clip_get_up_start_bias(list(LEVANTAR_UNREAL_START_BIAS))
 
 
 def configurar(b, args, counters: dict, training: bool) -> None:
@@ -2331,6 +3339,10 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         # (08/11: a estrela so no treino - a fatia; nas avaliacoes, so as dela.)
         b.set_star(args.estrela if training else 0.0, [float(x) for x in counters["estrela_pesos"]],
                    [int(x) for x in counters["estrela_fases"]], args.estrela_segundos)
+        if (args.estrela_caminho[0] > 0 or args.estrela_curvas[0] > 0) and hasattr(b, "set_star_rework"):
+            b.set_star_rework(*args.estrela_caminho, *args.estrela_curvas)
+    if args.comando_levantar and hasattr(b, "set_command_get_up"):
+        b.set_command_get_up(True, args.comando_levantar_correndo)
     if args.fogo >= 0 and training:
         hit, hold = fire_bands(counters["fogo_nivel"])
         b.set_fire(args.fogo_fatia, hit, hold, FIRE_HOLD_SECONDS, FIRE_HOLD_FRACTION)
@@ -2397,12 +3409,16 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_stop_to_idle(args.parada_direto_idle)
     if hasattr(b, "set_idle_after_stop"):
         b.set_idle_after_stop(args.idle_depois_freada)
+    if hasattr(b, "set_parked_on_locomotion"):
+        b.set_parked_on_locomotion(args.parado_na_locomocao)
     if hasattr(b, "set_turn_variety"):
         b.set_turn_variety(args.giro_variado, args.giro_coluna)
     if hasattr(b, "set_still_cost"):
         b.set_still_cost(args.quieto_custos)
     if hasattr(b, "set_idle_static"):
         b.set_idle_static(args.parado_estatico)
+    if args.parado_quadril_nivel > 0:
+        b.set_idle_pelvis_level(args.parado_quadril_nivel)
     if hasattr(b, "set_idle_costs"):
         b.set_idle_costs(args.parado_micro, args.parado_fora_pose)
     if hasattr(b, "set_idle_reward"):
@@ -2555,6 +3571,19 @@ def main() -> int:
     # evitar a queda com as mesmas forcas e velocidades do treino.)
     info = json.loads((run / "run.json").read_text())
     info["v2"] = {"movimento": args.movimento, "evitar": args.evitar, "arrancada": args.arrancada,
+                  "levantar_unreal": args.levantar_unreal, "levantar_unreal_depois": args.levantar_unreal_depois,
+                  "levantar_unreal_largura": args.levantar_unreal_largura, "levantar_unreal_vel": args.levantar_unreal_vel,
+                  "levantar_unreal_partes": bool(args.levantar_unreal_partes),
+                  "levantar_unreal_agilidade": list(args.levantar_unreal_agilidade),
+                  "levantar_unreal_entrega": list(LEVANTAR_UNREAL_DELIVER),
+                  "levantar_adaptativo": bool(args.levantar_adaptativo), "levantar_adaptativo_firmeza": args.levantar_adaptativo_firmeza, "levantar_tempo_alvo": list(args.levantar_tempo_alvo), "levantar_tempo_alvo_correndo": list(args.levantar_tempo_alvo_correndo), "levantar_calma": args.levantar_calma, "levantar_tempo_queda": args.levantar_tempo_queda, "levantar_tempo_fogo": args.levantar_tempo_fogo, "levantar_forma": args.levantar_forma, "levantar_fogo_soltar_firme": bool(args.levantar_fogo_soltar_firme), "levantar_forma_mao": args.levantar_forma_mao, "parado_quadril_nivel": args.parado_quadril_nivel, "levantar_fogo_pancada_cedo": list(args.levantar_fogo_pancada_cedo),
+                  "levantar_impulso_corrida": args.levantar_impulso_corrida, "levantar_velocidade_corrida": list(args.levantar_velocidade_corrida), "levantar_pose_variada": args.levantar_pose_variada, "levantar_troca_calma": list(args.levantar_troca_calma), "levantar_fogo_soltar": args.levantar_fogo_soltar, "levantar_tentar": bool(args.levantar_tentar), "levantar_fogo_contra_corrida": args.levantar_fogo_contra_corrida, "levantar_paredes": list(args.levantar_paredes), "levantar_fogo_extras": list(fire_extras(args)), "levantar_fogo": list(args.levantar_fogo),
+                  "levantar_fogo_de_cima": args.levantar_fogo_de_cima,
+                  "levantar_fogo_entrada": bool(args.levantar_fogo_entrada),
+                  "levantar_fogo_prova": ({k: v for k, v in json.loads(Path(args.levantar_fogo_niveis).read_text()).items()
+                                           if k in LEVANTAR_UNREAL_KEYS} if args.levantar_fogo_niveis else {}),
+                  "levantar_unreal_variante": bool(args.levantar_unreal_variante),
+                  "congelar_locomocao": bool(args.congelar_locomocao), "recuperacao_norma": bool(args.recuperacao_norma),
                   "deitado": bool(args.levantar_deitado), "juiz_unreal": bool(args.juiz_unreal),
                   "preservar_peso": args.preservar_peso, "habilidades_separadas": args.habilidades_separadas,
                   "rastreio": True, "recompensa_rastreio": 19, "rastreio_encerra": args.rastreio_encerra, "residuo": 0.0,
@@ -2596,7 +3625,7 @@ def main() -> int:
                   "velocidades_trote": gait_speeds(args.velocidade_trote),
                   "velocidades_corrida": gait_speeds(args.velocidade_corrida),
                   "largada_costas": args.largada_costas, "curva_fora": args.curva_fora, "curva_inclinar": args.curva_inclinar, "pisada_largura": args.pisada_largura,
-                  "troca_freio": args.troca_freio, "troca_pe": args.troca_pe, "troca_assentada": args.troca_assentada, "troca_arrancada": args.troca_arrancada, "troca_pratica": args.troca_pratica, "corrida_largada": args.corrida_largada, "rumo_cauda": args.rumo_cauda, "inclinacao_cauda": args.inclinacao_cauda, "sem_penhascos": args.sem_penhascos, "penhascos_partes": args.penhascos_partes, "arrancada_pulo": args.arrancada_pulo, "largada_lado": args.largada_lado, "troca_assentada_lado": args.troca_assentada_lado, "troca_assentada_frente": args.troca_assentada_frente, "troca_giro_tempo": args.troca_giro_tempo, "parada_passada": args.parada_passada, "idle_pose": args.idle_pose, "parada_clipes_frente": args.parada_clipes_frente, "parada_clipes_comando": args.parada_clipes_comando, "parada_portao": args.parada_portao, "parada_livre": args.parada_livre, "parada_postura": args.parada_postura, "parada_pose_sempre": args.parada_pose_sempre, "parado_unico": args.parado_unico, "parada_direto_idle": args.parada_direto_idle, "idle_depois_freada": args.idle_depois_freada, "giro_variado": args.giro_variado, "giro_coluna": args.giro_coluna, "quieto_custos": args.quieto_custos, "parado_estatico": args.parado_estatico, "parado_segundos": args.parado_segundos, "parado_micro": args.parado_micro, "parado_fora_pose": args.parado_fora_pose, "parado_recompensa": args.parado_recompensa, "rigor_superior": args.rigor_superior, "arrancada_unreal": args.arrancada_unreal, "arrancada_unreal_escala": args.arrancada_unreal_escala, "largada_viva": args.largada_viva, "largada_passo": args.largada_passo, "largada_no_lugar": args.largada_no_lugar, "largada_bracos_calmos": args.largada_bracos_calmos, "coluna_sem_velocidade": args.coluna_sem_velocidade, "ruido_parado": args.ruido_parado, "tonus": args.tonus, "postura_cauda": args.postura_cauda, "tonus_coluna": args.tonus_coluna, "custo_batente": args.custo_batente, "pes_firmes": args.pes_firmes, "gravidade_motores": args.gravidade_motores, "postura_base": args.postura_base, "largada_clipe": args.largada_clipe, "largada_mao": args.largada_mao, "parada_clipes_base": args.parada_clipes_base, "parada_variantes": args.parada_variantes, "parada_variantes_mascara": args.parada_variantes_mascara, "parada_entrada": args.parada_entrada, "troca_livre": args.troca_livre, "parada_pose": args.parada_pose, "parado_livre": args.parado_livre, "pose_reforco": args.pose_reforco, "empurrao_livre": args.empurrao_livre, "parado_semelhanca": args.parado_semelhanca, "passo_baixo": args.passo_baixo, "parado_dobrado_encerra": args.parado_dobrado_encerra, "parado_largo": args.parado_largo, "simetria_ciclos": args.simetria_ciclos, "peso_tarefa_parado": args.peso_tarefa_parado, "peso_estilo_parado": args.peso_estilo_parado, "troca_assentada_costas": args.troca_assentada_costas, "troca_peito_fixo": args.troca_peito_fixo, "capacidade_minutos": args.capacidade_minutos, "pegada_cruzada": args.pegada_cruzada, "estab_ancora": args.estab_ancora,
+                  "troca_freio": args.troca_freio, "troca_pe": args.troca_pe, "troca_assentada": args.troca_assentada, "troca_arrancada": args.troca_arrancada, "troca_pratica": args.troca_pratica, "corrida_largada": args.corrida_largada, "rumo_cauda": args.rumo_cauda, "inclinacao_cauda": args.inclinacao_cauda, "sem_penhascos": args.sem_penhascos, "penhascos_partes": args.penhascos_partes, "arrancada_pulo": args.arrancada_pulo, "largada_lado": args.largada_lado, "troca_assentada_lado": args.troca_assentada_lado, "troca_assentada_frente": args.troca_assentada_frente, "troca_giro_tempo": args.troca_giro_tempo, "parada_passada": args.parada_passada, "idle_pose": args.idle_pose, "parada_clipes_frente": args.parada_clipes_frente, "parada_clipes_comando": args.parada_clipes_comando, "parada_portao": args.parada_portao, "parada_livre": args.parada_livre, "parada_postura": args.parada_postura, "parada_pose_sempre": args.parada_pose_sempre, "parado_unico": args.parado_unico, "parada_direto_idle": args.parada_direto_idle, "idle_depois_freada": args.idle_depois_freada, "parado_na_locomocao": args.parado_na_locomocao, "parado_torto": args.parado_torto, "estrela_caminho": args.estrela_caminho, "estrela_curvas": args.estrela_curvas, "comando_levantar": args.comando_levantar, "comando_levantar_correndo": args.comando_levantar_correndo, "levantar_correndo_troca": args.levantar_correndo_troca, "levantar_e_ir": list(args.levantar_e_ir), "locomocao_fogo": args.locomocao_fogo, "locomocao_fogo_liberdade": args.locomocao_fogo_liberdade, "locomocao_fogo_intervalo": args.locomocao_fogo_intervalo, "parado_torto_sem_fogo": args.parado_torto_sem_fogo, "locomocao_fogo_prova": args.locomocao_fogo_prova, "giro_variado": args.giro_variado, "giro_coluna": args.giro_coluna, "quieto_custos": args.quieto_custos, "parado_estatico": args.parado_estatico, "parado_segundos": args.parado_segundos, "parado_micro": args.parado_micro, "parado_fora_pose": args.parado_fora_pose, "parado_recompensa": args.parado_recompensa, "rigor_superior": args.rigor_superior, "arrancada_unreal": args.arrancada_unreal, "arrancada_unreal_escala": args.arrancada_unreal_escala, "largada_viva": args.largada_viva, "largada_passo": args.largada_passo, "largada_no_lugar": args.largada_no_lugar, "largada_bracos_calmos": args.largada_bracos_calmos, "coluna_sem_velocidade": args.coluna_sem_velocidade, "ruido_parado": args.ruido_parado, "tonus": args.tonus, "postura_cauda": args.postura_cauda, "tonus_coluna": args.tonus_coluna, "custo_batente": args.custo_batente, "pes_firmes": args.pes_firmes, "gravidade_motores": args.gravidade_motores, "postura_base": args.postura_base, "largada_clipe": args.largada_clipe, "largada_mao": args.largada_mao, "parada_clipes_base": args.parada_clipes_base, "parada_variantes": args.parada_variantes, "parada_variantes_mascara": args.parada_variantes_mascara, "parada_entrada": args.parada_entrada, "troca_livre": args.troca_livre, "parada_pose": args.parada_pose, "parado_livre": args.parado_livre, "pose_reforco": args.pose_reforco, "empurrao_livre": args.empurrao_livre, "parado_semelhanca": args.parado_semelhanca, "passo_baixo": args.passo_baixo, "parado_dobrado_encerra": args.parado_dobrado_encerra, "parado_largo": args.parado_largo, "simetria_ciclos": args.simetria_ciclos, "peso_tarefa_parado": args.peso_tarefa_parado, "peso_estilo_parado": args.peso_estilo_parado, "troca_assentada_costas": args.troca_assentada_costas, "troca_peito_fixo": args.troca_peito_fixo, "capacidade_minutos": args.capacidade_minutos, "pegada_cruzada": args.pegada_cruzada, "estab_ancora": args.estab_ancora,
                   "trote_frente_inclinar": list(args.trote_frente_inclinar),
                   "corrida_inclinar": list(args.corrida_inclinar),
                   "corrida_costas_inclinar": list(args.corrida_costas_inclinar),
@@ -2765,6 +3794,12 @@ def main() -> int:
             batch.set_moving_handoff(True)
             batch.reset(args.semente)
             print(f"comecos deitados: {LYING_STAND} (clipe) e {LYING_RUN} (levantar correndo)", flush=True)
+        if args.levantar_unreal > 0:
+            configurar_levantar(batch, args, args.levantar_unreal)
+            batch.reset(args.semente)
+            ends = batch.clip_get_up_ends()
+            print("levantar pelo clipe: " + "; ".join(f"{k} {ends[3 * i]:.2f} s, {ends[3 * i + 1]:.2f} m/s no fim"
+                                                     for i, k in enumerate(LEVANTAR_UNREAL_KEYS)), flush=True)
         reference = torch.as_tensor(batch.reference_pairs_of(unreal_recovery + list(UNREAL_KEEP_RECOVERY)), device=device)
         print(f"juiz da Unreal: {added} clipes carregados; recuperacao {len(reference)} pares de {len(unreal_recovery)} levantadas "
               f"+ {UNREAL_KEEP_RECOVERY}", flush=True)
@@ -2830,6 +3865,17 @@ def main() -> int:
         if anchor_at is not None:
             source_state = insert_inputs(source_state, anchor_at, 2)
             print(f"ancora do parado na entrada: 2 colunas novas em zero na posicao {anchor_at}", flush=True)
+        # (18h05: a variante do levantar pelo clipe - uma coluna antes da habilidade, peso zero: as duas cabecas fazem o mesmo.)
+        variant_at = source_state[first].shape[1] - 1 if args.levantar_unreal_variante and source_state[first].shape[1] == obs_size - 1 else None
+        if variant_at is not None:
+            source_state = insert_inputs(source_state, variant_at, 1)
+            print(f"variante do levantar na entrada: 1 coluna nova em zero na posicao {variant_at}", flush=True)
+        # (12/11 06h40: as 6 entradas do fogo antes da habilidade, depois da variante; peso zero: a rede faz o mesmo de antes.)
+        fire_at = source_state[first].shape[1] - 1 \
+            if args.levantar_fogo_entrada and source_state[first].shape[1] == obs_size - 6 else None
+        if fire_at is not None:
+            source_state = insert_inputs(source_state, fire_at, 6)
+            print(f"entradas do fogo: 6 colunas novas em zero na posicao {fire_at}", flush=True)
         grown = source_state[first].shape[1] < obs_size or (args.habilidades_separadas and first == "actor.0.weight")
         # (04/11 15h, os passos: a rede de antes no layout do equilibrio - as entradas antes da habilidade, os canais do passo.)
         old_inputs = source_state[first].shape[1]
@@ -2872,8 +3918,14 @@ def main() -> int:
                     # (Os grupos do Adam mudaram: o ator do zero.)
                     print("adam do ator do zero (grupos novos)", flush=True)
             critic_opt.load_state_dict(state["critic_opt"])
+            if variant_at is not None:
+                print(f"adam com a variante: {insert_adam_inputs(actor_opt, variant_at, 1) + insert_adam_inputs(critic_opt, variant_at, 1)} "
+                      "momentos com a coluna nova", flush=True)
             if anchor_at is not None:
                 print(f"adam com a ancora: {insert_adam_inputs(actor_opt, anchor_at, 2) + insert_adam_inputs(critic_opt, anchor_at, 2)} "
+                      "momentos com as colunas novas", flush=True)
+            if fire_at is not None:
+                print(f"adam com o fogo: {insert_adam_inputs(actor_opt, fire_at, 6) + insert_adam_inputs(critic_opt, fire_at, 6)} "
                       "momentos com as colunas novas", flush=True)
         if not fresh_judges:
             disc_opt.load_state_dict(state["disc_opt"])
@@ -3047,6 +4099,14 @@ def main() -> int:
         counters["loco_da_recuperacao_v"] = 2
         print(f"cabeca da locomocao = copia da recuperacao (comando zerado: colunas {command})", flush=True)
 
+    if args.congelar_locomocao:
+        # (11/11 14h: a locomocao congelada de verdade - sem gradiente: fora do PPO ela ja ficava pela mascara, mas a simetria e a
+        # ancora tambem mexiam na cabeca dela. O Adam pula parametro sem gradiente.)
+        frozen = list(model.actor.locomotion.parameters()) + list(model.critic.locomotion.parameters()) + [model.loco_log_std]
+        for parameter in frozen:
+            parameter.requires_grad_(False)
+        print(f"locomocao congelada: {sum(x.numel() for x in frozen)} parametros sem gradiente", flush=True)
+
     # (04/11: num treino novo com --de a copia vem depois da rede de origem - antes ela era apagada pela carga.)
     if args.loco_da_recuperacao and model.split and counters.get("loco_da_recuperacao_v") != 2 and checkpoint.exists():
         copy_recovery_to_locomotion()
@@ -3060,6 +4120,8 @@ def main() -> int:
         # (A taxa de cada cabeca que o ajuste achou, ao retomar.)
         for group, lr in zip(actor_opt.param_groups, counters.get("taxa_cabecas", [args.taxa_ator, args.taxa_ator])):
             group["lr"] = lr
+        if args.taxa_adaptativa_loco == 0:
+            actor_opt.param_groups[1]["lr"] = args.taxa_ator
         print(f"taxa adaptativa (KL alvo {args.taxa_adaptativa}): recuperacao {actor_opt.param_groups[0]['lr']:.3g}, "
               f"locomocao {actor_opt.param_groups[1]['lr']:.3g}", flush=True)
     for group in critic_opt.param_groups:
@@ -3069,6 +4131,14 @@ def main() -> int:
             (model.loco_log_std if model.split else model.log_std).fill_(math.log(args.desvio))
     # (17h40: sem as velocidades - na recuperacao, que nao as usa, o log da probabilidade fica so com os eixos.)
     preparar_politica(model, batch, args)
+    if args.desvio_recuperacao is not None and counters.get("desvio_recuperacao") != args.desvio_recuperacao:
+        # (20h40) Uma vez por valor: o desvio dos eixos das juntas da recuperacao (as velocidades ficam).
+        counters["desvio_recuperacao"] = args.desvio_recuperacao
+        joints = len(model.joint_names)
+        with torch.no_grad():
+            before = float(model.log_std[:joints].exp().mean())
+            model.log_std[:joints] = math.log(args.desvio_recuperacao)
+        print(f"desvio da recuperacao: {before:.3f} -> {args.desvio_recuperacao} nos {joints} eixos das juntas", flush=True)
     if args.levantar_velocidade is not None and counters.get("levantar_velocidade_desvio") != args.levantar_velocidade:
         # (O desvio das velocidades da recuperacao, uma vez por valor: comecam em zero - o levantar de antes - e exploram pouco.)
         counters["levantar_velocidade_desvio"] = args.levantar_velocidade
@@ -3142,6 +4212,11 @@ def main() -> int:
             if disc_loco is not None:
                 # (A locomocao com o juiz dela - so os clipes de locomocao; a recuperacao com o de sempre.)
                 loco_style_rows = style_rows & head_loco
+                # (12/11 16h30, o fogo da locomocao) As linhas sob perturbacao (a liberdade >= 0,3) fora do treino do juiz: ele nao
+                # aprende que "empurrado" e falso - os movimentos proprios do equilibrio nao viram estilo ruim.
+                if roll["feedback"].shape[-1] > TRACKING_TERMS.index("fogo_liberdade"):
+                    free = roll["feedback"][..., TRACKING_TERMS.index("fogo_liberdade")].reshape(-1)
+                    loco_style_rows = loco_style_rows & (free < 0.3)
                 style_rows = style_rows & ~head_loco
                 if mm is not None:
                     # (07/11, o juiz com o Motion Matching: o contexto de cada linha - a consulta do grupo principal - entra no
@@ -3193,6 +4268,12 @@ def main() -> int:
                 idle_rows = ((roll["obs"][..., -1] > .5) & (loco < .5)).float()
                 task_w = task_w + (args.peso_tarefa_parado - task_w) * idle_rows
                 style_w = style_w + (args.peso_estilo_parado - style_w) * idle_rows
+            if args.estilo_limpo is not None and args.levantar_fogo_entrada:
+                # (12/11 15h20) O estilo no levantar limpo: a cabeca da recuperacao com a entrada da forca externa do fogo (as 3 colunas
+                # antes da aceleracao, logo antes da habilidade) zerada - o limpo inteiro e a firmeza depois da forca soltar.
+                force = roll["obs"][..., -1 - FIRE_OBSERVATION_SIZE: -1 - FIRE_OBSERVATION_SIZE + 3].abs().sum(-1)
+                clean_rows = ((roll["obs"][..., -1] < .5) & (force < 1.0e-4)).float() * (1.0 - loco)
+                style_w = style_w + (args.estilo_limpo - style_w) * clean_rows
             if args.estilo_chao is not None:
                 # (02/11 00h30, ele: "a unica coisa que precisa melhorar nela e o movimento de virar-se ser mais natural": no
                 # chao - a pelve abaixo de --chao-altura, onde ela gira de costas meio no ar com o braco jogado para cima -
@@ -3213,11 +4294,23 @@ def main() -> int:
                 moving = roll["feedback"][..., TRACKING_TERMS.index("portao_velocidade")] > 0
                 gate = args.estilo_velocidade + (1.0 - args.estilo_velocidade) * roll["feedback"][..., 8].clamp(0.0, 1.0)
                 style = torch.where((loco > .5) & moving, style * gate, style)
+            if args.locomocao_fogo_estilo_livre and roll["feedback"].shape[-1] > TRACKING_TERMS.index("fogo_liberdade"):
+                # (12/11 20h05, a revisao do fogo com o Codex: o juiz ja nao treina nas linhas empurradas, mas a nota dele seguia com o
+                # peso inteiro nelas - o passo proprio do equilibrio perdia premio de estilo, a "amarra" que o rework queria tirar.
+                # Enquanto a forca age (a liberdade, que some 1,5 s depois), o peso do estilo vai para a tarefa; no limpo, nada muda.)
+                free = roll["feedback"][..., TRACKING_TERMS.index("fogo_liberdade")].clamp(0.0, 1.0) * (roll["obs"][..., -1] > .5).float()
+                task_w = task_w + style_w * free
+                style_w = style_w * (1.0 - free)
             task_style = task_w * roll["task"] + style_w * style
             costs = (1.0 - args.protecao_alivio * roll["prot"]) * (jerk_w * roll["jerk"] + args.limite * roll["limit"])
             # (03/11: no rastreio os custos so comem a nota do passo, nunca a deixam negativa - com a nota baixa do
             # comeco, o limite x2 deixava cada passo negativo e cair voltava a compensar, o erro da locomocao livre.)
             costs = torch.where(loco > .5, torch.minimum(costs, roll["feedback"][..., 0]), costs)
+            if args.levantar_unreal > 0:
+                # (11/11 14h, a regra dele - "a recompensa por ficar na pose nunca pode ser maior que o objetivo de nao cair": com a
+                # recuperacao no comando os custos nunca passam da nota, que e >= 0; acabar cedo nunca compensa.)
+                recovery_rows = roll["obs"][..., -1] < .5
+                costs = torch.where(recovery_rows, torch.minimum(costs, roll["task"].clamp(min=0.0)), costs)
             if args.parado_unico:
                 # (11/11 09h45, ele: "a recompensa por ficar na pose nunca pode ser maior que o objetivo de nao cair": no parado da
                 # cabeca da locomocao os custos tambem nunca passam da nota - de pe a nota nunca fica negativa e cair nunca compensa.)
@@ -3246,8 +4339,8 @@ def main() -> int:
             # vantagem do levantar ia a ~0; ele: "a calibragem de recompensa dele esta bem defeituosa". Cada grupo a parte.)
             f_loco = f_obs[:, -1] > .5 if model.split else flat(loco) > .5
             # Recovery can rescue a locomotion episode without learning its different objective.
-            learn = (f_loco if args.congelar_recuperacao else ~(flat(loco) > .5) | f_loco) if model.split \
-                else torch.ones_like(f_loco)
+            learn = (~f_loco if args.congelar_locomocao else f_loco if args.congelar_recuperacao else ~(flat(loco) > .5) | f_loco) \
+                if model.split else torch.ones_like(f_loco)
             for group in (f_loco, ~f_loco):
                 if int(group.sum()) > 1:
                     f_adv[group] = (f_adv[group] - f_adv[group].mean()) / (f_adv[group].std() + 1e-8)
@@ -3266,6 +4359,7 @@ def main() -> int:
         skill_steps = [0, 0]
         skill_kl = [0.0, 0.0]
         minibatches = 0
+        loco_before = loco_restore = None
         for _ in range(args.epocas):
             for idx in torch.randperm(T * n, device=device, generator=update_generator).split(minibatch):
                 idx = idx[learn[idx]]
@@ -3348,6 +4442,13 @@ def main() -> int:
                         for skill, mask in enumerate((~f_loco[idx], f_loco[idx])):
                             if mask.any() and not skill_frozen[skill]:
                                 skill_kl[skill] = kl_rows[mask].mean().item()
+                        if loco_before is not None and f_loco[idx].any() and kl_rows[f_loco[idx]].mean() > args.kl_reverter_loco:
+                            # (A volta depois do passo deste minilote - a perda ja usa os pesos de agora; a cabeca travada nao muda nele.)
+                            loco_restore = loco_before
+                            skill_frozen[1] = True
+                            stats["revertidos_loco"] = stats.get("revertidos_loco", 0.0) + 1.0
+                            skill_kl[1] = -kl_rows[f_loco[idx]].mean().item()  # (negativo: o salto que foi desfeito)
+                        loco_before = None
                     if model.split and args.kl_max > 0:
                         for skill, mask in enumerate((~f_loco[idx], f_loco[idx])):
                             # (Na imitacao do comeco a cabeca da locomocao nao freia pelo KL.)
@@ -3360,7 +4461,8 @@ def main() -> int:
                 elif args.kl_max > 0 and kl > args.kl_max:
                     actor_frozen = True
                 minibatches += 1
-                if counters["atualizacao"] >= args.aquecer_critico and not actor_frozen:
+                # (11/11 14h: contado desde o zeramento da cabeca do levantar - "aquecer_desde", posto por zerar_recuperacao.py.)
+                if counters["atualizacao"] - counters.get("aquecer_desde", 0) >= args.aquecer_critico and not actor_frozen:
                     if model.split:
                         for skill, mask in enumerate((~f_loco[idx], f_loco[idx])):
                             if not skill_frozen[skill] and mask.any(): skill_steps[skill] += 1
@@ -3376,11 +4478,23 @@ def main() -> int:
                                 nn.utils.clip_grad_norm_(parameters, 1.0)
                     else:
                         nn.utils.clip_grad_norm_(model.actor_parameters(), 1.0)
+                    # (12/11 22h30/22h45, a revisao com o Codex: o freio do KL so via o salto no minilote seguinte e nao o desfazia - picos
+                    # de 10-38 na cabeca da locomocao; o desvio dela 0,068 faz 0,05 de media em varias juntas virar KL ~10. Medido no
+                    # proprio minilote o salto nao aparecia - ele cai nas linhas que o passo nao viu. Com --kl-reverter-loco a cabeca e
+                    # guardada antes de cada passo; no minilote seguinte (e numa amostra no fim), acima do teto, ela volta ao guardado e para.)
+                    loco_before = ([q.detach().clone() for q in list(model.actor.locomotion.parameters()) + [model.loco_log_std]]
+                                   if model.split and args.kl_reverter_loco > 0 and not skill_frozen[1] else None)
                     actor_opt.step()
+                if loco_restore is not None:
+                    with torch.no_grad():
+                        for q, old in zip(list(model.actor.locomotion.parameters()) + [model.loco_log_std], loco_restore):
+                            q.copy_(old)
+                    loco_restore = None
                 # O discriminador: metade do lote de agora e metade da reserva, contra os clipes (com reposicao). Com o
                 # juiz da locomocao, cada um com as linhas e os clipes dele.
                 judges = [(disc, disc_opt, style_rows, replay, reference)]
-                if disc_loco is not None:
+                # (11/11 14h: com a locomocao congelada o juiz dela tambem - a nota dela depois da troca e a mesma o treino todo.)
+                if disc_loco is not None and not args.congelar_locomocao:
                     judges.append((disc_loco, disc_loco_opt, loco_style_rows, replay_loco, reference_loco))
                 for judge_index, (judge, judge_opt, rows, reserve, refs) in enumerate(judges):
                     conditional = judge_index == 1 and loco_x is not None
@@ -3434,15 +4548,34 @@ def main() -> int:
                 stats["d_corpo"] += d_body.mean().item()
                 stats["gp"] += gp.item()
                 steps += 1
-        if args.taxa_adaptativa > 0 and len(actor_opt.param_groups) == 2 and counters["atualizacao"] >= args.aquecer_critico:
+        if loco_before is not None:
+            # (O ultimo passo: medido numa amostra das linhas da locomocao.)
+            with torch.no_grad():
+                pool = torch.nonzero(f_loco & learn).squeeze(-1)
+                if len(pool):
+                    pick = pool[torch.randint(len(pool), (min(minibatch, len(pool)),), device=device, generator=update_generator)]
+                    last = skill_logp(model, model.distribution(model.norm(f_obs[pick])), f_act[pick], f_obs[pick])
+                    log_l = (last - anchor[pick]).clamp(-20.0, 20.0)
+                    if (torch.exp(log_l) - 1 - log_l).mean() > args.kl_reverter_loco:
+                        for q, old in zip(list(model.actor.locomotion.parameters()) + [model.loco_log_std], loco_before):
+                            q.copy_(old)
+                        stats["revertidos_loco"] = stats.get("revertidos_loco", 0.0) + 1.0
+            loco_before = None
+        if args.taxa_adaptativa > 0 and len(actor_opt.param_groups) == 2 \
+                and counters["atualizacao"] - counters.get("aquecer_desde", 0) >= args.aquecer_critico:
             # (05/11: cada cabeca para o KL alvo no fim da atualizacao - o KL cresce ~ com o quadrado do passo, entao a raiz
             # quarta da razao, no maximo 10% por atualizacao; so a cabeca que treinou nesta.)
             for skill, group in enumerate(actor_opt.param_groups):
+                target = args.taxa_adaptativa if skill == 0 or args.taxa_adaptativa_loco is None else args.taxa_adaptativa_loco
+                if target <= 0:
+                    continue
                 if skill_steps[skill] > 0 or skill_frozen[skill]:
-                    factor = (args.taxa_adaptativa / max(skill_kl[skill], 1.0e-6)) ** 0.25
+                    factor = (target / max(skill_kl[skill], 1.0e-6)) ** 0.25
                     group["lr"] = float(np.clip(group["lr"] * np.clip(factor, 0.9, 1.1), 1.0e-6, 3.0e-4))
             counters["taxa_cabecas"] = [group["lr"] for group in actor_opt.param_groups]
-        if args.redo_atualizacoes > 0 and model.split:
+        # (12/11 16h) Nunca numa cabeca congelada: de 11/11 14h48 a 12/11 o ReDo seguiu na locomocao congelada, julgando as unidades so
+        # pelos 1,5 s de locomocao depois do levantar, e zerou as que a locomocao de verdade usa (vault plano_fogo_da_locomocao_12_11).
+        if args.redo_atualizacoes > 0 and model.split and not args.congelar_locomocao:
             # (07/11) A janela do ReDo: o maximo de cada unidade nas linhas da locomocao desde o ultimo renascimento.
             with torch.no_grad():
                 rows = f_obs[f_loco]
@@ -3484,6 +4617,8 @@ def main() -> int:
         if device.type == "cuda":
             torch.cuda.synchronize()
         out = {k: v / max(1, steps) for k, v in stats.items()}
+        if "revertidos_loco" in stats:
+            out["revertidos_loco"] = int(stats["revertidos_loco"])
         out.update(mm_stats)
         out.update({"estilo": float(style.mean()), "peso_coleta": float(weight.mean()), "t_ppo": time.time() - start,
                     "loco_recompensa": float((task_style * loco).sum() / loco.sum().clamp_min(1)),
@@ -3561,7 +4696,73 @@ def main() -> int:
         print(f"equilibrio: gerador de passos no idle, empurrao de pe com {'o idle' if args.empurrao_idle else 'a recuperacao'}, "
               f"chegada {args.chegada_premio}, voo {args.voo_multa}, fatia {args.equilibrio_fatia} no nivel "
               f"{counters['equilibrio_nivel']}", flush=True)
+    if args.levantar_unreal > 0 or args.calibrar_levantar:
+        # (11/11 14h: o levantar pelo clipe, 16 de cada exercicio, deitado no quadro 0 sem variacao - configurados como o treino:
+        # o idle e a corrida da locomocao depois da troca sao os dele.)
+        # (12/11 19h10: e a do levantar e ir - o exercicio sorteado em cada mundo, a fatia cheia.)
+        for exercise, prefix in list(enumerate(LEVANTAR_UNREAL_PREFIXES)) + ([(0, LEVANTAR_E_IR_PREFIX)] if args.levantar_e_ir[0] > 0 else []):
+            evaluations[prefix] = get_up_batch(str(REPO / "assets"), environments=16, threads=eval_threads,
+                                               seed=700 + exercise + (10 if prefix == LEVANTAR_E_IR_PREFIX else 0),
+                                               evaluation=True, evaluation_kind=11 + exercise, **v2)
+            if prefix == LEVANTAR_E_IR_PREFIX:
+                evaluations[prefix].set_get_up_go(1.0, args.levantar_e_ir[1], args.levantar_e_ir[2])
+            configurar(evaluations[prefix], args, counters, False)
+            evaluations[prefix].add_style_clips(LEVANTAR_UNREAL)
+            evaluations[prefix].set_clip_get_up(LEVANTAR_UNREAL, 0.0, 0.0, args.levantar_unreal_depois, 0.0,
+                                                args.levantar_unreal_largura, args.levantar_unreal_vel)
+            evaluations[prefix].set_clip_get_up_parts(args.levantar_unreal_partes)
+            evaluations[prefix].set_clip_get_up_variants(list(LEVANTAR_UNREAL_VARIANTS))
+            if hasattr(evaluations[prefix], "set_clip_get_up_deliver"):
+                evaluations[prefix].set_clip_get_up_deliver(list(LEVANTAR_UNREAL_DELIVER))
+            if hasattr(evaluations[prefix], "set_clip_get_up_agility"):
+                evaluations[prefix].set_clip_get_up_agility(clip_get_up_agility(args, counters, full=True))
+            if args.levantar_adaptativo:
+                evaluations[prefix].set_clip_get_up_adaptive(True)
+                if hasattr(evaluations[prefix], "set_adaptive_settle"):
+                    evaluations[prefix].set_adaptive_settle(args.levantar_adaptativo_firmeza, args.levantar_fogo_soltar)
+                if args.levantar_tentar:
+                    evaluations[prefix].set_adaptive_retry(True)
+                if hasattr(evaluations[prefix], "set_run_post_rise"):
+                    evaluations[prefix].set_run_post_rise(*args.levantar_velocidade_corrida)
+                if args.levantar_correndo_troca >= 0 and hasattr(evaluations[prefix], "set_run_handoff_at_stand"):
+                    evaluations[prefix].set_run_handoff_at_stand(True, args.levantar_correndo_troca)
+                if args.levantar_troca_calma[0] > 0:
+                    evaluations[prefix].set_calm_handoff(*args.levantar_troca_calma)
+                if args.levantar_fogo_contra_corrida > 0:
+                    evaluations[prefix].set_fire_run_headwind_cap(args.levantar_fogo_contra_corrida)
+                if max(args.levantar_paredes) > 0:
+                    evaluations[prefix].set_get_up_arena(*args.levantar_paredes)
+            fire = get_up_fire_state(args, counters)
+            if fire is not None:
+                # (A prova de fogo: o cenario pelo mundo - 4 limpos, 6 continuos, 6 pancadas - nos niveis de partida, fixos.)
+                evaluations[prefix].set_get_up_fire([1.0, 0.0, 0.0, 0.0], fire_levels_flat(fire["prova"]), True)
+                if exercise == 0 and prefix != LEVANTAR_E_IR_PREFIX:
+                    batch.set_get_up_fire(list(args.levantar_fogo) + [args.levantar_fogo_de_cima], fire_levels_flat(fire["niveis"]), False)
+                    print("fogo do levantar: fatias", list(args.levantar_fogo), "niveis", fire["niveis"], flush=True)
+            if muscle:
+                evaluations[prefix].set_student_actuator(muscle["rigidez"], muscle["amortecimento"], muscle["teto"],
+                                                         bool(muscle["gravidade"]))
     configurar(batch, args, counters, True)
+    if args.parado_torto[0] > 0 and hasattr(batch, "set_crooked_start"):
+        batch.set_crooked_start(*args.parado_torto)
+        if args.parado_torto_sem_fogo and hasattr(batch, "set_crooked_no_fire"):
+            batch.set_crooked_no_fire(True)
+        if hasattr(batch, "set_crooked_fix_span"):
+            batch.set_crooked_fix_span(args.parado_torto_janela)
+        print(f"parado torto: fatia {args.parado_torto[0]}, premio {args.parado_torto[1]}, perto {args.parado_torto[2]}", flush=True)
+    loco_fire = loco_fire_state(args, counters)
+    if loco_fire is not None and hasattr(batch, "set_locomotion_fire"):
+        if args.locomocao_fogo_fatia_inicial > 0:
+            counters.setdefault("fogo_protecao", {"fatia": min(args.locomocao_fogo_fatia_inicial, args.locomocao_fogo)})
+        if "fogo_protecao" in counters:
+            counters["fogo_protecao"]["fatia"] = min(float(counters["fogo_protecao"].get("fatia", args.locomocao_fogo)), args.locomocao_fogo)
+        batch.set_locomotion_fire(counters.get("fogo_protecao", {}).get("fatia", args.locomocao_fogo), loco_fire["niveis"],
+                                  args.locomocao_fogo_liberdade)
+        if hasattr(batch, "set_locomotion_fire_gaps"):
+            batch.set_locomotion_fire_gaps(args.locomocao_fogo_intervalo)
+        print(f"fogo da locomocao: fatia {counters.get('fogo_protecao', {}).get('fatia', args.locomocao_fogo)} (a da receita "
+              f"{args.locomocao_fogo}), liberdade {args.locomocao_fogo_liberdade}, niveis "
+              f"{dict(zip(FIRE_GROUPS, loco_fire['niveis']))}", flush=True)
     for e in evaluations.values():
         e.set_phase_sync(args.sincronizar_fase)
         e.set_arm_clip_reach(args.bracos_clipe)
@@ -3627,6 +4828,7 @@ def main() -> int:
     # do treino fica perto do piso pela descida da forca e nao mostra a evolucao.)
     capacity_batches: list = []
     capacity_at = [0.0]
+    capacity_counted = [False]
     if args.capacidade_minutos > 0:
         plain_v2 = dict(v2, moving_push_newtons=(0.0, 0.0), moving_push_hold_newtons=(0.0, 0.0))
         for band in (1, 2):
@@ -3685,6 +4887,36 @@ def main() -> int:
                 still.set_balance_drill(0.0, 1.0)
                 still.set_fire(1.0, fire_hit, fire_hold, FIRE_HOLD_SECONDS, FIRE_HOLD_FRACTION)
                 capacity_batches.append(("fogo", still))
+        if args.locomocao_fogo > 0 and args.locomocao_fogo_prova > 0:
+            # (12/11 16h30, a prova de fogo da locomocao: uma adversidade por mundo no nivel da prova - o continuo, a serie, o agarrao, a
+            # grama molhada com uma pancada -, 8 de cada nos rumos do trote e da corrida e no parado.)
+            for band in (1, 2):
+                exam = get_up_batch(str(REPO / "assets"), environments=32, threads=eval_threads, seed=780 + band, evaluation=True,
+                                    evaluation_kind=4, evaluation_band=band, **plain_v2)
+                configurar(exam, args, counters, False)
+                exam.set_locomotion_fire(0.0, [0.0] * len(FIRE_GROUPS), args.locomocao_fogo_liberdade)
+                exam.set_locomotion_fire_exam(True, args.locomocao_fogo_prova)
+                loco_fire_extras(exam, args)
+                capacity_batches.append(("prova_fogo", exam))
+            exam = get_up_batch(str(REPO / "assets"), environments=32, threads=eval_threads, seed=790, evaluation=True,
+                                evaluation_kind=3, **plain_v2)
+            configurar(exam, args, counters, False)
+            exam.set_locomotion_fire(0.0, [0.0] * len(FIRE_GROUPS), args.locomocao_fogo_liberdade)
+            exam.set_locomotion_fire_exam(True, args.locomocao_fogo_prova)
+            loco_fire_extras(exam, args)
+            capacity_batches.append(("prova_fogo", exam))
+        if args.locomocao_fogo > 0:
+            # (12/11 20h05, ele: "nao depreciar velocidade e postura (semelhanca com o clipe nos exercicios limpos)") O parado limpo na
+            # capacidade: 16 normais (a semelhanca com o idle) e 32 nascidos tortos (o reajuste), a rede media, sem fogo - de 18h46 a 19h50
+            # o reajuste do torto foi de 27% a 0% sem ninguem ver (so a sonda viu).
+            # (21h40: o torto com 32 mundos oscilava 0,25-0,50 com a mesma rede; com 96, 0,438 na das 17h55 e 0,417 na das 21h20.)
+            for kind, worlds, seed in (("parado", 16, 796), ("torto", 96, 795)):
+                still = get_up_batch(str(REPO / "assets"), environments=worlds, threads=eval_threads, seed=seed, evaluation=True,
+                                     evaluation_kind=3, **plain_v2)
+                configurar(still, args, counters, False)
+                if kind == "torto" and hasattr(still, "set_crooked_start"):
+                    still.set_crooked_start(1.0, args.parado_torto[1], args.parado_torto[2] if args.parado_torto[2] > 0 else 0.7)
+                capacity_batches.append((kind, still))
         if GETUP_CLIP[0]:
             rise = get_up_batch(str(REPO / "assets"), environments=16, threads=eval_threads, seed=720, evaluation=True,
                                 evaluation_kind=0, **v2)
@@ -3698,7 +4930,7 @@ def main() -> int:
         for tag, level in (("0", 0.0), ("15", 0.15)):
             per: dict = {}
             for kind, b in capacity_batches:
-                if tag == "15" and kind in ("rumos", "estrela", "fogo", "comando", "parada"):
+                if tag == "15" and kind in ("rumos", "estrela", "fogo", "comando", "parada", "prova_fogo", "parado", "torto"):
                     continue
                 b.set_drill_assist([level] * len(DRILL_KEYS))
                 b.reset(12345)
@@ -3719,6 +4951,11 @@ def main() -> int:
                         key = "fogo_parado" if r[1] == 2 else f"fogo_{'corrida' if r[25] == 2 else 'trote'}"
                     if kind == "parada":
                         key = f"parada_{'corrida' if r[25] == 2 else 'trote'}"
+                    if kind in ("parado", "torto"):
+                        key = f"parado_{'limpo' if kind == 'parado' else 'torto'}"
+                    if kind == "prova_fogo":
+                        tipo = ("continuo", "serie", "agarrao", "molhado")[(int(r[0]) // 8) % 4]
+                        key = f"prova_fogo_{'parado' if r[1] == 2 else 'corrida' if r[25] == 2 else 'trote'}_{tipo}"
                     if key:
                         per.setdefault(key, []).append(r)
             res = {}
@@ -3726,8 +4963,24 @@ def main() -> int:
                 if tag == "15" and not (key.startswith("lev_troca") or key == "lev_levantar"):
                     continue
                 held_rows = np.array(rows)
+                if key.startswith("prova_fogo_"):
+                    kept = held_rows[:, 63] >= 0 if held_rows.shape[1] > 63 else np.zeros(len(held_rows), dtype=bool)
+                    res[key] = {"sem_cair": round(float(loco_fire_ok(held_rows).mean()), 3),
+                                "seguiu": round(float(held_rows[kept, 63].mean()), 3) if kept.any() else None, "n": len(rows)}
+                    continue
+                if key in ("parado_limpo", "parado_torto"):
+                    tracked = held_rows[held_rows[:, 33] >= 0]
+                    res[key] = {"de_pe": round(float(loco_fire_ok(held_rows).mean()), 3), "n": len(rows),
+                                "sem": round(float(tracked[:, 33].mean()), 3) if len(tracked) else None}
+                    if key == "parado_torto" and held_rows.shape[1] > 65:
+                        crook, fixed = held_rows[:, 64] > 0, held_rows[:, 65] >= 0
+                        took = held_rows[crook & fixed, 65]
+                        res[key].update(reajustou=round(float(fixed[crook].mean()), 3) if crook.any() else None,
+                                        reajuste_s=round(float(np.median(took)), 2) if len(took) else None)
+                    continue
                 perf = drill_performance(held_rows, args.locomocao_segundos)
-                res[key] = {"de_pe": round(float(perf["fim"]), 3), "vel": round(float(perf["vel"]), 3), "n": len(rows)}
+                res[key] = {"de_pe": round(float(perf["fim"]), 3), "vel": round(float(perf["vel"]), 3), "n": len(rows),
+                            "sem": round(float(perf["semelhanca"]), 3)}
                 if key.startswith("fogo_") and held_rows.shape[1] > 45:
                     pushed = held_rows[held_rows[:, 38] > 0]
                     res[key]["sem_cair_empurrao"] = round(float(1.0 - pushed[:, 45].mean()), 3) if len(pushed) else None
@@ -3763,6 +5016,9 @@ def main() -> int:
         collector.load_state_dict(model.state_dict())
         batch.reset(args.semente)
         obs = torch.as_tensor(batch.observations(), device=device)
+    if args.calibrar_levantar:
+        calibrate_clip_get_up(model, evaluations, device, Path(args.calibrar_levantar).expanduser(), batch)
+        return 0
     while (args.atualizacoes <= 0 or counters["atualizacao"] < args.atualizacoes) and not stop["pedido"]:
         begin = time.time()
         if (args.largada_clipe[0] > 0 or args.largada_mao > 0) and hasattr(batch, "set_launch_clip_share"):
@@ -3787,7 +5043,13 @@ def main() -> int:
             roll["mm"] = torch.zeros(T, n, mm.width + 2, device=device)
         with torch.no_grad():
             for t in range(T):
-                collector.norm.update(obs)
+                # (11/11 14h: com a cabeca do levantar do zero a normalizacao dela aprende (--recuperacao-norma); com a locomocao
+                # congelada a dela fica parada - 13h10 medido: aprendendo os estados do levantar, a pose do parado dela caiu
+                # 0,66 -> 0,36-0,57 com os pesos intactos.)
+                if model.split:
+                    collector.norm.update(obs, recovery=args.recuperacao_norma, locomotion=not args.congelar_locomocao)
+                else:
+                    collector.norm.update(obs)
                 obs_n = collector.norm(obs)
                 dist = collector.distribution(obs_n)
                 if colored > 0:
@@ -3915,6 +5177,9 @@ def main() -> int:
                    "tarefa": float(roll["task"].mean()), "estilo": last.get("estilo", float("nan")),
                    "tranco": float(roll["jerk"].mean()), "limite": float(roll["limit"].mean()),
                    "protegendo": float(roll["prot"].mean()), "locomovendo": float(roll["loco"].mean()),
+                   # (12/11 16h45) A fracao das amostras na cabeca da locomocao (a habilidade, a ultima entrada) - a medida dos 80/20 dele;
+                   # o "locomovendo" so conta a locomocao andando (sem o parado e o idle depois da parada).
+                   "cabeca_locomocao": float((roll["obs"][..., -1] > .5).float().mean()),
                    "desvio": float(model.log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean()),
                    **({"desvio_loco": float(model.loco_log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean())} if model.split else {}),
                    "am_s": T * n / (time.time() - begin), "t_coleta": collected - begin, "t_fisica": physics,
@@ -4070,6 +5335,103 @@ def main() -> int:
             row.update(summarize(recent[recent[:, 1] == 7] if len(recent) else recent, "giro_"))
             row.update(summarize(recent[recent[:, 1] == 8] if len(recent) else recent, "quedas_loco_"))
             row["cenarios"] = summarize_scenery(recent)
+            if args.levantar_unreal > 0 and len(recent):
+                for exercise, prefix in enumerate(LEVANTAR_UNREAL_PREFIXES):
+                    row.update(clip_get_up_summary(recent[(recent[:, 1] == 9) & (recent[:, 26] == exercise)], "treino_" + prefix))
+                if args.levantar_e_ir[0] > 0 and recent.shape[1] >= 76:
+                    row.update(get_up_go_summary(recent[recent[:, 1] == 11], "treino_" + LEVANTAR_E_IR_PREFIX))
+                # (12/11 07h45, temporario: as linhas dos episodios do levantar da janela, para comparar com as sondas - os correndo
+                # recuperavam 0% no treino e 40-60% nas sondas.)
+                np.save(run / "exports" / "episodios_levantar.npy", recent[recent[:, 1] == 9])
+                if args.levantar_unreal_prioridade > 0:
+                    # (16h25, a vigia: o de brucos ja entregava 99% e os de costas travados ha 40 min com 25% do treino cada - o peso de
+                    # cada exercicio e o piso mais a fracao que nao entrega.)
+                    weights = []
+                    for exercise in range(len(LEVANTAR_UNREAL)):
+                        mine = recent[(recent[:, 1] == 9) & (recent[:, 26] == exercise)]
+                        kept = float(((mine[:, 18] >= 0) & (mine[:, 19] < .5)).mean()) if len(mine) >= 20 else 0.0
+                        weights.append(args.levantar_unreal_prioridade + 1.0 - kept)
+                    batch.set_clip_get_up_weights(weights)
+                    total = sum(weights)
+                    row["levantar_pesos"] = {k: round(w / total, 3) for k, w in zip(LEVANTAR_UNREAL_KEYS, weights)}
+                if args.levantar_unreal_reforco[0] > 0 and hasattr(batch, "set_clip_get_up_emphasis"):
+                    # (12/11 02h50) A rampa do reforco do de costas: de 0 ao alvo em N atualizacoes desde a primeira com ele.
+                    start = counters.setdefault("reforco_costas_inicio", counters["atualizacao"])
+                    ramp = max(1.0, float(args.levantar_unreal_reforco[1]))
+                    emphasis = args.levantar_unreal_reforco[0] * min(1.0, (counters["atualizacao"] - start) / ramp)
+                    batch.set_clip_get_up_emphasis([emphasis] + [0.0] * (len(LEVANTAR_UNREAL) - 1))
+                    row["reforco_costas"] = round(emphasis, 3)
+                fire = get_up_fire_state(args, counters)
+                if fire is not None:
+                    # (12/11 04h40) O degrau do fogo do levantar (get_up_fire_step) e os niveis de agora no lote.
+                    # (12/11 12h55) As duas primeiras janelas depois de comecar so tem os episodios curtos (os que deram certo): a escada
+                    # lia o levantou alto demais a cada religar e subia a forca a mais.
+                    FIRE_WINDOWS[0] += 1
+                    for change in (get_up_fire_step(fire, recent, counters["atualizacao"], args.levantar_fogo_faixa, args.levantar_fogo_congelar)
+                                   if FIRE_WINDOWS[0] > 2 else []):
+                        print("fogo do levantar:", change, flush=True)
+                    batch.set_get_up_fire(list(args.levantar_fogo) + [args.levantar_fogo_de_cima], fire_levels_flat(fire["niveis"]), False)
+                    row["fogo_levantar"] = fire["niveis"]
+                if max(args.levantar_unreal_agilidade[:2]) > 0 and hasattr(batch, "set_clip_get_up_agility"):
+                    # (12/11 03h20) A rampa da agilidade (clip_get_up_agility).
+                    agility = clip_get_up_agility(args, counters)
+                    batch.set_clip_get_up_agility(agility)
+                    row["agilidade"] = [round(a, 3) for a in agility]
+            if args.parado_torto[0] > 0 and len(recent) and recent.shape[1] >= 66:
+                # (12/11 17h) O parado torto contra o normal: n, nao caiu, reajustou e em quanto tempo.
+                still = recent[recent[:, 1] == 2]
+                out = {}
+                for name, m in (("torto", still[:, 64] > 0), ("normal", still[:, 64] <= 0)):
+                    rows = still[m]
+                    if not len(rows):
+                        continue
+                    fixed = rows[:, 65] >= 0
+                    out[name] = {"n": int(len(rows)), "sem_cair": round(float(loco_fire_ok(rows).mean()), 3)}
+                    if name == "torto":
+                        out[name].update(reajustou=round(float(fixed.mean()), 3),
+                                         reajuste_s=round(float(rows[fixed, 65].mean()), 3) if fixed.any() else None)
+                row["parado_torto"] = out
+            if (args.estrela_caminho[0] > 0 or args.estrela_curvas[0] > 0) and len(recent) and recent.shape[1] >= 68:
+                # (12/11 17h20) A estrela por exercicio: n, ate o fim sem cair, pernas, curvas e a distancia media ao caminho (m).
+                stars = recent[(recent[:, 1] == 6) & (recent[:, 26] >= 8) & (recent[:, 26] <= 10)]
+                out = {}
+                for band, bname in ((1, "trote"), (2, "corrida")):
+                    for m, mname in ((8, "fixo"), (9, "livre"), (10, "girando")):
+                        rows = stars[((stars[:, 25] >= 2) == (band == 2)) & (stars[:, 26] == m)]
+                        if not len(rows):
+                            continue
+                        dist = rows[rows[:, 66] >= 0, 66]
+                        out[f"{bname}_{mname}"] = {"n": int(len(rows)), "sem_cair": round(float(loco_fire_ok(rows).mean()), 3),
+                                                   "pernas": round(float(rows[:, 43].mean()), 2), "curvas": round(float(rows[:, 67].mean()), 2),
+                                                   "dist_m": round(float(dist.mean()), 2) if len(dist) else None}
+                row["estrela"] = out
+            if args.comando_levantar and len(recent) and recent.shape[1] >= 71:
+                # (12/11 18h) O comando ligado ao levantar: n, os sem queda, as quedas por episodio, a fracao das quedas que levantou de
+                # volta e o tempo medio do levantar (s).
+                cmd = recent[(recent[:, 1] == 6) & (recent[:, 26] == 12)]
+                if len(cmd):
+                    falls, rises = float(cmd[:, 68].sum()), float(cmd[:, 69].sum())
+                    timed = cmd[cmd[:, 70] >= 0, 70]
+                    runs = float(cmd[:, 71].sum()) if cmd.shape[1] > 71 else 0.0
+                    row["comando_levantar"] = {"n": int(len(cmd)), "sem_queda": round(float((cmd[:, 68] <= 0).mean()), 3),
+                                               "levantou_correndo": int(runs),
+                                               "quedas_ep": round(falls / len(cmd), 3),
+                                               "levantou": round(rises / falls, 3) if falls > 0 else None,
+                                               "tempo_s": round(float(timed.mean()), 2) if len(timed) else None}
+            loco_fire = loco_fire_state(args, counters)
+            if loco_fire is not None and len(recent) and hasattr(batch, "set_locomotion_fire"):
+                # (12/11 16h30) O degrau do fogo da locomocao (loco_fire_step; as duas primeiras janelas depois de religar puladas, como no
+                # levantar) e os niveis de agora no lote.
+                LOCO_FIRE_WINDOWS[0] += 1
+                speed_ok, slow = loco_fire_clean_ok(counters.get("velocidade_limpo"), counters.get("limpo_base_capacidade"),
+                                                    args.locomocao_fogo_guarda_velocidade)
+                for change in (loco_fire_step(loco_fire, recent, counters["atualizacao"], args.locomocao_fogo_congelar, speed_ok)
+                               if LOCO_FIRE_WINDOWS[0] > 2 else []):
+                    print("fogo da locomocao:", change, flush=True)
+                batch.set_locomotion_fire(counters.get("fogo_protecao", {}).get("fatia", args.locomocao_fogo), loco_fire["niveis"],
+                                          args.locomocao_fogo_liberdade)
+                row["fogo_locomocao"] = {"fatia": counters.get("fogo_protecao", {}).get("fatia", args.locomocao_fogo),"niveis": dict(zip(FIRE_GROUPS, loco_fire["niveis"])), "grupos": loco_fire_summary(recent),
+                                         "velocidade_limpo": counters.get("velocidade_limpo"), "guarda_velocidade": slow or None}
             if "ajuda_exercicios" in counters:
                 # (O portao, exercicio por exercicio, a cada linha do log: so mede - a forca fica em zero.)
                 levels, states, dominio = counters["ajuda_exercicios"], counters["ajuda_estado"], {}
@@ -4136,6 +5498,29 @@ def main() -> int:
             if capacity_batches and time.time() - capacity_at[0] >= 60.0 * args.capacidade_minutos:
                 capacity_at[0] = time.time()
                 row["capacidade"] = capacity(collector)
+                clean = loco_fire_clean(row["capacidade"])
+                if clean:
+                    counters["velocidade_limpo"] = {k: round(v, 3) for k, v in clean.items() if v is not None}
+                    if clean.get("torto") is not None:
+                        hist = counters.setdefault("torto_historico", [])
+                        hist.append(round(clean["torto"], 3))
+                        del hist[:-3]
+                        counters["velocidade_limpo"]["torto"] = round(float(np.mean(hist)), 3)
+                    base = counters.setdefault("limpo_base_capacidade", {})
+                    if any(k not in base for k in counters["velocidade_limpo"]):
+                        for k, v in counters["velocidade_limpo"].items():
+                            base.setdefault(k, v)
+                        print(f"fogo da locomocao: a base do limpo na capacidade {base}", flush=True)
+                    if args.locomocao_fogo > 0:
+                        ok, why = loco_fire_clean_ok(counters["velocidade_limpo"], counters["limpo_base_capacidade"],
+                                                     args.locomocao_fogo_guarda_velocidade)
+                        prot = counters.setdefault("fogo_protecao", {"fatia": args.locomocao_fogo})
+                        # (20h50: a medida logo depois de religar mede os mesmos pesos da ultima - nao conta de novo na protecao.)
+                        change = loco_fire_protect(prot, ok, args.locomocao_fogo) if capacity_counted[0] else ""
+                        capacity_counted[0] = True
+                        if change:
+                            print(f"fogo da locomocao: {change} - {why or 'limpo bom'}", flush=True)
+                        row["fogo_protecao"] = {**prot, "guarda": why or None}
             row["t_aval"] = time.time() - judged
             log.write(json.dumps(finite_json(row)) + "\n")
             log.flush()

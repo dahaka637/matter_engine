@@ -125,6 +125,9 @@ struct RagdollCapsuleDefinition3D {
     std::vector<Vec3> hullSole;
     float convexRadiusMeters = 0.005f;
     std::string materialId = "default";
+    // So nos colisores a mais do link: o osso (indice em posableBones do link) a que ele esta preso - a posicao e a
+    // orientacao acima ficam no referencial do osso; -1, no do link.
+    int bone = -1;
     // Contatos detalhados são caros e, portanto, opt-in por link. Pés usam
     // esta telemetria para suporte/CoP; mãos e joelhos poderão habilitá-la
     // quando o controlador de levantar-se for implementado.
@@ -141,6 +144,22 @@ struct RagdollJointDefinition3D {
     std::array<RagdollAxisDefinition3D, 3> axes;
 };
 
+// (11/11, ele: "Mas os colisores nao acompanham") Um osso que move colisores do link - os dedos da mao: o repouso relativo ao pai
+// (-1: o proprio link) sem rotacao, e a rotacao de quando nada informa a pose (a relaxada). A rotacao e a mesma do osso visual de mesmo
+// nome (RagdollVisualPose3D): o osso no link = pai * (localPosition, localOrientation * rotacao).
+struct RagdollPosableBone3D {
+    std::string name;
+    int parent = -1;
+    Vec3 localPosition;
+    Quaternion localOrientation;
+    Quaternion restRotation;
+};
+
+struct RagdollBoneFrame3D {
+    Vec3 position;
+    Quaternion orientation;
+};
+
 struct RagdollLinkDefinition3D {
     std::string id;
     // -1 identifica a raiz flutuante. Pais precisam aparecer antes dos filhos.
@@ -148,6 +167,13 @@ struct RagdollLinkDefinition3D {
     Vec3 modelPosition;
     Quaternion modelOrientation;
     RagdollCapsuleDefinition3D collider;
+    // (11/11, ele: a mao "um cilindro bem simples, que nao leva em consideracao os DEDOS e a forma da mao... mecanicas de GOLEIRO")
+    // Colisores a mais do mesmo link, no referencial e no formato do collider ("extraColliders" no perfil: a mao tem a palma no
+    // collider e o polegar e os dedos aqui). O corpo fisico e o composto de todos; quem le so o collider (o apoio, o contorno)
+    // ve a parte principal.
+    std::vector<RagdollCapsuleDefinition3D> extraColliders;
+    // Os ossos que movem colisores a mais (a mao: os ossos dos dedos); pais antes dos filhos.
+    std::vector<RagdollPosableBone3D> posableBones;
     float massFraction = 0.0f;
     Vec3 centerOfMassLocal;
     RagdollJointDefinition3D inboundJoint;
@@ -213,6 +239,15 @@ struct RagdollProfileValidationIssue3D {
 [[nodiscard]] std::vector<RagdollProfileValidationIssue3D>
     validateRagdollProfile3D(const RagdollProfile3D& profile);
 void validateRagdollProfileOrThrow3D(const RagdollProfile3D& profile);
+
+// Os ossos que movem colisores (posableBones) postos no referencial do link: rotations e a rotacao de cada osso (a mesma ordem);
+// vazio, as de repouso.
+[[nodiscard]] std::vector<RagdollBoneFrame3D> ragdollPosableBoneFrames3D(const RagdollLinkDefinition3D& link,
+    std::span<const Quaternion> rotations = {});
+// O colisor a mais `extra` do link no referencial do link, com os ossos em `frames` (preso a um osso, posto por ele; sem osso, o
+// proprio).
+[[nodiscard]] RagdollCapsuleDefinition3D ragdollExtraColliderInLink3D(const RagdollLinkDefinition3D& link, std::size_t extra,
+    std::span<const RagdollBoneFrame3D> frames);
 // As coordenadas por link (x twist, y swing1, z swing2) com os grupos acoplados
 // levados a soma de cada grupo vezes as parcelas dele.
 void coupleRagdollJointCoordinates3D(const RagdollProfile3D& profile,

@@ -30,7 +30,18 @@ EPISODE_COLUMNS = ("mundo", "comeco", "lado", "cabeca_comeco", "segundos", "de_p
                    "cenario", "professora", "tomadas", "rotuladas", "ajuda_professora", "desvio_rumo", "fim_causa",
                    "semelhanca", "estabilidade", "passos_rec", "passos_estab", "equilibrio", "empurroes", "captura_fora",
                    "quietou_em", "chegada", "cruzado", "estrela_pernas", "estrela_fase", "caiu_no_empurrao",
-                   "erro_parada")
+                   "erro_parada", "levantar_percorrido", "levantar_ponto", "fogo_cenario", "fogo_momento", "fogo_rumo",
+                   "fogo_fracao", "fogo_tamanho", "fogo_foi_ao_chao", "levantou_firme_aos", "comeco_clipe", "tentativas", "tempo_nova_tentativa", "fogo_extras",
+                   # (12/11 16h30, o fogo da locomocao: se teve, o nivel, as adversidades, a fracao seguindo a tarefa.)
+                   "loco_fogo", "loco_fogo_nivel", "loco_fogo_eventos", "loco_fogo_seguiu",
+                   # (12/11 17h, o parado torto: se nasceu torto e quando reajustou.)
+                   "torto", "reajustou_em",
+                   # (12/11 17h20, a estrela: a distancia media ao caminho e as pernas em curva.)
+                   "estrela_dist_caminho", "estrela_curvas",
+                   # (12/11 18h, o comando ligado ao levantar: as quedas, os levantares de volta e o tempo medio deles.)
+                   "comando_quedas", "comando_levantou", "comando_levantar_s", "comando_levantou_correndo",
+                   # (12/11 19h10, o levantar e ir: o tipo - 1 de pe, 2 correndo -, quando chegou ao ponto e a distancia dele.)
+                   "levantar_e_ir", "ir_chegou_em", "ir_distancia", "ir_faltou")
 MANEUVERS = ("lev_troca_suave", "lev_troca_media", "lev_troca_forte", "lev_troca_livre", "lev_curva_suave", "lev_curva_s",
              "lev_curva_fechada")
 RUN_CURVES = ("lev_curva_suave_corrida", "lev_curva_s_corrida", "lev_curva_fechada_corrida")
@@ -211,6 +222,38 @@ class Ambiente:
                                   episode_seconds=6.0, **S.TRACK)
         if key == "lev_levantar":
             return L.get_up_batch(A, environments=worlds, threads=4, seed=seed, evaluation=True, evaluation_kind=0, **S.TRACK)
+        # (11/11 14h: o levantar pelo clipe - as avaliacoes 11 a 14, deitado no quadro 0, os clipes e as opcoes do treino.)
+        if key in L.LEVANTAR_UNREAL_KEYS:
+            b = L.get_up_batch(A, environments=worlds, threads=4, seed=seed, evaluation=True,
+                               evaluation_kind=11 + L.LEVANTAR_UNREAL_KEYS.index(key), **S.TRACK)
+            b.add_style_clips(L.LEVANTAR_UNREAL)
+            b.set_clip_get_up(L.LEVANTAR_UNREAL, 0.0, 0.0, float(self.v2.get("levantar_unreal_depois", 1.5)), 0.0,
+                              float(self.v2.get("levantar_unreal_largura", 2.0)), float(self.v2.get("levantar_unreal_vel", 1.5)))
+            b.set_clip_get_up_variants(list(L.LEVANTAR_UNREAL_VARIANTS))
+            if hasattr(b, "set_clip_get_up_deliver") and hasattr(L, "LEVANTAR_UNREAL_DELIVER"):
+                b.set_clip_get_up_deliver(list(L.LEVANTAR_UNREAL_DELIVER))
+            # (12/11 03h20) O relogio da agilidade como no treino (so ligado ou nao importa aqui).
+            agility = self.v2.get("levantar_unreal_agilidade", [0.0, 0.0, 100])
+            if hasattr(b, "set_clip_get_up_agility") and hasattr(L, "LEVANTAR_UNREAL_RUN") and max(agility[:2]) > 0:
+                b.set_clip_get_up_agility([float(agility[1] if r else agility[0]) for r in L.LEVANTAR_UNREAL_RUN])
+            # (12/11 04h40, a fase de fogo do levantar) O levantar adaptativo e a prova de fogo (o cenario pelo mundo: 0-3 limpos, 4-9
+            # continuos, 10-15 pancadas), nos niveis de partida - como as avaliacoes do treino.
+            if self.v2.get("levantar_adaptativo") and hasattr(b, "set_clip_get_up_adaptive"):
+                b.set_clip_get_up_adaptive(True)
+                # (12/11 07h50) A firmeza depois da entrega, como no treino.
+                if hasattr(b, "set_adaptive_settle") and "levantar_fogo_soltar" in self.v2:
+                    b.set_adaptive_settle(float(self.v2.get("levantar_adaptativo_firmeza", 0.0)), float(self.v2["levantar_fogo_soltar"]))
+                if self.v2.get("levantar_tentar") and hasattr(b, "set_adaptive_retry"):
+                    b.set_adaptive_retry(True)
+                if float(self.v2.get("levantar_fogo_contra_corrida", 0.0)) > 0 and hasattr(b, "set_fire_run_headwind_cap"):
+                    b.set_fire_run_headwind_cap(float(self.v2["levantar_fogo_contra_corrida"]))
+                if max(self.v2.get("levantar_paredes", [0.0, 0.0])) > 0 and hasattr(b, "set_get_up_arena"):
+                    b.set_get_up_arena(*[float(x) for x in self.v2["levantar_paredes"]])
+            prova = self.v2.get("levantar_fogo_prova") or {}
+            if prova and max(self.v2.get("levantar_fogo", [0.0])) > 0 and hasattr(b, "set_get_up_fire"):
+                b.set_get_up_fire([1.0, 0.0, 0.0, 0.0], [float(x) for k in L.LEVANTAR_UNREAL_KEYS for x in prova[k]], True)
+            b.set_clip_get_up_parts(bool(self.v2.get("levantar_unreal_partes", False)))
+            return b
         if key == "lev_giro":
             return L.get_up_batch(A, environments=worlds, threads=4, seed=seed, evaluation=True, evaluation_kind=6, **S.TRACK)
         # (05/11 21h: as trocas tambem correndo - "lev_troca_media_corrida"; no treino elas caem na corrida, nao no trote.)
@@ -254,6 +297,10 @@ class Ambiente:
 
     def setup(self, b, level: float) -> None:
         self.S.setup(b, [level] * len(self.L.DRILL_KEYS))
+        # (11/11 16h: a velocidade-alvo da recuperacao nos motores, como o treino - configurar(): sem isto as 39 velocidades que a
+        # rede do levantar manda eram descartadas e a captura mostrava o levantar de brucos falhando com a avaliacao a 16/16.)
+        if self.v2.get("levantar_velocidade") and hasattr(b, "set_recovery_velocity"):
+            b.set_recovery_velocity(True)
 
     def model(self, b):
         """A politica do checkpoint (como sondas_rl_final.policy), devolvendo o modelo para o ruido e as acoes."""

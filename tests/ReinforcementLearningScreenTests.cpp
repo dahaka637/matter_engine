@@ -327,6 +327,31 @@ int realRun(const std::filesystem::path& out) {
     require(!screen.history().iterations.empty(), "os graficos deveriam ter as rodadas do treino");
     require(screen.viewerReady(), "o visualizador deveria abrir o treino: " + screen.viewerError());
     require(screen.policyLoaded(), "a politica do treino deveria carregar");
+    // (12/11 05h30) MATTER_RL_TEST_FIRE=<s>: a caixa "Empurroes" marcada e um quadro a cada 0,2 s por <s> s (de lado, de 3/4 e de
+    // frente), para conferir o desenho do fogo do levantar; sai depois.
+    if (const char* fire = std::getenv("MATTER_RL_TEST_FIRE")) {
+        screen.setViewerPushes(true);
+        screen.waitUntilLoaded();
+        std::filesystem::create_directories(out);
+        const int frames = static_cast<int>(std::strtof(fire, nullptr) / 0.2f);
+        for (int k = 1; k <= frames; ++k) {
+            screen.advanceViewer(6);
+            for (const auto& [name, yaw] : { std::pair<const char*, float> { "lado", 90.0f }, { "tres_quartos", 45.0f } }) {
+                screen.frameView(yaw, 14.0f, 4.6f);
+                require(screen.renderViewport(960, 600), "o visualizador renderiza");
+                std::string error;
+                char tag[16];
+                std::snprintf(tag, sizeof tag, "%03d", k);
+                const std::filesystem::path file = out / (std::string("fogo_") + name + "_" + tag + ".png");
+                require(Modeling::writePng(screen.image(), file.string(), &error), error);
+                // (A tela inteira, com os rotulos e o cartao: MATTERENGINE_UI_SNAPSHOT=<pasta>.)
+                frame(screen, canvas, 1);
+                if (std::string(name) == "tres_quartos") snapshot(canvas, (std::string("fogo_tela_") + tag + ".png").c_str());
+            }
+        }
+        snapshot(canvas, "rl_fogo_tela");
+        return 0;
+    }
     const char* speedText = std::getenv("MATTER_RL_TEST_SPEED");
     const float speed = speedText ? std::strtof(speedText, nullptr) : 1.0f;
     screen.setManualSpeed(speed);

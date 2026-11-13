@@ -535,6 +535,10 @@ public:
         const RagdollProfile3D& profile,
         const RagdollSpawnDefinition3D& definition);
     void destroyRagdoll(RagdollHandle3D ragdoll);
+    // (11/11) A pose dos ossos que movem colisores (posableBones: os dedos da mao) - o nome e a rotacao de cada osso, a mesma do
+    // osso visual de mesmo nome (RagdollVisualPose3D::rotations); quem nao vem fica como esta, e sem chamada fica o repouso (a mao
+    // relaxada). Entre os passos da simulacao. A massa e a inercia ficam as da criacao.
+    void setRagdollBoneRotations(RagdollHandle3D ragdoll, std::span<const std::string> names, std::span<const Quaternion> rotations);
     [[nodiscard]] bool contains(RagdollHandle3D ragdoll) const;
     [[nodiscard]] RagdollState3D ragdollState(
         RagdollHandle3D ragdoll) const;

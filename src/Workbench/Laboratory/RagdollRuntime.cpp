@@ -237,14 +237,28 @@ MeshData3D buildHullMesh(const RagdollCapsuleDefinition3D& hull) {
     return mesh;
 }
 
+MeshData3D buildColliderVisual(const RagdollCapsuleDefinition3D& collider) {
+    if (collider.shape == RagdollColliderShape3D::ConvexHull) return buildHullMesh(collider);
+    if (ragdollColliderHasBox3D(collider)) {
+        return buildBoxMesh(collider.localPosition,
+            collider.boxHalfExtents, collider.localOrientation);
+    }
+    return buildCapsuleMesh(collider);
+}
+
 MeshData3D buildRagdollLinkVisual(
     const RagdollLinkDefinition3D& link) {
-    if (link.collider.shape == RagdollColliderShape3D::ConvexHull) return buildHullMesh(link.collider);
-    if (ragdollColliderHasBox3D(link.collider)) {
-        return buildBoxMesh(link.collider.localPosition,
-            link.collider.boxHalfExtents, link.collider.localOrientation);
+    MeshData3D mesh = buildColliderVisual(link.collider);
+    // Os colisores a mais do link (a mao: os dedos) na mesma malha; os presos a ossos, na pose de repouso deles (a mao relaxada).
+    const std::vector<RagdollBoneFrame3D> frames = ragdollPosableBoneFrames3D(link);
+    for (std::size_t k = 0; k < link.extraColliders.size(); ++k) {
+        const MeshData3D part = buildColliderVisual(ragdollExtraColliderInLink3D(link, k, frames));
+        const auto first = static_cast<std::uint32_t>(mesh.vertices.size());
+        mesh.vertices.insert(mesh.vertices.end(), part.vertices.begin(), part.vertices.end());
+        for (const std::uint32_t index : part.indices) mesh.indices.push_back(first + index);
     }
-    return buildCapsuleMesh(link.collider);
+    if (!link.extraColliders.empty()) recomputeBounds(mesh);
+    return mesh;
 }
 
 GpuModel3D uploadRagdollMesh(

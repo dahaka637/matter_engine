@@ -41,11 +41,15 @@ class SplitNorm(nn.Module):
         out = torch.where(moving, self.locomotion(x), self.recovery(x))
         return torch.cat([out[..., :-1], x[..., -1:]], -1)
 
-    def update(self, x):
+    def update(self, x, recovery=False, locomotion=True):
+        """(11/11 14h) Por padrao so a da locomocao, como sempre; recovery=True: a da recuperacao tambem aprende (a cabeca do
+        levantar recomecada do zero - --recuperacao-norma); locomotion=False: a da locomocao parada (--congelar-locomocao)."""
         rows = x.reshape(-1, x.shape[-1])
-        rows = rows[rows[:, -1] > .5]
-        if len(rows) > 1:
-            self.locomotion.update(rows)
+        moving = rows[:, -1] > .5
+        if locomotion and int(moving.sum()) > 1:
+            self.locomotion.update(rows[moving])
+        if recovery and int((~moving).sum()) > 1:
+            self.recovery.update(rows[~moving])
 
 
 def split_state(state):
