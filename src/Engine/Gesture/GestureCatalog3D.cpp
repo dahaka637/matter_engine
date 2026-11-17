@@ -83,6 +83,21 @@ Vec3 withinReach(const GestureLegRig3D& leg, Vec3 ankle) {
     return length > most ? leg.hip + fromHip * (most / length) : ankle;
 }
 
+// (17/11, o toque realista) A bola de verdade, mas perto da de referencia do
+// balde: o pe vai ate ela sem sair dos gestos calibrados (a faixa de cada
+// balde; mais longe a frente do que atras). Fora disso o gesto pega o mais
+// perto e o encosto decide se houve toque.
+float aimedX(const GestureSpec3D& spec, float nominal, float size) {
+    return spec.aimBall
+        ? std::clamp(spec.ballAt.x, nominal - (0.15f + spec.aimSlack) * size, nominal + (0.25f + spec.aimSlack) * size)
+        : nominal;
+}
+float aimedOut(const GestureSpec3D& spec, float s, float nominal, float size) {
+    return spec.aimBall
+        ? std::clamp(s * spec.ballAt.y, nominal - (0.12f + spec.aimSlack) * size, nominal + (0.12f + spec.aimSlack) * size)
+        : nominal;
+}
+
 // A velocidade das juntas (a coxa e o joelho) por metro do tornozelo andando
 // em direction: a diferenca central na perna de dois ossos.
 GestureLegPose3D legTangent(const GestureLegRig3D& leg, int side, Vec3 ankle, Vec3 direction, float twist,
@@ -135,8 +150,11 @@ GestureKeys3D receptionKeys(const GestureSpec3D& spec, const GestureRig3D& rig) 
     keys.duration = seconds;
     GestureBodyPeaks3D& body = keys.body;
     const int depth = std::clamp(spec.depth, 0, 2), reach = std::clamp(spec.reach, 0, 2);
-    const float ballX = TouchX[depth] * size, ballOut = TouchOut[reach] * size;
-    const float height = spec.high ? highBallZ(leg, size) : BallZ;
+    // (17/11) Com aimBall, a bola de verdade (o pe vai ate ela).
+    const float ballX = aimedX(spec, TouchX[depth] * size, size);
+    const float ballOut = aimedOut(spec, s, TouchOut[reach] * size, size);
+    const float height = spec.aimBall && spec.high ? std::clamp(spec.ballAt.z, BallZ, highBallZ(leg, size) + 0.06f * size)
+        : spec.high ? highBallZ(leg, size) : BallZ;
     // De onde ela vem (no "fora" da perna): so escolhe a superficie.
     const Vec3 incoming = normalizedOr(planar(spec.incoming), { -1.0f, 0.0f, 0.0f });
     const float withOut = s * incoming.y;
@@ -215,7 +233,9 @@ GestureKeys3D raiseKeys(const GestureSpec3D& spec, const GestureRig3D& rig) {
     const GestureLegRig3D& leg = rig.legs[static_cast<std::size_t>(side)];
     const float size = std::clamp((leg.thigh + leg.shin) / 0.832f, 0.75f, 1.3f);
     const int depth = std::max(1, std::clamp(spec.depth, 0, 2)), reach = std::clamp(spec.reach, 0, 2);
-    const float ballX = TouchX[depth] * size, ballOut = TouchOut[reach] * size;
+    // (17/11) Com aimBall, a bola de verdade (o pe vai ate ela).
+    const float ballX = aimedX(spec, TouchX[depth] * size, size);
+    const float ballOut = aimedOut(spec, s, TouchOut[reach] * size, size);
     keys.contactTime = std::clamp(0.16f * seconds, 0.04f, 0.07f);
     keys.followTime = keys.contactTime + 0.32f * seconds;
     keys.duration = seconds;
@@ -381,7 +401,9 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
     // a pelve caindo para o lado dele. Gesto pronto: a altura e a de referencia
     // (a bola so escolhe o balde). high: 1 na bola alta.
     const float top = std::max(0.40f, kneeTop(leg, size));
-    const float ballHeight = spec.high ? highBallZ(leg, size) : BallZ;
+    const float ballHeight = spec.aimBall && spec.high
+        ? std::clamp(spec.ballAt.z, BallZ, highBallZ(leg, size) + 0.06f * size)
+        : spec.high ? highBallZ(leg, size) : BallZ;
     const float high = spec.high ? 1.0f : 0.0f;
 
     if (spec.kind == GestureKind3D::Shot) {
@@ -437,8 +459,9 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
                 body.elbow[arm] *= held;
             }
         }
-        const float ballOut = ShotOut[reach] * size * (1.0f - spec.inward);
-        const float ballX = (spec.high ? HighShotX : ShotX) * size;
+        // (17/11) Com aimBall, a bola de verdade (o pe vai ate ela).
+        const float ballOut = aimedOut(spec, s, ShotOut[reach] * size * (1.0f - spec.inward), size);
+        const float ballX = aimedX(spec, (spec.high ? HighShotX : ShotX) * size, size);
         // A pegada de impulso (24/10, pedido do usuario: "deve existir, de
         // acordo com a potencia", sem exagero): a perna arma para tras na linha
         // da bola - fraco, um recuo curto com o joelho meio dobrado; cheio, o
@@ -510,8 +533,9 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
     keys.duration = seconds;
     const int depth = std::clamp(spec.depth, 0, 2);
     const bool in = spec.move == GestureMove3D::In;
-    const float ballOut = TouchOut[reach] * size;
-    const float ballX = TouchX[depth] * size;
+    // (17/11) Com aimBall, a bola de verdade (o pe vai ate ela).
+    const float ballOut = aimedOut(spec, s, TouchOut[reach] * size, size);
+    const float ballX = aimedX(spec, TouchX[depth] * size, size);
     const float ballZ = ballHeight;
     // O corpo pela forca do toque (24/10, pedido do usuario: o toque suave -
     // conduzindo - suave, os bracos sutis: 35% no mais fraco, cheio no forte)
@@ -578,7 +602,9 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
         keys.liftValid = true;
     }
     // (O toque curto e menor: abaixo de 0,28 s o acompanhamento encolhe.)
-    const float k = (0.9f + 0.7f * power) * std::clamp(seconds / 0.28f, 0.45f, 1.0f);
+    // (17/11, o toque realista: com a bola de verdade no caminho, o pe empurra
+    // e segura - o acompanhamento curto, sem atravessar a bola que saiu devagar.)
+    const float k = (0.9f + 0.7f * power) * std::clamp(seconds / 0.28f, 0.45f, 1.0f) * (spec.aimBall ? 0.6f : 1.0f);
     float followX = contactX + t.fx * k * size;
     float followOut = contactOut + t.fout * k * size;
     const float followZ = std::max(0.13f * size, contactZ + t.fz * k * size);

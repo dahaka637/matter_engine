@@ -11,6 +11,7 @@
 #include "Engine/Physics/PhysicsScene3D.hpp"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace MatterEngine {
@@ -65,6 +66,11 @@ struct LegacyAthleteState3D {
     // Os links estao guiados (o corpo do modo padrao) e, saindo dele para o
     // fisico sem pancada, quanto falta (s) da autoridade descendo e o total.
     bool guided = false;
+    // (16/11) O fisico do padrao pelo cerebro unico do RL (o jogo): de pe de novo, ele pede a volta ao padrao - o proximo passo
+    // volta como na volta de sempre, do corpo como esta.
+    bool rlReturn = false;
+    // (16/11) Por que o padrao foi ao fisico pela ultima vez (o registro do cerebro do RL no jogo).
+    std::string physicalReason;
     float guidedExitLeft = 0.0f;
     float guidedExitSeconds = 0.0f;
     // O agachar do tick anterior (a borda pede o carrinho) e o carrinho do
@@ -78,11 +84,32 @@ struct LegacyAthleteState3D {
     std::vector<Vec3> returnCoordinates;
     // A volta pela inercia ("Volta do fisico acompanhando o corpo").
     PoseInertializer3D returnInertia;
+    // (16/11) Na volta pelo cerebro do RL: a diferenca de cada elo entre o corpo e a pose montada das juntas no primeiro tick do guiado (as
+    // juntas fisicas cedem milimetros - montada, a pose ficava a ~1 cm dos elos e o guiado a corrigia num tick: a cabeca a 51 m/s2, as
+    // maos a 128), somada a pose e sumindo pela mola da volta - o alvo do guiado comeca no corpo. Posicao e rotacao (vetor) por elo,
+    // ha quanto (s; < 0 nada) e se falta medir no proximo tick do guiado.
+    std::vector<Vec3> rlResidualPosition, rlResidualRotation;
+    float rlResidualAge = -1.0f;
+    bool rlResidualPending = false;
+    // (A rampa da velocidade da volta pelo cerebro: ver AthleteRuntimeSettings3D::rlReturnAcceleration.)
+    bool rlRamp = false;
+    // (16/11) Na volta pelo cerebro, o padrao ja vem rodando - a sombra que o cerebro levou o corpo a imitar -: a volta nao o recomeca.
+    bool rlShadowAdopted = false;
+    // (16/11, ele: "a transicao... brusca... principalmente quando o boneco esta virado para outra direcao") Depois da volta pelo cerebro, o
+    // rumo pedido ao padrao vai do rumo em que ele assumiu ao da camera (ou do piloto) numa mola com o giro limitado: o rumo e o giro de
+    // agora (rad, rad/s).
+    bool rlFacingActive = false;
+    float rlFacingYaw = 0.0f, rlFacingRate = 0.0f;
+    // (A mola desta volta pelo cerebro, dada por ele - curta depois da mistura, que deixa a diferenca pequena; meia-vida e duracao, s; < 0
+    // a dos ajustes. A da diferenca dos elos tambem.)
+    float rlReturnHalfLife = -1.0f, rlReturnSeconds = -1.0f, rlResidualHalfLife = 0.3f;
     // A velocidade na volta (plano v4, etapa C): parte da do corpo e vai a
     // pedida numa aceleracao suave, por ate returnRampLeft s - a capsula
     // saltava para a pedida e a pose do padrao, presa nela, puxava o corpo.
     Vec3 returnVelocity;
     float returnRampLeft = 0.0f;
+    // (Ha quanto a rampa da volta comecou, s: o comeco suave da aceleracao na volta pelo cerebro.)
+    float returnRampAge = 0.0f;
     float returnSpeedScale = 1.0f;
     // A ponte fisico -> padrao (plano v2, fase D; o modo Ativo por dentro):
     // o tempo nela e quanto ela dura (s).

@@ -11,10 +11,12 @@
 #include "Engine/Math/ShadowCascade.hpp"
 #include "Engine/RHI/RHITypes.hpp"
 #include "Engine/Render/Scene3D.hpp"
+#include "Engine/Modeling/Raster/ImageIO.hpp"
 #include "imgui.h"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -509,6 +511,10 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         if (input().keyDown(Key::A)) command.moveDirection -= right;
         command.sprint = input().keyDown(Key::LeftShift)
             || input().keyDown(Key::RightShift);
+        if (m_scriptedMoveActive && controllingCharacter) {
+            command.moveDirection = m_scriptedMove;
+            command.sprint = m_scriptedSprint;
+        }
         if (m_ballStress && controllingCharacter) {
             command.moveDirection = m_ballStressMove;
             command.sprint = m_ballStressSprint;
@@ -680,6 +686,10 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
                 direction = m_ballStressMove;
                 sprint = m_ballStressSprint;
             }
+            if (m_scriptedMoveActive) {
+                direction = m_scriptedMove;
+                sprint = m_scriptedSprint;
+            }
             m_characterIntent.effort = sprint ? 1.0f : 0.0f;
             m_characterSpaceHeld = input().keyDown(Key::Space);
             m_characterIntent.crouch = input().keyDown(Key::LeftControl)
@@ -783,7 +793,22 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             }
         }
     }
-    m_physicsScene->moveCharacter(command, activeSettings, deltaTime);
+    // (16/11) No Fisico com RL a capsula so e colocada sob o corpo (finishRlBrainTick): movida, ela empurraria a bola e os props.
+    // (17/11, ele: "pode reduzir a velocidade do jogador ou dar uma puxada nele,
+    // desde que bem suave e harmonico, para garantir a viabilidade do ato") O toque
+    // pedido que so da certo com o corpo indo ate a bola: ate o contato, a
+    // velocidade de encontro no lugar das teclas (a capsula acelera e vira na
+    // resposta dela, sem tranco).
+    if (controllingCharacter && m_approachValid && activeSettings.sprintSpeed > 0.1f) {
+        const Vec3 flat { m_approachVelocity.x, m_approachVelocity.y, 0.0f };
+        const float speed = flat.length();
+        command.moveDirection = speed > 0.05f ? flat * (1.0f / speed) : Vec3 {};
+        command.sprint = true;
+        command.speedScale = speed / activeSettings.sprintSpeed;
+        // (So a velocidade: o rumo das teclas fica o dele - o dominio e "sem tecla".)
+        m_characterIntent.requestedVelocityWorld = flat;
+    }
+    if (!m_rlBrainActive) m_physicsScene->moveCharacter(command, activeSettings, deltaTime);
     const PhysicsCharacterState3D& character =
         m_physicsScene->characterState();
     // Batida da capsula: a velocidade no plano caiu, no rumo que tinha, mais
@@ -884,6 +909,19 @@ bool WorkbenchApp::updateControlledPhysicalCameraFocus(float deltaTime) {
     };
     Vec3 physicalFocus, focusVelocity;
     const bool hasUpperChest = linkPosition("UpperChest", physicalFocus, focusVelocity);
+    // (17/11) O corpo como segmento pe-cabeca, para a janela de vidro da
+    // camera sem empurrao (SeeThroughSettings3D); o chao sob os pes.
+    {
+        Vec3 head, leftFoot, rightFoot, unusedVelocity;
+        m_seeThroughBodyValid = linkPosition("Head", head, unusedVelocity)
+            && linkPosition("LeftFoot", leftFoot, unusedVelocity)
+            && linkPosition("RightFoot", rightFoot, unusedVelocity);
+        if (m_seeThroughBodyValid) {
+            m_seeThroughBodyBottom = (leftFoot + rightFoot) * 0.5f;
+            m_seeThroughBodyTop = head + Vec3 { 0.0f, 0.0f, 0.12f };
+            m_seeThroughGround = std::min(leftFoot.z, rightFoot.z) - 0.08f;
+        }
+    }
     if (!hasUpperChest) {
         physicalFocus = controlled->physicsState.links.front().position;
         focusVelocity = controlled->physicsState.links.front().linearVelocity;
@@ -961,6 +999,26 @@ void WorkbenchApp::updateLaboratoryCamera(float fixedStepAlpha) {
     constexpr float WallClearanceMeters = 0.12f;
     Vec3 cameraOffset = cameraForward(m_laboratoryCameraYaw,
         m_laboratoryCameraPitch).normalized() * -OrbitDistanceMeters;
+    if (m_cameraSeeThrough) {
+        // (17/11, pedido dele) Nada mais empurra a camera: o que fica entre
+        // ela e o jogador vira vidro (SeeThroughSettings3D, montado em
+        // renderLaboratory). So o chao a segura - olhando para cima ela para
+        // acima do piso, na mesma linha da orbita, em vez de atravessa-lo.
+        constexpr float GroundClearanceMeters = 0.3f;
+        if (m_seeThroughBodyValid) {
+            const float floorZ = m_seeThroughGround + GroundClearanceMeters;
+            if (focus.z + cameraOffset.z < floorZ) {
+                if (cameraOffset.z < -1.0e-4f && focus.z > floorZ) {
+                    cameraOffset *= std::max(MinimumOrbitDistanceMeters / OrbitDistanceMeters,
+                        (focus.z - floorZ) / -cameraOffset.z);
+                } else {
+                    cameraOffset.z = floorZ - focus.z;
+                }
+            }
+        }
+        m_laboratoryCameraPosition = focus + cameraOffset;
+        return;
+    }
     PhysicsRayHit3D cameraHit;
     if (m_physicsScene && m_physicsScene->raycastStatic(
             { focus, cameraOffset / OrbitDistanceMeters },
@@ -1413,8 +1471,205 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
     m_laboratoryCharacterInitialized = false;
 }
 
+void WorkbenchApp::updateSeeThroughShots(Renderer& activeRenderer) {
+    SeeThroughShots& shots = m_seeThroughShots;
+    const double now = std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (!shots.active || !m_laboratoryMapLoaded) return;
+    if (!shots.spawnApplied) {
+        if (shots.hasSpawn) m_laboratorySpawnPosition = shots.spawn;
+        // MATTERENGINE_SPAWN_OFFSET ("dx,dy"): relativo ao nascimento do mapa.
+        float dx = 0.0f, dy = 0.0f;
+        if (const char* offset = std::getenv("MATTERENGINE_SPAWN_OFFSET");
+            offset != nullptr && std::sscanf(offset, "%f,%f", &dx, &dy) == 2) {
+            m_laboratorySpawnPosition += Vec3 { dx, dy, 0.0f };
+        }
+        shots.spawnApplied = true;
+        shots.clock = now;
+        return;
+    }
+    if (m_controlledCharacterEntityId == 0) {
+        shots.clock = now;
+        return;
+    }
+    if (shots.waitingCapture) {
+        int width = 0, height = 0;
+        std::vector<std::byte> pixels;
+        if (!activeRenderer.takeFrameCapture(width, height, pixels)) return;
+        Modeling::Image image(width, height);
+        for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x) {
+                const std::size_t i = (static_cast<std::size_t>(y) * width + x) * 4;
+                image.setPixel(x, y, { std::to_integer<int>(pixels[i]) / 255.0f,
+                    std::to_integer<int>(pixels[i + 1]) / 255.0f,
+                    std::to_integer<int>(pixels[i + 2]) / 255.0f, 1.0f });
+            }
+        const std::string path = shots.directory + "/foto_"
+            + std::to_string(static_cast<int>(std::lround(shots.yawsDegrees[shots.index / 2])))
+            + (shots.index % 2 == 0 ? "_vidro.png" : "_antes.png");
+        std::string error;
+        if (!Modeling::writePng(image, path, &error)) Log::error(error);
+        else Log::info("foto da camera: " + path);
+        shots.waitingCapture = false;
+        ++shots.index;
+        shots.clock = now;
+        return;
+    }
+    if (shots.index >= shots.yawsDegrees.size() * 2) {
+        shots.active = false;
+        m_automaticQuitSeconds = 0.001f;
+        return;
+    }
+    m_laboratoryCameraYaw = shots.yawsDegrees[shots.index / 2] * 0.0174532925f;
+    m_laboratoryCameraPitch = shots.pitchDegrees * 0.0174532925f;
+    m_cameraSeeThrough = shots.index % 2 == 0;
+    // O primeiro rumo espera o corpo assentar e girar; os outros, o giro.
+    if (now - shots.clock >= (shots.index == 0 ? 5.0 : 1.5)) {
+        activeRenderer.requestFrameCapture();
+        shots.waitingCapture = true;
+    }
+}
+
+void WorkbenchApp::updateConductionShots(Renderer& activeRenderer) {
+    ConductionShots& shots = m_conductionShots;
+    if (!shots.active || !m_laboratoryMapLoaded || m_controlledCharacterEntityId == 0 || m_inflatedBalls.empty()) return;
+    const auto controlled = std::find_if(m_spawnedRagdolls.begin(), m_spawnedRagdolls.end(),
+        [&](const SpawnedRagdollInstance& item) { return item.entityId == m_controlledCharacterEntityId; });
+    if (controlled == m_spawnedRagdolls.end() || controlled->physicsState.links.empty()) return;
+    // (No relogio da simulacao: a 20 quadros/s o de parede andava na frente dela.)
+    const double now = m_laboratoryElapsedTime;
+    if (shots.phase == 0) { shots.clock = now; shots.phase = 1; return; }
+    const double elapsed = now - shots.clock;
+    const Vec3 forward { std::cos(m_laboratoryCameraYaw), std::sin(m_laboratoryCameraYaw), 0.0f };
+    if (shots.phase == 1 && elapsed > 4.0) {
+        // A bola parada logo a frente dele e as teclas para a frente.
+        const Vec3 pelvis = controlled->physicsState.links.front().position;
+        const float radius = m_soccerBallProfile.radiusMeters;
+        m_physicsScene->setInflatedBallMotion(m_inflatedBalls.front().physicsBall,
+            { pelvis.x + 0.75f * forward.x, pelvis.y + 0.75f * forward.y, ragdollGroundHeight(pelvis) + radius + 0.005f },
+            {}, {});
+        m_scriptedMoveActive = true;
+        m_scriptedSprint = shots.sprint > 0.5f;
+        shots.phase = 2;
+        shots.clock = now;
+        return;
+    }
+    if (shots.phase >= 2 && !shots.manual.empty()) {
+        // O roteiro manual: os apertos nos instantes (s desde o comeco).
+        const Vec3 pelvis = controlled->physicsState.links.front().position;
+        const Vec3 velocity = controlled->physicsState.links.front().linearVelocity;
+        const Vec3 left { -forward.y, forward.x, 0.0f };
+        const float radius = m_soccerBallProfile.radiusMeters;
+        const float ground = ragdollGroundHeight(pelvis);
+        const auto press = [&](BallActionKind3D kind, float power) {
+            m_ballRequest = kind;
+            m_ballRequestPower = power;
+            m_ballRequestAimYaw = m_laboratoryCameraYaw;
+        };
+        struct Step { double seconds; int what; };
+        // what: 0 drible, 1 para as teclas + drible (o dominio), 2 lanca a bola cruzando,
+        // 3 chute, 4 lanca a bola no alto, 5 teclas paradas.
+        static const Step freia[] = { { 0.6, 0 }, { 1.2, 0 }, { 1.7, 1 } };
+        static const Step cruza[] = { { 1.0, 2 }, { 1.68, 3 } };
+        static const Step voleio[] = { { 0.0, 5 }, { 0.25, 4 }, { 0.70, 3 } };
+        const Step* steps = shots.manual == "freia" ? freia : shots.manual == "cruza" ? cruza : voleio;
+        const int count = shots.manual == "freia" ? 3 : shots.manual == "cruza" ? 2 : 3;
+        // (Rolando sem escorregar: o giro de quem rola - lancada so com a velocidade, a
+        // bola oca perdia 40% dela no atrito ate rolar.)
+        const auto rolling = [&](Vec3 v) { return cross(Vec3 { 0.0f, 0.0f, 1.0f }, Vec3 { v.x, v.y, 0.0f }) * (1.0f / radius); };
+        if (shots.phase == 2) m_scriptedMove = forward;
+        while (shots.event < count && elapsed > steps[shots.event].seconds) {
+            Log::info("roteiro manual: passo " + std::to_string(shots.event) + " em "
+                + std::to_string(elapsed) + " s, bola a "
+                + std::to_string((m_physicsScene->inflatedBallState(m_inflatedBalls.front().physicsBall).position - pelvis).length())
+                + " m");
+            switch (steps[shots.event].what) {
+            case 0:
+                // (O primeiro: a bola 0,6 m a frente rolando com ele, e o toque.)
+                if (shots.event == 0)
+                    m_physicsScene->setInflatedBallMotion(m_inflatedBalls.front().physicsBall,
+                        { pelvis.x + 0.6f * forward.x, pelvis.y + 0.6f * forward.y, ground + radius + 0.005f },
+                        forward * std::max(0.0f, dot(velocity, forward)), rolling(forward * std::max(0.0f, dot(velocity, forward))));
+                press(BallActionKind3D::Dribble, 0.15f);
+                break;
+            case 1: m_scriptedMove = {}; press(BallActionKind3D::Dribble, 0.3f); shots.phase = 3; break;
+            case 2: {
+                // Cruza 0,6 m a frente de onde ele vai estar em 0,9 s, a 6 m/s de lado.
+                const float ahead = std::max(0.0f, dot(velocity, forward)) * 0.9f + 0.6f;
+                const Vec3 cross = Vec3 { pelvis.x, pelvis.y, 0.0f } + forward * ahead;
+                const Vec3 from = cross + left * 5.4f;
+                m_physicsScene->setInflatedBallMotion(m_inflatedBalls.front().physicsBall,
+                    { from.x, from.y, ground + radius + 0.005f }, left * -6.0f, rolling(left * -6.0f));
+                break;
+            }
+            case 3: press(BallActionKind3D::Shot, 0.6f); break;
+            case 4: {
+                // Do alto, 5 m a frente, chegando a 0,55 m dele a 0,55 m de altura em 0,9 s.
+                const Vec3 from = Vec3 { pelvis.x, pelvis.y, 0.0f } + forward * 5.0f;
+                const float flight = 0.9f, z0 = ground + 1.0f, z1 = ground + 0.55f;
+                const Vec3 run = forward * (-(5.0f - 0.55f) / flight);
+                m_physicsScene->setInflatedBallMotion(m_inflatedBalls.front().physicsBall, { from.x, from.y, z0 },
+                    { run.x, run.y, (z1 - z0 + 4.905f * flight * flight) / flight }, {});
+                break;
+            }
+            default: m_scriptedMove = {}; shots.phase = 3; break;
+            }
+            ++shots.event;
+        }
+    }
+    if (shots.phase >= 2) {
+        if (shots.manual.empty()) m_scriptedMove = forward;
+        if (shots.manual.empty() && shots.phase == 2 && elapsed > 0.25) {
+            // O drible fraco (a barra a 20%): liga a conducao automatica.
+            m_ballRequest = BallActionKind3D::Dribble;
+            m_ballRequestPower = 0.2f;
+            m_ballRequestAimYaw = m_laboratoryCameraYaw;
+            shots.phase = 3;
+        }
+        const float frameDt = shots.last > 0.0 ? static_cast<float>(std::min(0.05, now - shots.last)) : 0.0f;
+        shots.last = now;
+        if (elapsed > 2.0) m_laboratoryCameraYaw += shots.turnDegreesPerSecond * 0.0174532925f * frameDt;
+        // (MATTERENGINE_SHOT_ZIGUE=graus: a cada 1,2 s o rumo salta para o outro lado, num quadro.)
+        if (const char* zig = std::getenv("MATTERENGINE_SHOT_ZIGUE"); zig != nullptr && elapsed > 2.0) {
+            const float amplitude = std::strtof(zig, nullptr) * 0.0174532925f;
+            const int segment = static_cast<int>((elapsed - 2.0) / 1.2);
+            const int previous = static_cast<int>((elapsed - 2.0 - frameDt) / 1.2);
+            if (segment != previous || shots.zigBase == 0.0f) {
+                if (shots.zigBase == 0.0f) shots.zigBase = m_laboratoryCameraYaw + 1e-4f;
+                m_laboratoryCameraYaw = shots.zigBase + (segment % 2 == 0 ? amplitude : -amplitude);
+            }
+        }
+        int width = 0, height = 0;
+        std::vector<std::byte> pixels;
+        if (activeRenderer.takeFrameCapture(width, height, pixels)) {
+            Modeling::Image image(width, height);
+            for (int y = 0; y < height; ++y)
+                for (int x = 0; x < width; ++x) {
+                    const std::size_t i = (static_cast<std::size_t>(y) * width + x) * 4;
+                    image.setPixel(x, y, { std::to_integer<int>(pixels[i]) / 255.0f,
+                        std::to_integer<int>(pixels[i + 1]) / 255.0f, std::to_integer<int>(pixels[i + 2]) / 255.0f, 1.0f });
+                }
+            char name[64];
+            std::snprintf(name, sizeof(name), "/quadro_%02d.png", shots.frame);
+            std::string error;
+            if (!Modeling::writePng(image, shots.directory + name, &error)) Log::error(error);
+            ++shots.frame;
+        }
+        // (MATTERENGINE_SHOT_FROM: o instante do primeiro quadro, s.)
+        static const float from = std::getenv("MATTERENGINE_SHOT_FROM") ? std::strtof(std::getenv("MATTERENGINE_SHOT_FROM"), nullptr) : 0.3f;
+        if (elapsed > from + shots.every * shots.frame && shots.frame < 32) activeRenderer.requestFrameCapture();
+        if (elapsed > from + shots.every * 32 + 0.5) {
+            m_scriptedMoveActive = false;
+            shots.active = false;
+            m_automaticQuitSeconds = 0.001f;
+        }
+    }
+}
+
 void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
     ensureLaboratoryMapLoaded(activeRenderer);
+    updateSeeThroughShots(activeRenderer);
+    updateConductionShots(activeRenderer);
     // O tamanho da bola mudou: a malha dela no raio novo (antes de montar o
     // quadro - nada desenhado ainda usa a antiga).
     if (m_soccerBallVisualDirty) {
@@ -2026,6 +2281,7 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                 meshes[i].visibleInCamera=ragdollVisible;
                 meshes[i].shadowCascadeMask=ragdollShadowMask;
                 meshes[i].tintColor=instance.tintColor;
+                meshes[i].seeThrough=false;
                 // O uniforme do sistema de aparencia (camada 0: um uniforme e
                 // um numero para todos, por enquanto).
                 meshes[i].characterMaterial=m_characterKit;
@@ -2048,6 +2304,7 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                 meshes[part].pixelArtHighDetail = true;
                 meshes[part].visibleInCamera = ragdollVisible;
                 meshes[part].shadowCascadeMask = ragdollShadowMask;
+                meshes[part].seeThrough = false;
             }
             if (linkIndex > 0
                 && linkIndex < jointLocalPositions.size()
@@ -2070,6 +2327,7 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                     meshes[part].visibleInCamera = ragdollVisible;
                     meshes[part].shadowCascadeMask =
                         ragdollShadowMask;
+                    meshes[part].seeThrough = false;
                 }
             }
         }
@@ -2114,6 +2372,7 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
             + cameraUp * localOffset.z;
         const Quaternion weaponOrientation = viewOrientation * localCalibration;
         if (!m_hidePhysGunPresentation) {
+            const std::size_t weaponFirst = meshes.size();
             appendGpuModelRenderables(m_physGunVisual, weaponPosition,
                 weaponOrientation,
                 temporalHistoryValid ? m_previousPhysGunWeaponPosition
@@ -2123,6 +2382,8 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                 m_physGunViewCalibration.sizeMeters / largest,
                 false, false, false,
                 meshes);
+            for (MeshRender3D& weaponMesh : std::span<MeshRender3D>(meshes).subspan(weaponFirst))
+                weaponMesh.seeThrough = false;
         }
         // Mantém a pose anterior sincronizada mesmo no modo foto, evitando
         // um vetor de movimento gigante no quadro em que o modelo reaparece.
@@ -2192,6 +2453,15 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
     scene.cameraPosition = m_laboratoryCameraPosition;
     scene.lights = lights;
     scene.meshes = meshes;
+    // (17/11) A camera sem empurrao: o que fica entre ela e o jogador vira
+    // vidro numa janela em volta do corpo dele (ver SeeThroughSettings3D).
+    if (m_cameraSeeThrough && m_seeThroughBodyValid
+        && m_laboratoryCameraMode == LaboratoryCameraMode::ThirdPerson) {
+        scene.seeThrough.enabled = true;
+        scene.seeThrough.bodyBottom = m_seeThroughBodyBottom;
+        scene.seeThrough.bodyTop = m_seeThroughBodyTop;
+        scene.seeThrough.groundHeight = m_seeThroughGround;
+    }
     scene.environment = m_laboratoryEnvironment;
     scene.environment.skyAnimationTime = m_laboratoryElapsedTime;
     scene.environment.cloudWindOffset = m_cloudWindOffset;
@@ -2581,6 +2851,9 @@ void WorkbenchApp::drawLaboratoryUi() {
                 rimCovered[i] = near && m_hiddenBallCoveredOnly && covered(rim[i], 0.005f);
                 anyCovered = anyCovered || rimCovered[i];
             }
+            // (17/11, a conducao automatica) O brilho azul entra e sai suave.
+            const bool glowing = m_autoConductionGlow && ball.physicsBall == m_autoConductionBall;
+            ball.autoGlow = std::clamp(ball.autoGlow + (glowing ? io.DeltaTime / 0.2f : -io.DeltaTime / 0.3f), 0.0f, 1.0f);
             const bool showOutline = m_hiddenBallCoveredOnly ? anyCovered : hidden;
             ball.hiddenOutline = std::clamp(ball.hiddenOutline + (showOutline ? io.DeltaTime / 0.12f : -io.DeltaTime / 0.2f),
                 0.0f, 1.0f);
@@ -2591,6 +2864,19 @@ void WorkbenchApp::drawLaboratoryUi() {
                 || !projectToScreen(m_laboratoryViewProjection, ball.renderedPosition + across * radius, io.DisplaySize, edge))
                 continue;
             const float screenRadius = std::hypot(edge.x - center.x, edge.y - center.y);
+            // O halo da conducao automatica: aneis azuis em volta da bola, cada
+            // um mais fraco para fora (um brilho macio, sem cobrir a bola),
+            // pulsando junto do aro do shader.
+            if (ball.autoGlow > 0.01f) {
+                const float pulse = 0.84f + 0.16f * std::sin(m_laboratoryElapsedTime * 4.2f);
+                constexpr int Rings = 12;
+                for (int ring = 0; ring < Rings; ++ring) {
+                    const float k = static_cast<float>(ring) / Rings;
+                    const float alpha = 0.16f * ball.autoGlow * pulse * (1.0f - k) * (1.0f - k);
+                    foreground->AddCircle(center, screenRadius * (1.02f + 0.75f * k), IM_COL32(90, 165, 255,
+                        static_cast<int>(255.0f * alpha)), 48, std::max(1.0f, screenRadius * 0.075f));
+                }
+            }
             const float opacity = std::clamp(m_hiddenBallOpacity, 0.0f, 1.0f);
             if (ball.hiddenOutline > 0.01f) {
                 const ImU32 color = IM_COL32(255, 255, 255, static_cast<int>(255.0f * opacity * ball.hiddenOutline));
@@ -3025,7 +3311,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                                     reloadGetUpPolicy();
                                 }
                             }
-                            hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas. Físico com RL: o físico com a rede treinada corrigindo os pés, o equilíbrio, a pose e a rigidez.");
+                            hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas. Físico com RL: o cérebro único do RL comanda os músculos do corpo de verdade, na física do jogo - anda, corre, troca de direção, para, leva pancada, cai e levanta (shift: levantar correndo, também no meio do levantar).");
                             // (A locomocao fisica v2 e o "tentar se manter em pe no
                             // impacto" viraram o padrao - as caixas sairam, pedido do
                             // usuario, 06/10.)
@@ -3062,11 +3348,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                             }
                             if (mode == 0) {
                                 ImGui::Checkbox("Físico com RL nas transições", &m_defaultPhysicalPolicy);
-                                hint("Na troca do padrão para o físico (pancada, parede, queda) e na volta, o físico pelas redes de RL - a da locomoção e a do levantar, as mais novas dos treinos, com a troca entre elas na queda iminente - no lugar da locomoção física.");
-                                if (m_defaultPhysicalPolicy) {
-                                    if (!m_locomotionPolicyLabel.empty()) ImGui::TextDisabled("%s", m_locomotionPolicyLabel.c_str());
-                                    if (!m_getUpPolicyLabel.empty()) ImGui::TextDisabled("%s", m_getUpPolicyLabel.c_str());
-                                }
+                                hint("Quando o padrão vai ao físico (pancada, parede, queda), o cérebro único do RL assume os músculos do corpo como ele está - reage, cai, levanta (shift: correndo) - e, de pé de novo, devolve ao padrão.");
+                                if (m_defaultPhysicalPolicy && !m_rlBrainLabel.empty()) ImGui::TextDisabled("%s", m_rlBrainLabel.c_str());
                                 ImGui::Checkbox("Queda da locomoção física antes do levantar", &m_protectiveFallBeforeGetUp);
                                 hint("Com a rede do levantar (Físico com RL): caindo, a locomoção física cuida da queda inteira, do jeito dela — os reflexos no ar e o corpo vivo no chão —, e a rede assume só quando ela começa a levantar. Desligado, a rede assume já na queda iminente, ainda de pé.");
                                 ImGui::Checkbox("Levantar pelo padrão", &m_animatedGetUp);
@@ -3089,6 +3372,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 ImGui::Checkbox("Bonecos no padrão", &m_looseDefaultLocomotion);
                                 hint("Os outros bonecos ficam na locomoção padrão e passam pelas mesmas trocas que o jogador: o contato, a ponte, o físico, o levantar e a volta.");
                             }
+                            ImGui::Checkbox("Câmera atravessa (vidro)", &m_cameraSeeThrough);
+                            hint("Ligado: nada empurra a câmera. O que fica entre ela e o jogador (o cenário, os objetos, a trave; nunca os bonecos nem a bola) vira vidro numa janela em volta dele, com o perfil aceso para a forma continuar legível. Desligado: a câmera de antes, que encosta na parede.");
                             ImGui::Checkbox("Câmera suave", &m_cameraSmoothFollow);
                             hint("A câmera segue o peito por uma mola: sem atraso em velocidade constante, sem o tranco de um passo nas trocas do físico ao padrão.");
                             ImGui::Checkbox("Pulo instantâneo", &m_instantJump);
@@ -3096,13 +3381,13 @@ void WorkbenchApp::drawLaboratoryUi() {
                             ImGui::Checkbox("Áreas de alcance", &m_showReachAreas);
                             hint("Desenha onde a bola precisa estar para cada parte: verde os pés (o amarelo mais claro é a bola alta, pé na altura do joelho), azul o peito, laranja a cabeça. É o centro da bola que conta.");
                             if (mode == 2) {
-                                if (ImGui::Button("Recarregar as redes", { -1.0f, 0.0f })) {
-                                    reloadLocomotionPolicy();
-                                    reloadGetUpPolicy();
+                                // (16/11) O Fisico com RL e o cerebro unico do RL; recarregar troca pela rede exportada de agora.
+                                if (ImGui::Button("Recarregar o cérebro", { -1.0f, 0.0f })) {
+                                    // (Os cerebros de todos os bonecos: recarregados da rede exportada, em segundo plano, a partir do proximo passo.)
+                                    m_rlBrains.clear();
+                                    m_rlBrainActive = false;
                                 }
-                                hint("Carrega as redes mais recentes dos treinos - a da locomoção, com a ajuda, a régua e as viradas com que ela treinou, e a do levantar. Elas também se atualizam sozinhas quando os treinos exportam outras; na queda iminente a do levantar assume e, de pé e firme, devolve à da locomoção.");
-                                if (!m_locomotionPolicyLabel.empty()) ImGui::TextDisabled("%s", m_locomotionPolicyLabel.c_str());
-                                if (!m_getUpPolicyLabel.empty()) ImGui::TextDisabled("%s", m_getUpPolicyLabel.c_str());
+                                if (!m_rlBrainLabel.empty()) ImGui::TextDisabled("%s", m_rlBrainLabel.c_str());
                             }
                         }
                         panelHeader("AJUDAS");
@@ -3149,6 +3434,10 @@ void WorkbenchApp::drawLaboratoryUi() {
                             "A duração do gesto do manejo inteiro, do toque à volta. A força sai no clique.");
                         milliseconds("Tempo do chute", "##ShotGestureTime", &m_shotGestureMilliseconds, 250.0f, 1200.0f,
                             "A duração do gesto do chute inteiro, da batida à volta. A força sai no clique.");
+                        ImGui::Checkbox("Toque realista", &m_realisticTouch);
+                        hint("Ligado: o pé tem hitbox. O gesto vai até a bola de verdade e a força do chute, do levantar e do manejo só sai quando a chuteira encosta nela; se o pé não chega, não há toque. Desligado: a força sai no clique, como antes.");
+                        ImGui::Checkbox("Condução automática", &m_autoConduction);
+                        hint("Ligado: o drible com a barra até 35% liga a condução automática. A bola, no alcance, ganha um brilho azul e os toques saem sozinhos (os de verdade, o mínimo deles) para mantê-la logo à frente dos pés. Um chute, um levantar ou um drible forte a desligam."); 
                         ImGui::EndTabItem();
                     }
                     // O corpo (26/10, pedido do usuario): um so para todos os bonecos

@@ -97,11 +97,13 @@ void DefaultLocomotion3D::stepGesture(Tick& t) {
         // rentes ao chao foram acertados com a do modelo.)
         if (spec.high || spec.receive)
             rig.pelvisHeight = std::clamp(rootPosition.z - input.feetPositionWorld.z, 0.6f, 1.2f);
-        m_gesturePlayers[side].start(spec, rig, shown ? m_gestureShown[side] : live[side],
-            shown ? m_gestureShownVelocity[side] : GestureLegPose3D {});
-        // (O gesto da outra perna termina logo: as duas no ar, nenhum pe
-        // apoiava.)
-        m_gesturePlayers[1 - side].finishSoon(0.1f);
+        if (!(spec.retarget && m_gesturePlayers[side].retarget(spec, rig))) {
+            m_gesturePlayers[side].start(spec, rig, shown ? m_gestureShown[side] : live[side],
+                shown ? m_gestureShownVelocity[side] : GestureLegPose3D {});
+            // (O gesto da outra perna termina logo: as duas no ar, nenhum pe
+            // apoiava.)
+            m_gesturePlayers[1 - side].finishSoon(0.1f);
+        }
     }
     if (!m_gesturePlayers[0].active() && !m_gesturePlayers[1].active()) {
         m_gestureArmTake = 0.0f;

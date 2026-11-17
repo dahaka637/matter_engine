@@ -1,11 +1,13 @@
 #pragma once
 
 #include "Engine/RL/Supervisor/TrainingHistory3D.hpp"
+#include "Engine/Physics/PhysicsScene3D.hpp"
 #include "Workbench/ReinforcementLearning/ViewerWorld3D.hpp"
 
 #include <array>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <utility>
 
 namespace MatterEngine {
@@ -170,7 +172,8 @@ public:
     // exercicio dela (vazio: o primeiro com peso), levado pelo piloto dele.
     TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed, const std::string& drill = {},
         const std::filesystem::path& locomotionTask = {}, float speedScale = 1.0f, float filterBeta = 0.2f,
-        TrackingViewerConditions3D conditions = {}, const std::filesystem::path& getUpDirectory = {});
+        TrackingViewerConditions3D conditions = {}, const std::filesystem::path& getUpDirectory = {},
+        PhysicsScene3D* externalScene = nullptr);
     ~TrackingViewer3D() override;
     TrackingViewer3D(const TrackingViewer3D&) = delete;
     TrackingViewer3D& operator=(const TrackingViewer3D&) = delete;
@@ -185,6 +188,19 @@ public:
     [[nodiscard]] float policyStepSeconds() const override { return 1.0f / 30.0f; }
     void reset(std::uint64_t seed) override;
     void setManualSpeed(std::optional<float> metersPerSecond) override;
+    // (15/11 21h, o RL no jogo) O jogador de verdade no comando (o exercicio lev_comando): a tecla do rumo (0-7 contra a vista, -1
+    // solta), o shift e o rumo da camera; liga o externalCommand no primeiro uso.
+    void setPlayerInput(int key, bool run, float viewYaw);
+    // (16/11, externalScene) O cerebro no corpo do jogo: adota o ragdoll (do estado em que esta); a cada tick de 1/120 s da cena do
+    // jogo, applyExternalDrives antes de simular; step() a cada 4 ticks (a decisao) e finishExternalDecision depois do 4o.
+    void adoptExternalBody(RagdollHandle3D handle);
+    void applyExternalDrives();
+    void setExternalAssist(float standing, float walking, float getUp);
+    void setExternalPoseBlend(std::span<const Vec3> coordinates, float weight);
+    void finishExternalDecision();
+    [[nodiscard]] bool externalStanding() const;
+    [[nodiscard]] bool externalGettingUp() const;
+    [[nodiscard]] std::string externalState() const;
     void push(Vec3 force, float seconds) override;
     [[nodiscard]] BodyWorldView3D view() const override;
     [[nodiscard]] const RagdollProfile3D& profile() const override;

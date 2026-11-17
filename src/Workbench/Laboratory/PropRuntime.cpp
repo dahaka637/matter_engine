@@ -734,6 +734,7 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
     updatePhysicsBenchmark(deltaTime);
     // O controlador observa exclusivamente o snapshot do passo anterior e
     // enfileira alvos/torques antes do safe point da próxima simulação.
+    updateRlBrain(deltaTime);
     updateActiveRagdolls(deltaTime);
     m_physicsScene->simulate(deltaTime);
     ++m_laboratoryPhysicsStep;
@@ -767,6 +768,8 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
                 m_physicsScene->ragdollState(instance.physicsRagdoll);
         }
     }
+    // (16/11) O cerebro unico do RL no corpo do jogador: o resto da decisao depois da fisica do jogo.
+    finishRlBrainTick();
     updatePhysicsBenchmarkAnalytics(deltaTime);
 
     // Pitch completo (nao so o yaw planar) e o que da ao HRTF a pista de

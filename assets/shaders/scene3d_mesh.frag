@@ -16,6 +16,15 @@ layout(set = 0, binding = 0, std140) uniform SceneUniform {
     vec4 fogColor;    // rgb=cor da neblina, a=distancia de ocultacao total
     vec4 windOffset;  // xy=deslocamento acumulado do vento nas nuvens, zw reservado
     vec4 environmentSettings; // x=visibilidade indireta minima, y=rebote solar, z=chuva, w=umidade
+    vec4 renderSettings;      // x=Pixel Art, y=tamanho base do pixel, z=TAA completo
+    // (17/11) A camera sem empurrao - ver seeThroughMask: xyz o pe e a cabeca
+    // do jogador; w do primeiro = forca do efeito (0 desligado), do segundo =
+    // altura do chao sob ele. Shape: x,y raio da janela (vidro inteiro ate x,
+    // opaco a partir de y), z,w o vidro perto da camera (inteiro ate z, nada
+    // a partir de w).
+    vec4 seeThroughBottom;
+    vec4 seeThroughTop;
+    vec4 seeThroughShape;
 } scene;
 
 // Um mapa por cascata (ver ShadowCascadeCount em Scene3D.hpp - 4 hardcoded
@@ -130,7 +139,7 @@ layout(location = 5) flat in ivec4 objectParameters;
 layout(location = 6) flat in vec2 objectMetallicRoughness;
 layout(location = 7) in vec4 currentClipPosition;
 layout(location = 8) in vec4 previousMotionClipPosition;
-layout(location = 9) flat in vec3 objectTint;
+layout(location = 9) flat in vec4 objectTint; // w: o brilho da bola conduzida (17/11)
 layout(location = 0) out vec4 outColor;
 // Vetor de movimento em espaco de tela (UV, [0,1]) entre a posicao deste
 // pixel na grade estavel e onde o MESMO ponto do objeto estava projetado no
@@ -550,6 +559,78 @@ float atmosphericFogFactor(float cameraDistance, float worldHeight) {
         terminalFog), 0.0, 1.0);
 }
 
+// (17/11, pedido dele: a camera nao e mais empurrada) O que fica entre a
+// camera e o jogador vira vidro numa janela em volta dele - 0 superficie
+// normal, 1 vidro inteiro. A MESMA conta de scene3d_mesh_depth.frag: o
+// pre-pass tira da profundidade o que o passe de vidro desenha por cima, e
+// as duas copias precisam dar o mesmo numero (sem include compartilhado
+// neste projeto).
+float seeThroughMask(vec3 position, vec3 geometricNormal) {
+    float strength = scene.seeThroughBottom.w;
+    if (strength <= 0.0) return 0.0;
+    // O piso na altura do jogador nunca vira vidro.
+    if (geometricNormal.z > 0.7 && position.z < scene.seeThroughTop.w + 0.25) return 0.0;
+    vec3 origin = scene.cameraPosition.xyz;
+    vec3 toSurface = position - origin;
+    float surfaceDistance = length(toSurface);
+    vec3 direction = toSurface / max(surfaceDistance, 1e-4);
+    // O raio da camera por esta superficie, prolongado: onde ele passa mais
+    // perto do corpo (o segmento pe-cabeca) e a que distancia da camera.
+    vec3 bodyBottom = scene.seeThroughBottom.xyz;
+    vec3 bodyAxis = scene.seeThroughTop.xyz - bodyBottom;
+    vec3 fromBody = origin - bodyBottom;
+    float axisDot = dot(direction, bodyAxis);
+    float axisLength2 = dot(bodyAxis, bodyAxis);
+    float denominator = axisLength2 - axisDot * axisDot;
+    float along = denominator > 1e-6
+        ? clamp((dot(bodyAxis, fromBody) - axisDot * dot(direction, fromBody)) / denominator, 0.0, 1.0)
+        : 0.0;
+    vec3 bodyPoint = bodyBottom + bodyAxis * along;
+    float bodyDepth = max(dot(bodyPoint - origin, direction), 0.0);
+    float missDistance = length(origin + direction * bodyDepth - bodyPoint);
+    // (17/11, pedidos dele: "tudo que esta entre a camera e o jogador fica
+    // transparente... nao apenas ao redor do corpo"; "tudo... ao gradativo a
+    // opacidade, nao so ao redor do jogador") Tudo na frente da profundidade
+    // dele vira vidro na tela inteira, gradativo pela profundidade: inteiro a
+    // 1,2 m na frente dele e voltando aos poucos a opaco ate ela. Junto da
+    // linha da camera ao corpo (ate x, sumindo ate y) a volta e curta (0,3 m):
+    // o que esta colado na frente dele tambem nao o esconde.
+    float depthGap = bodyDepth - surfaceDistance;
+    float everywhere = smoothstep(0.0, 1.2, depthGap);
+    float closeness = 1.0 - smoothstep(scene.seeThroughShape.x, scene.seeThroughShape.y, missDistance);
+    float nearBody = closeness * smoothstep(0.0, 0.3, depthGap);
+    float nearCamera = 1.0 - smoothstep(scene.seeThroughShape.z, scene.seeThroughShape.w, surfaceDistance);
+    return strength * max(max(everywhere, nearBody), nearCamera);
+}
+
+#ifdef MATTER_SEE_THROUGH_GHOST
+// O vidro: a superficie na frente do jogador fica transparente (quase toda
+// junto ao corpo dele), com a propria cor clareada e fria, e acende no perfil
+// (o Fresnel: as bordas de uma trave, as quinas de uma parede, os fios da rede)
+// para a forma continuar legivel. Com a mascara 0 o resultado e a propria
+// superficie opaca: a costura com o passe de cor fica invisivel.
+vec4 seeThroughGlass(vec3 shaded, vec3 normal, vec3 viewDirection) {
+    float mask = seeThroughMask(worldPosition, normalize(worldNormal));
+    // (17/11, pedido dele: sem contorno azul marcado, o tom mais natural) A
+    // propria cor da superficie, so um toque mais clara e fria; o perfil (o
+    // Fresnel) fica um pouco mais opaco, como um vidro de verdade - a forma de
+    // uma trave continua legivel sem brilho nenhum.
+    float facing = abs(dot(normal, viewDirection));
+    float profile = pow(1.0 - facing, 3.0);
+    float luminance = dot(shaded, vec3(0.2126, 0.7152, 0.0722));
+    vec3 glassColor = mix(shaded, vec3(luminance) * vec3(0.95, 0.98, 1.0), 0.15);
+    // (17/11 13h, pedido dele: "a REDE pode ser mais transparente ainda do que
+    // a trave, a trave tambem um pouquinho mais") A rede (bit 16384, a
+    // geometria fina) quase some na frente dele: o vidro dela chega inteiro ja
+    // no meio da mascara e fica a 4-20%.
+    bool thin = (objectParameters.x & 16384) != 0;
+    float glass = thin ? smoothstep(0.0, 0.6, mask) : mask;
+    float alpha = thin ? clamp(0.04 + 0.16 * profile, 0.0, 1.0)
+                       : clamp(0.12 + 0.38 * profile, 0.0, 1.0);
+    return vec4(mix(shaded, glassColor, glass), mix(1.0, alpha, glass));
+}
+#endif
+
 void main() {
     float distanceFromCamera =
         length(scene.cameraPosition.xyz - worldPosition);
@@ -603,9 +684,9 @@ void main() {
         normal=normalize(tbn*normalize(mapped));
     }
 #ifdef MATTER_CHARACTER
-    vec3 albedo = characterAlbedo(texture(albedoMap, materialUv).rgb) * vertexColor * objectTint;
+    vec3 albedo = characterAlbedo(texture(albedoMap, materialUv).rgb) * vertexColor * objectTint.rgb;
 #else
-    vec3 albedo = texture(albedoMap, materialUv).rgb * vertexColor * objectTint;
+    vec3 albedo = texture(albedoMap, materialUv).rgb * vertexColor * objectTint.rgb;
 #endif
     if (objectParameters.z != 0) {
         albedo = mix(albedo, vec3(1.0, 0.62, 0.08), 0.24);
@@ -708,12 +789,30 @@ void main() {
         float rim = pow(1.0 - clamp(dot(normal, viewDirection), 0.0, 1.0), 7.0);
         shaded += vec3(0.25, 0.55, 1.0) * rim * 3.0;
     }
+    // (17/11, a conducao automatica - pedido dele: "fica com um glow azul,
+    // algo nesse sentido, BONITO") A bola conduzida: um aro de luz azul que
+    // nasce na borda dela e entra suave para o meio, pulsando devagar; a cor
+    // dela esfria um pouco. Na escala da luz da cena (o ambiente), para valer
+    // de dia, de noite e no galpao.
+    float conductionGlow = objectTint.w;
+    if (conductionGlow > 0.0) {
+        float facingGlow = clamp(dot(normal, viewDirection), 0.0, 1.0);
+        float rimGlow = pow(1.0 - facingGlow, 2.2);
+        float pulse = 0.84 + 0.16 * sin(scene.skySettings.y * 4.2);
+        float sceneLight = 0.6 + max(scene.settings.w, 0.0) * 0.55;
+        shaded = mix(shaded, shaded * vec3(0.82, 0.92, 1.10), 0.4 * conductionGlow)
+            + vec3(0.22, 0.52, 1.0) * sceneLight * conductionGlow * (0.16 + 1.5 * rimGlow) * pulse;
+    }
     if (scene.skySettings.x > 0.5) {
         float fog = atmosphericFogFactor(
             distanceFromCamera, worldPosition.z);
         shaded = mix(shaded, scene.fogColor.rgb, fog);
     }
+#ifdef MATTER_SEE_THROUGH_GHOST
+    outColor = seeThroughGlass(shaded, normal, viewDirection);
+#else
     outColor = vec4(shaded, 1.0);
+#endif
 
     outMotionVector = encodedMotionVector();
 

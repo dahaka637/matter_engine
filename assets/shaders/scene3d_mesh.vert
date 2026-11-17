@@ -110,7 +110,7 @@ layout(location = 6) flat out vec2 objectMetallicRoughness;
 // rastro/ghosting visivel nela.
 layout(location = 7) out vec4 currentClipPosition;
 layout(location = 8) out vec4 previousMotionClipPosition;
-layout(location = 9) flat out vec3 objectTint;
+layout(location = 9) flat out vec4 objectTint; // w: o brilho da bola conduzida (17/11)
 
 void main() {
     mat3 orientation = mat3(instanceOrientationX.xyz,
@@ -134,7 +134,7 @@ void main() {
     uint layers = uint(round(instancePreviousOrientationZ.w));
     characterIds = uvec4(entry.region, entry.zone, layers & 255u, layers >> 8);
 #endif
-    objectTint = instanceTintColor.rgb;
+    objectTint = instanceTintColor;
     mat3 previousOrientation = mat3(
         instancePreviousOrientationX.xyz,
         instancePreviousOrientationY.xyz,

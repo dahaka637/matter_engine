@@ -22,6 +22,7 @@
 #endif
 
 #include <algorithm>
+#include <cstdlib>
 #include <array>
 #include <bit>
 #include <chrono>
@@ -243,6 +244,11 @@ struct alignas(16) SceneUniformGpu {
     // x=modo Pixel Art, y=tamanho base do pixel artístico,
     // z=TAA completo opcional, w reservado.
     std::array<float, 4> renderSettings {};
+    // (17/11) A camera sem empurrao - ver SeeThroughSettings3D e
+    // seeThroughMask em scene3d_mesh.frag.
+    std::array<float, 4> seeThroughBottom {};
+    std::array<float, 4> seeThroughTop {};
+    std::array<float, 4> seeThroughShape {};
 };
 
 // Transform e parametros variaveis por instancia. Geometria e texturas iguais
@@ -268,7 +274,7 @@ struct alignas(16) SceneMeshInstanceGpu {
     std::array<float, 4> tintColor { 1.0f, 1.0f, 1.0f, 1.0f };
 };
 
-static_assert(sizeof(SceneUniformGpu) == 688);
+static_assert(sizeof(SceneUniformGpu) == 736);
 static_assert(sizeof(SceneMeshInstanceGpu) == 160);
 
 // Espelha o bloco "push_constant" de tonemap.frag campo a campo - ver
@@ -566,6 +572,11 @@ public:
     void initialize(SDL_Window* newWindow, bool enableVsync, const std::string& applicationName) {
         window = newWindow;
         vsync = enableVsync;
+        // (17/11) Sem tela: desenha em imagens proprias em vez do swapchain e
+        // nao apresenta nada (as fotos automaticas do laboratorio, rodadas com
+        // SDL_VIDEODRIVER=offscreen - a NVIDIA nao apresenta na superficie
+        // headless). Desligado por padrao: o jogo nao muda.
+        if (const char* value = std::getenv("MATTERENGINE_HEADLESS")) headless = value[0] == '1';
 
         check(volkInitialize(), "volkInitialize");
         createInstance(applicationName);
@@ -1851,7 +1862,7 @@ public:
             || swapchainExtent.height != static_cast<std::uint32_t>(pixelHeight)) {
             recreateSwapchain();
         }
-        if (swapchain == VK_NULL_HANDLE || swapchainExtent.width == 0
+        if ((!headless && swapchain == VK_NULL_HANDLE) || swapchainImages.empty() || swapchainExtent.width == 0
             || swapchainExtent.height == 0) {
             swapchainDirty = true;
             return FrameStatus::Skipped;
@@ -1909,8 +1920,13 @@ public:
         frame.performance.cpuFenceWaitMilliseconds = fenceWaitMilliseconds;
 
         const auto acquireStart = Clock::now();
-        const VkResult acquired = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
-            frame.imageAvailable, VK_NULL_HANDLE, &currentImage);
+        VkResult acquired = VK_SUCCESS;
+        if (headless) {
+            currentImage = (currentImage + 1) % static_cast<std::uint32_t>(swapchainImages.size());
+        } else {
+            acquired = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
+                frame.imageAvailable, VK_NULL_HANDLE, &currentImage);
+        }
         if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
             swapchainDirty = true;
             recreateSwapchain();
@@ -2259,6 +2275,20 @@ public:
             scene.pixelArt.temporalAntiAliasingEnabled ? 1.0f : 0.0f,
             0.0f
         };
+        const bool seeThroughActive = scene.seeThrough.enabled
+            && scene.seeThrough.strength > 0.0f
+            && sceneMeshGhostPipeline != VK_NULL_HANDLE
+            && sceneMeshDepthPrepassSeeThroughPipeline != VK_NULL_HANDLE;
+        const SeeThroughSettings3D& seeThrough = scene.seeThrough;
+        uniform.seeThroughBottom = { seeThrough.bodyBottom.x,
+            seeThrough.bodyBottom.y, seeThrough.bodyBottom.z,
+            seeThroughActive ? std::clamp(seeThrough.strength, 0.0f, 1.0f) : 0.0f };
+        uniform.seeThroughTop = { seeThrough.bodyTop.x, seeThrough.bodyTop.y,
+            seeThrough.bodyTop.z, seeThrough.groundHeight };
+        uniform.seeThroughShape = { seeThrough.innerRadius,
+            std::max(seeThrough.outerRadius, seeThrough.innerRadius + 0.01f),
+            seeThrough.nearFullMeters,
+            std::max(seeThrough.nearZeroMeters, seeThrough.nearFullMeters + 0.01f) };
         std::memcpy(sceneUniformMapped[currentFrame], &uniform, sizeof(uniform));
         check(vmaFlushAllocation(allocator, sceneUniformAllocations[currentFrame],
             0, sizeof(uniform)), "vmaFlushAllocation(scene uniform)");
@@ -2365,7 +2395,7 @@ public:
                 mesh->normalScale, mesh->parallaxDepth,
                 mesh->characterMaterial.index, mesh->characterMaterial.generation,
                 mesh->castsShadow, mesh->visibleInCamera,
-                mesh->planarReflection,
+                mesh->planarReflection, mesh->seeThrough,
                 mesh->shadowCascadeMask
             };
         };
@@ -2430,7 +2460,12 @@ public:
                 + (mesh->pixelArtHighDetail ? 4.0f : 0.0f)
                 + (mesh->matteSurface ? 8.0f : 0.0f)
                 + (mesh->flatShaded ? 16.0f : 0.0f)
-                + 32.0f * std::round(facet * 255.0f);
+                + 32.0f * std::round(facet * 255.0f)
+                // (17/11) Bit 8192: pode virar vidro (scene3d_mesh_depth.frag);
+                // bit 16384: geometria fina (os fios da rede) - o vidro dela e
+                // mais leve (pedido dele: "a rede mais transparente que a trave").
+                + (mesh->seeThrough ? 8192.0f : 0.0f)
+                + (mesh->thinShadowRadius > 0.0f ? 16384.0f : 0.0f);
             gpuInstance.materialAndFlags = { mesh->metallic, mesh->roughness,
                 mesh->selected ? 1.0f : 0.0f, materialFlags };
             // Mesma escala para o passado - nada nesta engine anima escala
@@ -2448,8 +2483,9 @@ public:
             gpuInstance.previousOrientationZ = { previousOrientationZ.x,
                 previousOrientationZ.y, previousOrientationZ.z,
                 static_cast<float>(mesh->kitLayer + 256u * mesh->identityLayer) };
+            // (w: o brilho da bola conduzida, 17/11.)
             gpuInstance.tintColor = { mesh->tintColor.x, mesh->tintColor.y,
-                mesh->tintColor.z, 1.0f };
+                mesh->tintColor.z, std::clamp(mesh->glow, 0.0f, 1.0f) };
             meshInstances.push_back(gpuInstance);
         }
         ensureSceneSkinCapacity(skinMatrices.size());
@@ -2893,8 +2929,22 @@ public:
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
                 scenePipelineLayout, 0, 1,
                 &sceneDescriptorSets[currentFrame], 0, nullptr);
+            // (17/11) Com a camera sem empurrao, o que pode virar vidro passa
+            // pelo pre-pass com a mascara (o fragment shader descarta o que
+            // fica entre a camera e o jogador); o resto, pelo de sempre.
+            VkPipeline boundPrepass = sceneMeshDepthPrepassPipeline;
             for (const MeshBatch& batch : meshBatches) {
                 if (batch.prototype->visibleInCamera) {
+                    const VkPipeline wanted = seeThroughActive
+                        && batch.prototype->seeThrough
+                        && !batch.prototype->planarReflection
+                        ? sceneMeshDepthPrepassSeeThroughPipeline
+                        : sceneMeshDepthPrepassPipeline;
+                    if (wanted != boundPrepass) {
+                        vkCmdBindPipeline(frame.commandBuffer,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS, wanted);
+                        boundPrepass = wanted;
+                    }
                     pushMeshBatch(batch, false);
                 }
             }
@@ -2983,6 +3033,22 @@ public:
             for (const MeshBatch& batch : meshBatches) {
                 if (batch.prototype->visibleInCamera) {
                     pushMeshBatch(batch, true);
+                }
+            }
+            // (17/11) O passe de vidro: as superficies que o pre-pass tirou da
+            // profundidade (so elas ficam na frente do que foi gravado - teste
+            // GREATER no reversed-Z), desenhadas por cima com mistura. Sem
+            // escrever profundidade nem vetor de movimento.
+            if (seeThroughActive) {
+                vkCmdBindPipeline(frame.commandBuffer,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS, sceneMeshGhostPipeline);
+                for (const MeshBatch& batch : meshBatches) {
+                    if (batch.prototype->visibleInCamera
+                        && batch.prototype->seeThrough
+                        && !batch.prototype->planarReflection
+                        && !batch.prototype->characterMaterial.valid()) {
+                        pushMeshBatch(batch, true);
+                    }
                 }
             }
         }
@@ -3722,7 +3788,50 @@ public:
         VkDependencyInfo dependency { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
         dependency.imageMemoryBarrierCount = 1;
         dependency.pImageMemoryBarriers = &toPresent;
-        vkCmdPipelineBarrier2(frame.commandBuffer, &dependency);
+        // (17/11) A captura de um quadro (as fotos automaticas do laboratorio,
+        // MATTERENGINE_AUTOSTART): a imagem final vai para um buffer do
+        // processador antes de ser apresentada.
+        const bool capture = frameCaptureRequested && swapchainCaptureSupported;
+        VkBuffer captureBuffer = VK_NULL_HANDLE;
+        VmaAllocation captureAllocation = VK_NULL_HANDLE;
+        VmaAllocationInfo captureAllocationInfo {};
+        if (capture) {
+            toPresent.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            toPresent.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            toPresent.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier2(frame.commandBuffer, &dependency);
+            VkBufferCreateInfo captureBufferInfo { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+            captureBufferInfo.size = static_cast<VkDeviceSize>(swapchainExtent.width)
+                * swapchainExtent.height * 4u;
+            captureBufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            captureBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            VmaAllocationCreateInfo captureMemory {};
+            captureMemory.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+            captureMemory.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT
+                | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            check(vmaCreateBuffer(allocator, &captureBufferInfo, &captureMemory,
+                &captureBuffer, &captureAllocation, &captureAllocationInfo),
+                "vmaCreateBuffer(frame capture)");
+            VkBufferImageCopy region {};
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.layerCount = 1;
+            region.imageExtent = { swapchainExtent.width, swapchainExtent.height, 1 };
+            vkCmdCopyImageToBuffer(frame.commandBuffer, swapchainImages[currentImage],
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, captureBuffer, 1, &region);
+            VkImageMemoryBarrier2 afterCopy = toPresent;
+            afterCopy.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            afterCopy.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+            afterCopy.dstStageMask = VK_PIPELINE_STAGE_2_NONE;
+            afterCopy.dstAccessMask = VK_ACCESS_2_NONE;
+            afterCopy.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            afterCopy.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            VkDependencyInfo afterCopyDependency { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            afterCopyDependency.imageMemoryBarrierCount = 1;
+            afterCopyDependency.pImageMemoryBarriers = &afterCopy;
+            vkCmdPipelineBarrier2(frame.commandBuffer, &afterCopyDependency);
+        } else {
+            vkCmdPipelineBarrier2(frame.commandBuffer, &dependency);
+        }
         const std::uint32_t firstTimestamp =
             currentFrame * FrameTimestampCount;
         if (!frame.sceneTimestampsWritten) {
@@ -3748,18 +3857,45 @@ public:
         VkCommandBufferSubmitInfo commandInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
         commandInfo.commandBuffer = frame.commandBuffer;
         VkSemaphoreSubmitInfo signalInfo { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
-        signalInfo.semaphore = swapchainPresentSemaphores[currentImage];
+        signalInfo.semaphore = headless ? VK_NULL_HANDLE : swapchainPresentSemaphores[currentImage];
         signalInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
 
         VkSubmitInfo2 submit { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
-        submit.waitSemaphoreInfoCount = 1;
+        submit.waitSemaphoreInfoCount = headless ? 0u : 1u;
         submit.pWaitSemaphoreInfos = &waitInfo;
         submit.commandBufferInfoCount = 1;
         submit.pCommandBufferInfos = &commandInfo;
-        submit.signalSemaphoreInfoCount = 1;
+        submit.signalSemaphoreInfoCount = headless ? 0u : 1u;
         submit.pSignalSemaphoreInfos = &signalInfo;
         check(vkQueueSubmit2(graphicsQueue, 1, &submit, frame.fence), "vkQueueSubmit2");
+        if (capture) {
+            check(vkWaitForFences(device, 1, &frame.fence, VK_TRUE, UINT64_MAX),
+                "vkWaitForFences(frame capture)");
+            check(vmaInvalidateAllocation(allocator, captureAllocation, 0, VK_WHOLE_SIZE),
+                "vmaInvalidateAllocation(frame capture)");
+            const auto* source = static_cast<const std::byte*>(captureAllocationInfo.pMappedData);
+            const std::size_t bytes = static_cast<std::size_t>(swapchainExtent.width)
+                * swapchainExtent.height * 4u;
+            frameCapturePixels.assign(source, source + bytes);
+            const bool bgra = swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB
+                || swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM;
+            for (std::size_t i = 0; i < bytes; i += 4) {
+                if (bgra) std::swap(frameCapturePixels[i], frameCapturePixels[i + 2]);
+                frameCapturePixels[i + 3] = std::byte { 255 };
+            }
+            frameCaptureExtent = { swapchainExtent.width, swapchainExtent.height };
+            vmaDestroyBuffer(allocator, captureBuffer, captureAllocation);
+            frameCaptureRequested = false;
+            frameCaptureReady = true;
+        }
 
+        if (headless) {
+            swapchainInitialized[currentImage] = true;
+            frame.timestampWritten = true;
+            currentFrame = (currentFrame + 1) % FramesInFlight;
+            frameActive = false;
+            return;
+        }
         VkPresentInfoKHR present { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
         present.waitSemaphoreCount = 1;
         present.pWaitSemaphores = &swapchainPresentSemaphores[currentImage];
@@ -3982,7 +4118,11 @@ public:
                 result.graphics = i;
             }
             VkBool32 presentSupport = VK_FALSE;
-            vkGetPhysicalDeviceSurfaceSupportKHR(candidate, i, surface, &presentSupport);
+            if (headless) {
+                presentSupport = (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0 ? VK_TRUE : VK_FALSE;
+            } else {
+                vkGetPhysicalDeviceSurfaceSupportKHR(candidate, i, surface, &presentSupport);
+            }
             if (presentSupport == VK_TRUE) {
                 result.present = i;
             }
@@ -4003,6 +4143,9 @@ public:
         });
         if (!hasSwapchain) {
             return false;
+        }
+        if (headless) {
+            return true;
         }
         std::uint32_t formatCount = 0;
         std::uint32_t presentCount = 0;
@@ -4029,6 +4172,9 @@ public:
             }
             const QueueFamilies families = findQueueFamilies(candidate);
             if (!families.complete() || !deviceSupportsSwapchain(candidate)) {
+                Log::warn(std::string("GPU recusada (fila/apresentacao/swapchain): ") + properties.deviceName
+                    + (families.complete() ? " - superficie sem formato ou modo de apresentacao"
+                                           : " - sem fila de apresentacao para a superficie"));
                 continue;
             }
 
@@ -4157,6 +4303,48 @@ public:
             swapchainDirty = true;
             return;
         }
+        if (headless) {
+            // As imagens no lugar do swapchain: o mesmo formato que o jogo
+            // escolhe (B8G8R8A8_UNORM), copiaveis para a captura.
+            constexpr std::uint32_t HeadlessImageCount = 3;
+            const VkExtent2D extent { static_cast<std::uint32_t>(pixelWidth),
+                static_cast<std::uint32_t>(pixelHeight) };
+            swapchainImages.resize(HeadlessImageCount);
+            swapchainImageViews.resize(HeadlessImageCount);
+            headlessAllocations.resize(HeadlessImageCount);
+            for (std::uint32_t i = 0; i < HeadlessImageCount; ++i) {
+                VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+                imageInfo.imageType = VK_IMAGE_TYPE_2D;
+                imageInfo.format = VK_FORMAT_B8G8R8A8_UNORM;
+                imageInfo.extent = { extent.width, extent.height, 1 };
+                imageInfo.mipLevels = 1;
+                imageInfo.arrayLayers = 1;
+                imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+                imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+                imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+                imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                VmaAllocationCreateInfo memory {};
+                memory.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+                check(vmaCreateImage(allocator, &imageInfo, &memory, &swapchainImages[i],
+                    &headlessAllocations[i], nullptr), "vmaCreateImage(headless)");
+                VkImageViewCreateInfo viewInfo { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+                viewInfo.image = swapchainImages[i];
+                viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                viewInfo.format = VK_FORMAT_B8G8R8A8_UNORM;
+                viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                viewInfo.subresourceRange.levelCount = 1;
+                viewInfo.subresourceRange.layerCount = 1;
+                check(vkCreateImageView(device, &viewInfo, nullptr, &swapchainImageViews[i]),
+                    "vkCreateImageView(headless)");
+            }
+            swapchainFormat = VK_FORMAT_B8G8R8A8_UNORM;
+            swapchainExtent = extent;
+            swapchainInitialized.assign(HeadlessImageCount, false);
+            imageFences.assign(HeadlessImageCount, VK_NULL_HANDLE);
+            swapchainCaptureSupported = true;
+            swapchainDirty = false;
+            return;
+        }
 
         VkSurfaceCapabilitiesKHR capabilities {};
         check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &capabilities),
@@ -4231,6 +4419,13 @@ public:
         createInfo.imageExtent = extent;
         createInfo.imageArrayLayers = 1;
         createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        // (17/11) A captura das fotos automaticas do laboratorio copia a
+        // imagem do swapchain (requestFrameCapture) - so quando o driver deixa.
+        swapchainCaptureSupported =
+            (capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+        if (swapchainCaptureSupported) {
+            createInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        }
         if (queueFamilies.graphics != queueFamilies.present) {
             createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
             createInfo.queueFamilyIndexCount = 2;
@@ -4278,6 +4473,9 @@ public:
             vkDestroyImageView(device, view, nullptr);
         }
         swapchainImageViews.clear();
+        for (std::size_t i = 0; i < headlessAllocations.size() && i < swapchainImages.size(); ++i)
+            vmaDestroyImage(allocator, swapchainImages[i], headlessAllocations[i]);
+        headlessAllocations.clear();
         swapchainImages.clear();
         swapchainInitialized.clear();
         imageFences.clear();
@@ -4582,6 +4780,8 @@ public:
         if (sceneMeshShadowPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneMeshShadowPipeline, nullptr);
         if (sceneMeshThinShadowPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneMeshThinShadowPipeline, nullptr);
         if (sceneMeshDepthPrepassPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneMeshDepthPrepassPipeline, nullptr);
+        if (sceneMeshDepthPrepassSeeThroughPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneMeshDepthPrepassSeeThroughPipeline, nullptr);
+        if (sceneMeshGhostPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneMeshGhostPipeline, nullptr);
         if (sceneTonemapPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneTonemapPipeline, nullptr);
         if (sceneAutoExposurePipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneAutoExposurePipeline, nullptr);
         if (sceneGtaoPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneGtaoPipeline, nullptr);
@@ -4646,6 +4846,9 @@ public:
         if (sceneMeshShadowVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshShadowVertexModule, nullptr);
         if (sceneMeshThinShadowFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshThinShadowFragmentModule, nullptr);
         if (sceneMeshDepthVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshDepthVertexModule, nullptr);
+        if (sceneMeshDepthSeeThroughVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshDepthSeeThroughVertexModule, nullptr);
+        if (sceneMeshDepthSeeThroughFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshDepthSeeThroughFragmentModule, nullptr);
+        if (sceneMeshGhostFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshGhostFragmentModule, nullptr);
         if (sceneTonemapVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneTonemapVertexModule, nullptr);
         if (sceneTonemapFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneTonemapFragmentModule, nullptr);
         if (sceneAutoExposureFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneAutoExposureFragmentModule, nullptr);
@@ -4685,6 +4888,8 @@ public:
         sceneMeshShadowPipeline = VK_NULL_HANDLE;
         sceneMeshThinShadowPipeline = VK_NULL_HANDLE;
         sceneMeshDepthPrepassPipeline = VK_NULL_HANDLE;
+        sceneMeshDepthPrepassSeeThroughPipeline = VK_NULL_HANDLE;
+        sceneMeshGhostPipeline = VK_NULL_HANDLE;
         sceneTonemapPipeline = VK_NULL_HANDLE;
         sceneAutoExposurePipeline = VK_NULL_HANDLE;
         sceneGtaoPipeline = VK_NULL_HANDLE;
@@ -4752,6 +4957,9 @@ public:
         sceneMeshShadowVertexModule = VK_NULL_HANDLE;
         sceneMeshThinShadowFragmentModule = VK_NULL_HANDLE;
         sceneMeshDepthVertexModule = VK_NULL_HANDLE;
+        sceneMeshDepthSeeThroughVertexModule = VK_NULL_HANDLE;
+        sceneMeshDepthSeeThroughFragmentModule = VK_NULL_HANDLE;
+        sceneMeshGhostFragmentModule = VK_NULL_HANDLE;
         sceneTonemapVertexModule = VK_NULL_HANDLE;
         sceneTonemapFragmentModule = VK_NULL_HANDLE;
         sceneAutoExposureFragmentModule = VK_NULL_HANDLE;
@@ -5078,6 +5286,9 @@ public:
         createModule("scene3d_mesh_shadow.vert.spv", sceneMeshShadowVertexModule);
         createModule("scene3d_mesh_shadow_thin.frag.spv", sceneMeshThinShadowFragmentModule);
         createModule("scene3d_mesh_depth.vert.spv", sceneMeshDepthVertexModule);
+        createModule("scene3d_mesh_depth_see.vert.spv", sceneMeshDepthSeeThroughVertexModule);
+        createModule("scene3d_mesh_depth.frag.spv", sceneMeshDepthSeeThroughFragmentModule);
+        createModule("scene3d_mesh_ghost.frag.spv", sceneMeshGhostFragmentModule);
         createModule("tonemap.vert.spv", sceneTonemapVertexModule);
         createModule("tonemap.frag.spv", sceneTonemapFragmentModule);
         createModule("auto_exposure.frag.spv",
@@ -6347,6 +6558,40 @@ public:
         check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &meshPipelineInfo,
             nullptr, &sceneMeshPipeline), "vkCreateGraphicsPipelines(scene mesh)");
 
+        // (17/11) O passe de vidro da camera sem empurrao: o mesmo vertice e o
+        // fragment da malha com MATTER_SEE_THROUGH_GHOST. So o que ficou na
+        // frente da profundidade gravada (o pre-pass tirou as superficies entre
+        // a camera e o jogador): GREATER no reversed-Z, sem escrever. A cor
+        // mistura por alfa; o vetor de movimento fica o da superficie de tras.
+        VkPipelineShaderStageCreateInfo ghostFragmentStage = meshFragmentStage;
+        ghostFragmentStage.module = sceneMeshGhostFragmentModule;
+        const std::array<VkPipelineShaderStageCreateInfo, 2> ghostStages {
+            meshVertexStage, ghostFragmentStage
+        };
+        VkPipelineDepthStencilStateCreateInfo ghostDepth = meshColorDepth;
+        ghostDepth.depthCompareOp = VK_COMPARE_OP_GREATER;
+        VkPipelineColorBlendAttachmentState ghostBlend = blendAttachment;
+        ghostBlend.blendEnable = VK_TRUE;
+        ghostBlend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        ghostBlend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        ghostBlend.colorBlendOp = VK_BLEND_OP_ADD;
+        ghostBlend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        ghostBlend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        ghostBlend.alphaBlendOp = VK_BLEND_OP_ADD;
+        VkPipelineColorBlendAttachmentState ghostMotionBlend = motionVectorBlendAttachment;
+        ghostMotionBlend.colorWriteMask = 0;
+        const std::array<VkPipelineColorBlendAttachmentState, 2> ghostBlendAttachments {
+            ghostBlend, ghostMotionBlend
+        };
+        VkPipelineColorBlendStateCreateInfo ghostColorBlend = colorBlend;
+        ghostColorBlend.pAttachments = ghostBlendAttachments.data();
+        VkGraphicsPipelineCreateInfo ghostPipelineInfo = meshPipelineInfo;
+        ghostPipelineInfo.pDepthStencilState = &ghostDepth;
+        ghostPipelineInfo.pColorBlendState = &ghostColorBlend;
+        ghostPipelineInfo.pStages = ghostStages.data();
+        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ghostPipelineInfo,
+            nullptr, &sceneMeshGhostPipeline), "vkCreateGraphicsPipelines(scene mesh ghost)");
+
         // O personagem com o uniforme (CharacterMaterial.hpp): o set 4 (os dois
         // arrays, o buffer por vertice e os parametros) depois dos quatro da
         // malha - os sets 0 a 3 ligados pelo passe continuam validos ao trocar
@@ -6471,6 +6716,27 @@ public:
         check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &meshDepthPrepassPipelineInfo,
             nullptr, &sceneMeshDepthPrepassPipeline),
             "vkCreateGraphicsPipelines(scene mesh depth prepass)");
+
+        // (17/11) O pre-pass do que pode virar vidro: o mesmo vertice (com as
+        // saidas da mascara, MATTER_SEE_THROUGH - gl_Position identico) e um
+        // fragment shader que descarta o que fica entre a camera e o jogador.
+        VkPipelineShaderStageCreateInfo seeThroughPrepassVertexStage = meshDepthPrepassVertexStage;
+        seeThroughPrepassVertexStage.module = sceneMeshDepthSeeThroughVertexModule;
+        VkPipelineShaderStageCreateInfo seeThroughPrepassFragmentStage {
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO
+        };
+        seeThroughPrepassFragmentStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        seeThroughPrepassFragmentStage.module = sceneMeshDepthSeeThroughFragmentModule;
+        seeThroughPrepassFragmentStage.pName = "main";
+        const std::array<VkPipelineShaderStageCreateInfo, 2> seeThroughPrepassStages {
+            seeThroughPrepassVertexStage, seeThroughPrepassFragmentStage
+        };
+        VkGraphicsPipelineCreateInfo seeThroughPrepassInfo = meshDepthPrepassPipelineInfo;
+        seeThroughPrepassInfo.stageCount = static_cast<std::uint32_t>(seeThroughPrepassStages.size());
+        seeThroughPrepassInfo.pStages = seeThroughPrepassStages.data();
+        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &seeThroughPrepassInfo,
+            nullptr, &sceneMeshDepthPrepassSeeThroughPipeline),
+            "vkCreateGraphicsPipelines(scene mesh depth prepass see-through)");
 
         const std::array<std::byte, 4> whitePixel {
             std::byte { 255 }, std::byte { 255 }, std::byte { 255 }, std::byte { 255 }
@@ -7300,6 +7566,8 @@ public:
     VkInstance instance = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
+    bool headless = false;
+    std::vector<VmaAllocation> headlessAllocations;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
     QueueFamilies queueFamilies;
@@ -7309,6 +7577,12 @@ public:
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkFormat swapchainFormat = VK_FORMAT_UNDEFINED;
+    // (17/11) A captura das fotos automaticas do laboratorio (endFrame).
+    bool swapchainCaptureSupported = false;
+    bool frameCaptureRequested = false;
+    bool frameCaptureReady = false;
+    Extent2D frameCaptureExtent {};
+    std::vector<std::byte> frameCapturePixels;
     VkExtent2D swapchainExtent {};
     std::uint32_t minImageCount = 2;
     std::vector<VkImage> swapchainImages;
@@ -7410,6 +7684,13 @@ public:
     // cameraViewProjection. sceneMeshPipeline passa a so testar (EQUAL) o
     // que este pre-pass ja escreveu, ver createScene3DResources.
     VkPipeline sceneMeshDepthPrepassPipeline = VK_NULL_HANDLE;
+    // (17/11) A camera sem empurrao: o pre-pass com a mascara do vidro e o
+    // passe de vidro (ver SeeThroughSettings3D).
+    VkPipeline sceneMeshDepthPrepassSeeThroughPipeline = VK_NULL_HANDLE;
+    VkPipeline sceneMeshGhostPipeline = VK_NULL_HANDLE;
+    VkShaderModule sceneMeshDepthSeeThroughVertexModule = VK_NULL_HANDLE;
+    VkShaderModule sceneMeshDepthSeeThroughFragmentModule = VK_NULL_HANDLE;
+    VkShaderModule sceneMeshGhostFragmentModule = VK_NULL_HANDLE;
     VkShaderModule sceneMeshVertexModule = VK_NULL_HANDLE;
     VkShaderModule sceneMeshFragmentModule = VK_NULL_HANDLE;
     VkShaderModule sceneMeshShadowVertexModule = VK_NULL_HANDLE;
@@ -7791,6 +8072,14 @@ void VulkanDevice::drawWorldSprite(TextureHandle source, const std::array<float,
     m_impl->drawWorldSprite(source, corners, perspectiveDepths);
 }
 void VulkanDevice::endFrame() { m_impl->endFrame(); }
+void VulkanDevice::requestFrameCapture() { m_impl->frameCaptureRequested = true; m_impl->frameCaptureReady = false; }
+bool VulkanDevice::takeFrameCapture(Extent2D& extent, std::vector<std::byte>& rgbaPixels) {
+    if (!m_impl->frameCaptureReady) return false;
+    extent = m_impl->frameCaptureExtent;
+    rgbaPixels = std::move(m_impl->frameCapturePixels);
+    m_impl->frameCaptureReady = false;
+    return true;
+}
 void VulkanDevice::requestSwapchainRebuild() { m_impl->swapchainDirty = true; }
 void VulkanDevice::waitIdle() { if (m_impl->device != VK_NULL_HANDLE) check(vkDeviceWaitIdle(m_impl->device), "vkDeviceWaitIdle"); }
 Extent2D VulkanDevice::drawableExtent() const { return { m_impl->swapchainExtent.width, m_impl->swapchainExtent.height }; }

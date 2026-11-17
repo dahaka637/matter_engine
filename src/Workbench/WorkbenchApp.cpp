@@ -5,6 +5,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -180,6 +181,9 @@ void WorkbenchApp::loadAnimationCatalog() {
         try {
             AnimationClip3D clip = loadAnimationClip3D(file.string());
             if (clip.targetRigId != targetProfile.id) continue;
+            // (13/11) Acoplar antes de validar, como o loadAthleteClipLibrary3D: desde o perfil de 10/11 (a torcao da coluna
+            // +-7/14/11 graus com os jointCouplings) os clipes crus passavam do batente e 36 eram recusados (o sprint, os laterais).
+            coupleAnimationClipJoints3D(clip, targetProfile);
             const auto rigIssues =
                 validateAnimationClipForRagdoll3D(clip, targetProfile);
             if (!rigIssues.empty()) {
@@ -229,6 +233,8 @@ void WorkbenchApp::applyAutostartIfRequested() {
         || mode == "laboratory-biomechanics"
         || mode == "laboratory-character"
         || mode == "laboratory-camera-orbit-smoke"
+        || mode == "laboratory-see-through-smoke"
+        || mode == "laboratory-conduction-smoke"
         || mode == "laboratory-prop-motion-smoke"
         || mode == "laboratory-smoke"
         || mode == "laboratory-pixel"
@@ -280,6 +286,42 @@ void WorkbenchApp::applyAutostartIfRequested() {
                 : RenderMotionSmoke::Mode::PropMotion;
             // Teto de seguranca; o proprio smoke encerra ao fim da medicao.
             m_automaticQuitSeconds = 40.0f;
+        }
+        if (mode == "laboratory-conduction-smoke") {
+            ConductionShots& shots = m_conductionShots;
+            shots.active = true;
+            m_takeCharacterControlWhenReady = true;
+            m_spawnPropWhenReadyId = "soccer_ball";
+            shots.every = environmentFloat("MATTERENGINE_SHOT_EVERY", 0.25f, 0.05f, 2.0f);
+            shots.turnDegreesPerSecond = environmentFloat("MATTERENGINE_SHOT_TURN", 0.0f, -180.0f, 180.0f);
+            shots.sprint = environmentFloat("MATTERENGINE_SHOT_SPRINT", 0.0f, 0.0f, 1.0f);
+            shots.directory = environmentValue("MATTERENGINE_SHOTS_DIR");
+            if (shots.directory.empty()) shots.directory = "conduction_shots";
+            shots.manual = environmentValue("MATTERENGINE_SHOT_MANUAL");
+            m_automaticQuitSeconds = 90.0f;
+        }
+        if (mode == "laboratory-see-through-smoke") {
+            // (17/11) As fotos da camera sem empurrao (ver SeeThroughShots).
+            SeeThroughShots& shots = m_seeThroughShots;
+            shots.active = true;
+            m_takeCharacterControlWhenReady = true;
+            float x = 0.0f, y = 0.0f, z = 1.0f;
+            if (const std::string spawn = environmentValue("MATTERENGINE_SPAWN");
+                !spawn.empty() && std::sscanf(spawn.c_str(), "%f,%f,%f", &x, &y, &z) >= 2) {
+                shots.hasSpawn = true;
+                shots.spawn = { x, y, z };
+            }
+            std::string yaws = environmentValue("MATTERENGINE_SHOT_YAWS");
+            if (yaws.empty()) yaws = "90";
+            for (std::size_t start = 0; start < yaws.size();) {
+                const std::size_t end = std::min(yaws.find(',', start), yaws.size());
+                shots.yawsDegrees.push_back(std::stof(yaws.substr(start, end - start)));
+                start = end + 1;
+            }
+            shots.pitchDegrees = environmentFloat("MATTERENGINE_SHOT_PITCH", -8.0f, -80.0f, 80.0f);
+            shots.directory = environmentValue("MATTERENGINE_SHOTS_DIR");
+            if (shots.directory.empty()) shots.directory = "see_through_shots";
+            m_automaticQuitSeconds = 90.0f;
         }
         m_animationWalkTest=mode=="laboratory-walk"||mode=="laboratory-walk-smoke";
         m_animationRunTest=mode=="laboratory-animation"||mode=="laboratory-animation-smoke"||m_animationWalkTest;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Athlete/Ball/BallOutcome3D.hpp"
 #include "Engine/Athlete/Ball/ShotConduction3D.hpp"
 #include "Engine/Athlete/Body/AnimatedGetUp3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
@@ -84,6 +85,9 @@ struct AthleteState3D {
         bool active = false;
         GestureSpec3D spec;
         float waited = 0.0f;
+        // (17/11, o planejador de contato) Comeca depois deste tempo (s; < 0: quando
+        // a perna sair do chao), e o contato marcado conta a partir do pedido.
+        float startIn = -1.0f;
     } pendingGesture;
     // A recepcao armada (24/10, pedido do usuario): o toque ou o chute fraco
     // apertado com a bola vindo e ainda fora do alcance espera ate o tempo
@@ -103,6 +107,9 @@ struct AthleteState3D {
         bool started = false;
         // O levantar guardado (28/10: o de cabeca na bola que cai).
         bool raise = false;
+        // (17/11, o toque assistido) O clique guardado sem encontro possivel
+        // ainda (ate 0,5 s): sai quando o pe puder chegar na bola.
+        bool buffered = false;
     } armedReception;
     // A conducao do chute (28/10, pedido do usuario; Ball/ShotConduction3D):
     // a bola chutada, enquanto ela esta no alcance.
@@ -111,6 +118,75 @@ struct AthleteState3D {
         InflatedBallHandle3D ball;
         ShotConduction3D shot;
     } conduction;
+    // (17/11, o toque realista - pedido dele) A forca do pe so sai quando a
+    // chuteira encosta na bola: o toque pedido fica guardado (a bola, o pedido
+    // do resultado, a perna do gesto e quanto ainda espera, s) e sai no tick
+    // do encosto; sem encosto, nada (o pe nao chegou).
+    struct PendingTouch {
+        bool active = false;
+        InflatedBallHandle3D ball;
+        BallOutcomeRequest3D request;
+        Vec3 ahead;
+        int side = 0;
+        float left = 0.0f;
+        bool shotConduction = false;
+        float shotPower = 0.0f;
+        float shotYaw = 0.0f;
+        // O mais perto que a chuteira chegou da superficie dela (m; a sonda).
+        float closest = 1.0e9f;
+        // O toque da conducao automatica: replanejado no encosto, com qualquer
+        // pe; o rumo pedido quando ele foi planejado (uma virada o cancela).
+        bool automatic = false;
+        Vec3 plannedWanted;
+        // (17/11, o toque assistido) O contato planejado (s desde o pedido; < 0
+        // sem plano), o tempo desde o pedido e a folga do pe ao tick anterior: perto
+        // do instante planejado, o ponto mais proximo da passagem do pe (ate 30 cm)
+        // tambem e o toque - o pe que chegou perto nao erra.
+        float plannedContact = -1.0f;
+        float elapsed = 0.0f;
+        float previousGap = 1.0e9f;
+        // (O contato por plano) Onde a bola estaria no contato (mundo): no instante
+        // planejado, com ela ali (ate 35 cm), o toque sai - o pe esta chegando nela.
+        Vec3 plannedBall;
+        // O encontro so com o corpo indo ate a bola (a "puxada" suave, pedido dele).
+        bool approach = false;
+        // O dominio (o drible sem tecla): no encosto, a bola rola e para logo a
+        // frente dos pes de onde ele vai parar.
+        bool trap = false;
+        // (17/11, ele: "ir ajustando em tempo real conforme o movimento... para
+        // garantir o contato") O gesto do toque, o fim da armada (s desde o pedido)
+        // e ha quanto foi o ultimo ajuste: a cada tick o encontro e replanejado
+        // e, mudando, o gesto e corrigido no meio.
+        GestureSpec3D gesture;
+        float windupEnd = 0.0f;
+        float sinceRetarget = 0.0f;
+        // (17/11 ~15h) A velocidade de onde sai o ajuste curto do encontro: no
+        // dominio, a dele no aperto (ele segue um instante ate a bola).
+        Vec3 approachBase;
+    } pendingTouch;
+    // (17/11, a conducao automatica - pedido dele) O drible fraco liga os
+    // toques sozinhos: a bola, ha quanto ela esta longe e desde o ultimo toque
+    // (s), e a desaceleracao dela rolando (m/s2, medida enquanto rola solta).
+    struct AutoConduction {
+        bool active = false;
+        InflatedBallHandle3D ball;
+        float away = 0.0f;
+        float sinceTouch = 1e9f;
+        float deceleration = 0.5f;
+        float lastSpeed = -1.0f;
+        // O rumo pedido e quanto ele gira (rad/s, media curta): a virada em
+        // andamento - o toque manda a bola para onde ele vai estar.
+        float wantedYaw = 0.0f;
+        float wantedYawRate = 0.0f;
+        bool wantedYawValid = false;
+        // O rumo pedido no ultimo toque planejado (uma virada desde ele cancela o
+        // toque e o gesto ainda guardados).
+        Vec3 plannedWanted;
+        // Desde a ultima mudanca brusca do comando (s): o rumo saltando mais de
+        // 25 graus num tick ou a rapidez mais de 1,5 m/s - o hitbox maior.
+        float sinceSharp = 1e9f;
+        Vec3 lastWanted;
+    } autoConduction;
     // O corpo fisico do padrao (28/10, item 10): a guia de cada link (1 nas
     // pernas e na pelve, a do corpo de cima nos outros).
     std::vector<float> guideAuthority;

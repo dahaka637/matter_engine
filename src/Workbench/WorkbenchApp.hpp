@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Workbench/ReinforcementLearning/RlBodyBrains3D.hpp"
+#include "Workbench/ReinforcementLearning/TrackingViewer3D.hpp"
 #include "Engine/Animation/AnimationClip3D.hpp"
 #include "Engine/Animation/RagdollCharacter3D.hpp"
 #include "Engine/Animation/RagdollVisualPose3D.hpp"
@@ -46,6 +48,10 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+namespace MatterEngine {
+class TrackingViewer3D;
+}
 
 namespace MatterEngine::Workbench {
 
@@ -165,6 +171,8 @@ private:
         InflatedBallHandle3D physicsBall;
         // O boneco que a maneja (nao colide com ela; ver BallOwnership3D).
         BallOwnership3D ownership;
+        // (17/11) O brilho da conducao automatica nela (0 a 1, entra e sai suave).
+        float autoGlow = 0.0f;
         // Estado do ultimo passo fixo e o do passo antes dele (interpolacao).
         InflatedBallState3D physicsState;
         InflatedBallState3D simulationPreviousState;
@@ -306,6 +314,52 @@ private:
     void setLaboratoryCameraFocus(Vec3 focus, LaboratoryCameraMode mode);
     bool updateControlledPhysicalCameraFocus(float deltaTime);
     void updateLaboratoryCamera(float fixedStepAlpha);
+    // (17/11) As fotos automaticas da camera sem empurrao
+    // (MATTERENGINE_AUTOSTART=laboratory-see-through-smoke, rodado com
+    // SDL_VIDEODRIVER=offscreen - nenhuma janela na tela do usuario): o
+    // jogador nasce em MATTERENGINE_SPAWN ("x,y,z"); para cada rumo de
+    // MATTERENGINE_SHOT_YAWS (graus) uma foto com o vidro e uma sem, em
+    // MATTERENGINE_SHOTS_DIR.
+    struct SeeThroughShots {
+        bool active = false;
+        bool spawnApplied = false;
+        bool hasSpawn = false;
+        Vec3 spawn;
+        std::vector<float> yawsDegrees;
+        float pitchDegrees = -8.0f;
+        std::string directory;
+        std::size_t index = 0;
+        bool waitingCapture = false;
+        double clock = 0.0;
+    };
+    SeeThroughShots m_seeThroughShots;
+    void updateSeeThroughShots(Renderer& activeRenderer);
+    // (17/11) As fotos da conducao automatica (MATTERENGINE_AUTOSTART=
+    // laboratory-conduction-smoke, sem janela como as da camera): a bola posta
+    // a frente dele, o drible fraco e as teclas para a frente (girando a
+    // camera em MATTERENGINE_SHOT_TURN graus por segundo depois de 2 s); uma
+    // foto a cada MATTERENGINE_SHOT_EVERY s em MATTERENGINE_SHOTS_DIR.
+    struct ConductionShots {
+        bool active = false;
+        int phase = 0;
+        double clock = 0.0;
+        double last = 0.0;
+        int frame = 0;
+        float every = 0.25f;
+        float turnDegreesPerSecond = 0.0f;
+        float zigBase = 0.0f;
+        float sprint = 0.0f;
+        std::string directory;
+        // (17/11, o toque manual) MATTERENGINE_SHOT_MANUAL: "freia" (conduz e para
+        // seco), "cruza" (a bola cruzando de lado, chute de primeira), "voleio".
+        std::string manual;
+        int event = 0;
+    };
+    ConductionShots m_conductionShots;
+    void updateConductionShots(Renderer& activeRenderer);
+    bool m_scriptedMoveActive = false;
+    Vec3 m_scriptedMove;
+    bool m_scriptedSprint = false;
     // Smokes de suavidade de movimento; ver Laboratory/RenderMotionSmoke.cpp.
     void sampleRenderMotionSmoke(float viewportWidth, float viewportHeight);
     void advanceRenderMotionSmoke();
@@ -349,6 +403,9 @@ private:
     [[nodiscard]] bool spawnHumanRagdollAt(Vec3 pelvisPosition,
         Quaternion orientation, bool benchmarkEntity);
     void updateActiveRagdolls(float deltaTime);
+    void updateRlBrain(float deltaTime);
+    void finishRlBrainTick();
+    [[nodiscard]] bool rlBrainDrives(std::uint64_t entityId) const { return m_rlBrains.drives(entityId); }
     // Os ajustes do laboratorio (os m_*) para o runtime dos atletas.
     [[nodiscard]] AthleteRuntimeSettings3D athleteRuntimeSettings() const;
     [[nodiscard]] CharacterLocomotionAnimations3D
@@ -544,6 +601,15 @@ private:
     // A rede da locomocao: ligada no menu do personagem, e o que foi
     // carregado (a rodada do treino, ou o erro).
     bool m_locomotionPolicyOn = false;
+    // (16/11, ele: "usar o RL como esta neste momento... trazer ele para o in-game... a locomocao fisica por RL... exatamente esse
+    // brain") O cerebro unico do RL dirigindo o corpo do jogador no Fisico com RL: o controlador do treino (o TrackingViewer3D no
+    // exercicio lev_comando, com o jogador de verdade) e a rede exportada; a pose dele vai ao corpo do jogo a cada passo, interpolada.
+    // (16/11, ele: "os outros bonecos que eu spawno nao conseguem usar a locomocao por RL, nem o RL para se levantar") O cerebro unico em
+    // cada boneco humano (RlBodyBrains3D: o mesmo codigo da sonda do atleta).
+    RlBodyBrains3D m_rlBrains;
+    std::string m_rlBrainLabel;
+    // (O jogador controlado esta com o cerebro: a capsula so e colocada, a camera segue o corpo.)
+    bool m_rlBrainActive = false;
     // As condicoes do treino da rede carregada (a tarefa dele): so valem com a rede.
     struct LocomotionPolicyConditions {
         bool historicalAssistRuler = true;
@@ -639,7 +705,7 @@ private:
     // A ajuda nos pes do corpo fisico (%; aprovada em 11/10): a forca que leva
     // o corpo passa pelos pes apoiados, no que a ajuda da pelve nao deu. E a
     // guiagem de ossos do Fisico total (%; experimento de 11/10).
-    float m_physicalFeetAssistPercent = 100.0f;
+    float m_physicalFeetAssistPercent = 0.0f;
     float m_physicalBoneGuidePercent = 0.0f;
     float m_fullPhysicalImpulse = 25.0f;
     float m_activeAssistAcceleration = 4.0f;
@@ -809,15 +875,16 @@ private:
     // (o pouso da passada corrigido pelo equilibrio).
     // (100% por padrao desde 06/10, pedido do usuario: no fisico a ajuda
     // comeca inteira e cai pelo impacto - ImpactAssist3D.)
-    float m_e5StandingAssistPercent = 100.0f;
+    // (16/11, ele: a forca auxiliar por padrao em 0% - so os musculos; o painel sobe.)
+    float m_e5StandingAssistPercent = 0.0f;
     // Enquanto a marcha hibrida e polida, o jogo abre na referencia estavel.
     // Reduzir este valor continua disponivel como diagnostico no painel, mas
     // 10% ainda nao sustenta a passada atual e nao pode ser apresentado como
     // experiencia padrao ao jogador.
-    float m_e5WalkingAssistPercent = 100.0f;
+    float m_e5WalkingAssistPercent = 0.0f;
     // Ajuda para levantar do chao (%): a subida na pelve e no peito e o torque
     // de endireitar do levantar. 100% e o levantar atual; 0%, so os musculos.
-    float m_getUpAssistPercent = 100.0f;
+    float m_getUpAssistPercent = 0.0f;
     // Rigidez dos musculos ao levantar (%): 100% e a de antes (rigida);
     // menos, mais relaxado (a forca maxima fica).
     float m_getUpStiffnessPercent = 55.0f;
@@ -1054,6 +1121,26 @@ private:
     Vec3 m_laboratoryCameraFocus;
     // A camera suave: o foco segue o peito por uma mola (28/10).
     bool m_cameraSmoothFollow = true;
+    // (17/11, pedido dele; as duas ligadas por padrao) O toque realista (a
+    // chuteira encosta na bola para a forca sair; o gesto vai ate ela) e a
+    // conducao automatica (o drible fraco liga os toques sozinhos), e a bola
+    // dela no alcance agora (o brilho azul).
+    bool m_realisticTouch = true;
+    // (17/11 14h20, ele: "por hora o manejo automatico fica de fora".)
+    bool m_autoConduction = false;
+    bool m_autoConductionGlow = false;
+    InflatedBallHandle3D m_autoConductionBall;
+    // (17/11) O encontro guiado do toque (a "puxada" suave que ele liberou): a
+    // velocidade no lugar das teclas ate o contato.
+    bool m_approachValid = false;
+    Vec3 m_approachVelocity;
+    // (17/11) A camera sem empurrao: o que obstrui vira vidro (SeeThroughSettings3D).
+    // O segmento pe-cabeca do jogador controlado e o chao sob ele, do ultimo passo.
+    bool m_cameraSeeThrough = true;
+    bool m_seeThroughBodyValid = false;
+    Vec3 m_seeThroughBodyBottom;
+    Vec3 m_seeThroughBodyTop;
+    float m_seeThroughGround = 0.0f;
     bool m_cameraTrackValid = false;
     Vec3 m_cameraTrackPosition;
     Vec3 m_cameraTrackVelocity;

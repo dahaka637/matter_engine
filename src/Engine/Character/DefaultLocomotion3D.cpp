@@ -220,6 +220,7 @@ void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_tackleFromAir = false;
     m_tackleCooldown = 0.0f;
     m_seedPending = false;
+    m_plantPending = false;
     m_crouchStartPending = false;
     m_crouchStarting = false;
     m_exitInertia.stop();
@@ -242,9 +243,16 @@ void DefaultLocomotion3D::startCrouchSprint(float travelYawRadians, bool sprint)
     m_crouchStartSprint = sprint;
 }
 
+void DefaultLocomotion3D::plantFeet(const std::array<Vec3, 2>& feetWorld, const std::array<Quaternion, 2>& orientationsWorld) {
+    m_seed.feetWorld = feetWorld;
+    m_seed.feetOrientationWorld = orientationsWorld;
+    m_plantPending = true;
+}
+
 void DefaultLocomotion3D::seed(const DefaultLocomotionSeed3D& seed) {
     m_seed = seed;
     m_seedPending = true;
+    m_plantPending = seed.plantFeet && seed.feetValid;
     m_yaw = seed.pelvisYawRadians;
     m_yawRate = 0.0f;
     m_reactionChestYaw.reset();

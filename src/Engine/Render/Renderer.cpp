@@ -174,6 +174,18 @@ void Renderer::endGuiFrame() {
     }
 }
 
+void Renderer::requestFrameCapture() {
+    if (m_vulkan) m_vulkan->requestFrameCapture();
+}
+
+bool Renderer::takeFrameCapture(int& width, int& height, std::vector<std::byte>& rgbaPixels) {
+    RHI::Extent2D extent {};
+    if (!m_vulkan || !m_vulkan->takeFrameCapture(extent, rgbaPixels)) return false;
+    width = static_cast<int>(extent.width);
+    height = static_cast<int>(extent.height);
+    return true;
+}
+
 void Renderer::endFrame() {
     if (m_frameReady) {
         m_vulkan->endFrame();

@@ -65,6 +65,8 @@ struct Throw {
     // (28/10, os contatos: o outro jogador correndo junto - `start` em relacao
     // a pelve no instante, no plano, e a velocidade plana dela somada.)
     bool fromBody = false;
+    // (16/11) `start` em relacao a pelve do boneco (Scenario::rival), no plano.
+    bool atRival = false;
 };
 
 struct Scenario {
@@ -109,6 +111,8 @@ struct Scenario {
     // rivalStart (no chao), virado para rivalYaw (rad), com o padrao dos bonecos
     // ligado (looseDefaultLocomotion) - o encostao entre dois corpos guiados.
     bool rival = false;
+    // (16/11) Empurroes no boneco (como pushes, no controlado).
+    std::vector<Push> rivalPushes;
     Vec3 rivalStart;
     float rivalYaw = 0.0f;
     // A IA de captura no boneco (29/10, CapturePilot3D): ele joga pelo piloto,
@@ -300,6 +304,11 @@ struct Metrics {
     float conductionHeading = 0.0f, conductionSpin = 0.0f;
     int conductionTicks = 0;
     bool conductionValid = false;
+    // (17/11) A conducao automatica: o tempo com a bola perto (ate 1 m da
+    // pelve) e o total depois do drible, a maior distancia, o tempo seguido
+    // longe (> 2,5 m) e quando ela se perdeu (0,8 s longe).
+    float autoNearTime = 0.0f, autoTotalTime = 0.0f, autoMaxDistance = 0.0f, autoFarTime = 0.0f, autoLostAt = -1.0f;
+    int autoTouches = 0;
     // O corpo vivo (item 10): a velocidade angular da cabeca (graus/s), o giro
     // do peito em relacao a pelve e as maos em relacao ao peito, por tick.
     std::vector<float> headSpeed;

@@ -101,7 +101,7 @@ struct TrackingViewer3D::Impl {
 
     // O pedido do mundo do visualizador: andar no rumo, ou o exercicio parado.
     void apply() {
-        if (task) return;
+        if (task || !batch) return;
         if (drill == TrackingDrill3D::Move) batch->setCommand(0, speed, heading);
         else batch->setDrill(0, drill);
     }
@@ -109,6 +109,8 @@ struct TrackingViewer3D::Impl {
     // a rede levanta e fica de pe ate o fim do episodio, e cai de novo), com a ultima rede exportada (relida quando o
     // treino exporta outra) e a conta de quantas quedas ele levantou.
     std::filesystem::path getUpDirectory;
+    // (16/11) A cena do jogo: o mundo do levantar dirige o corpo do jogo nela (TrackingGetUpAmpSettings3D::externalScene).
+    PhysicsScene3D* externalScene = nullptr;
     std::unique_ptr<TrackingGetUpAmpTraining3D> getUp;
     std::unique_ptr<PolicyRuntime3D> getUpPolicy;
     std::filesystem::file_time_type getUpPolicyWrite {};
@@ -295,6 +297,7 @@ struct TrackingViewer3D::Impl {
     void startGetUp() {
         TrackingGetUpAmpSettings3D s;
         s.assetsDirectory = assets.string();
+        s.externalScene = externalScene;
         s.environments = 1;
         s.threads = 1;
         s.seed = seed;
@@ -324,6 +327,8 @@ struct TrackingViewer3D::Impl {
             pair("empurrao_continuo_forca", s.pushHoldMinimumNewtons, s.pushHoldMaximumNewtons);
             // (A rl_final: o tempo dos rumos e a queda encerrando, como no treino.)
             s.locomotionSeconds = v2.value("locomocao_segundos", 0.0f);
+            // (16/11, foco 5) A rede treinada com coisas em volta na locomocao le o ambiente de verdade na cena do jogo.
+            s.externalSeesEnvironment = s.externalScene != nullptr && v2.value("locomocao_ambiente", 0.0f) > 0.0f;
             s.locomotionTermination = v2.value("queda_encerra", false);
             // (O clipe nos motores, como no treino: 01/11 18h45.)
             s.clipBlend = v2.value("mistura_clipe", 1.0f);
@@ -404,7 +409,10 @@ struct TrackingViewer3D::Impl {
             s.trackingReward = v2.value("recompensa_rastreio", s.trackingReward);
             s.phaseSync = v2.value("sincronizar_fase", false);
             s.armClipReach = v2.value("bracos_clipe", -1.0f);
-            s.headClipReach = v2.value("cabeca_clipe", -1.0f);
+            // (15/11 13h35, a revisao: o treino usa o alcance 1 com cabeca_autoridade - aqui ficava 0,15 e a cabeca do laboratorio era
+            // clipe + 0,15 x a correcao da rede, nao a que ela treinou.)
+            s.headClipReach = v2.contains("cabeca_autoridade") && v2["cabeca_autoridade"].is_boolean() && v2["cabeca_autoridade"].get<bool>()
+                ? 1.0f : v2.value("cabeca_clipe", -1.0f);
             // (08/11: a estrela na fase de agora do treino e a duracao dela.)
             if (v2.contains("estrela_fases") && v2["estrela_fases"].is_array() && v2["estrela_fases"].size() == 6)
                 for (std::size_t k = 0; k < 6; ++k) s.starPhases[k] = std::clamp(v2["estrela_fases"][k].get<int>(), 1, 4);
@@ -421,6 +429,10 @@ struct TrackingViewer3D::Impl {
             s.clipVariantObservation = v2.value("levantar_unreal_variante", false);
             // (12/11 06h40: as entradas do fogo, como no treino.)
             s.fireObservation = v2.value("levantar_fogo_entrada", false);
+            // (17/11, D2: a forca dos contatos na entrada, so para a rede treinada com ela.)
+            s.contactForceObservation = v2.value("forca_contatos", false);
+            // (17/11: a velocidade do clipe por junta nos bracos e na cabeca, so para a rede treinada com ela.)
+            s.clipVelocityRotation = v2.value("velocidade_rotacao", false);
             s.idleThroughPushes = v2.value("empurrao_idle", false);
             s.idleThreatReach = v2.value("idle_alcance_ameaca", 0.0f);
             s.avoidOnIdle = v2.value("evitar_idle", false);
@@ -494,6 +506,27 @@ struct TrackingViewer3D::Impl {
                 // (09/11 14h: a parada livre - a locomocao dirige ate parar de pe, sem referencia que freia - tambem no comando.)
                 getUp->setFreeStop(cyclesRun["v2"].value("parada_livre", false));
                 getUp->setFreeTroca(cyclesRun["v2"].value("troca_livre", false));
+                // (15/11 13h35, a revisao: o laboratorio ignorava estas chaves - as paradas eram sempre livres, sem o clipe de parada do
+                // treino, e as trocas sem o freio, o pe, o assentar e a arrancada dele: entradas e acoes diferentes das que a rede treinou.)
+                {
+                    const nlohmann::json& v = cyclesRun["v2"];
+                    const auto flag = [&](const char* key) { return v.contains(key) && v[key].is_boolean() && v[key].get<bool>(); };
+                    getUp->setStopClipsBase(flag("parada_clipes_base"));
+                    getUp->setStopClipsFront(flag("parada_clipes_frente"));
+                    if (v.contains("parada_entrada") && v["parada_entrada"].is_array() && v["parada_entrada"].size() == 2)
+                        getUp->setStopEntry(v["parada_entrada"][0].get<float>(), v["parada_entrada"][1].get<float>());
+                    if (flag("parada_variantes")) {
+                        getUp->setStopFrontVariants(true, -1);
+                        if (v.contains("parada_variantes_mascara") && v["parada_variantes_mascara"].is_number())
+                            getUp->setStopFrontVariantMask(v["parada_variantes_mascara"].get<int>());
+                    }
+                    getUp->setRunTurnBrake(flag("troca_freio"));
+                    getUp->setRunTurnAlign(flag("troca_pe"));
+                    getUp->setTurnSettle(flag("troca_assentada"));
+                    getUp->setTurnLaunch(flag("troca_arrancada"));
+                    if (v.contains("troca_aceleracao") && v["troca_aceleracao"].is_number())
+                        getUp->setManeuverAcceleration(v["troca_aceleracao"].get<float>());
+                }
                 getUp->setFreeStandGate(cyclesRun["v2"].value("parada_pose", 0.0f));
                 getUp->setCommandChestGate(cyclesRun["v2"].value("peito_comando", 0.0f));
                 getUp->setFreeIdle(cyclesRun["v2"].value("parado_livre", false));
@@ -588,7 +621,33 @@ struct TrackingViewer3D::Impl {
                     getUp->addStyleClips(clips);
                     getUp->setClipGetUp(clips, 0.0f, 0.0f, v.value("levantar_unreal_depois", 1.5f), 0.0f,
                         v.value("levantar_unreal_largura", 2.0f), v.value("levantar_unreal_vel", 1.5f));
-                    getUp->setClipGetUpVariants({ 0.0f, 0.0f, 0.0f, 0.0f, 1.0f });
+                    // (15/11) As marcas do treino na entrada levantar.variante (o de costas 0,4 desde 14/11, o de brucos negativo se houver) e o
+                    // lado do clipe no quadro de agora - sem elas o laboratorio mostrava o de costas sem a marca (o caminho preso pela ancora).
+                    {
+                        const auto number = [&](const char* key) { return v.contains(key) && v[key].is_number() ? v[key].get<float>() : 0.0f; };
+                        const float costas = number("levantar_costas_marca"), brucos = number("levantar_brucos_marca");
+                        getUp->setClipGetUpVariants({ costas > 0.0f ? costas : 0.0f, brucos < 0.0f ? brucos : 0.0f, 0.0f, 0.0f, 1.0f });
+                        const bool sideNow = v.contains("levantar_lado_agora") && v["levantar_lado_agora"].is_boolean()
+                            && v["levantar_lado_agora"].get<bool>();
+                        getUp->setClipSideNow(sideNow || (v.contains("levantar_costas_rola") && !v["levantar_costas_rola"].is_null()));
+                        getUp->setIdleClipAnchor(v.contains("parado_preso") && v["parado_preso"].is_boolean() && v["parado_preso"].get<bool>());
+                        getUp->setReviewFixes(v.contains("revisao_15h") && v["revisao_15h"].is_boolean() && v["revisao_15h"].get<bool>());
+                        // (15/11 15h25) Os bracos calmos da largada mudam os alvos dos motores dos bracos: como no treino.
+                        getUp->setLaunchCalmArms(v.contains("largada_bracos_calmos") && v["largada_bracos_calmos"].is_boolean()
+                            && v["largada_bracos_calmos"].get<bool>());
+                        // (15/11 15h15, a revisao: o reforco da pose do levantar - 1,5 no de costas e no de brucos - muda a fase que o relogio
+                        // adaptativo escolhe, que entra na observacao; o laboratorio nao o tinha.)
+                        {
+                            float costasE = 0.0f;
+                            if (v.contains("levantar_unreal_reforco") && v["levantar_unreal_reforco"].is_array() && !v["levantar_unreal_reforco"].empty()
+                                && v["levantar_unreal_reforco"][0].is_number())
+                                costasE = v["levantar_unreal_reforco"][0].get<float>();
+                            if (costasE > 0.0f) {
+                                const float brucosE = number("levantar_unreal_reforco_brucos"), runE = number("levantar_unreal_reforco_correndo");
+                                getUp->setClipGetUpEmphasis({ costasE, brucosE > 0.0f ? brucosE : 0.0f, runE, runE, 0.0f });
+                            }
+                        }
+                    }
                     getUp->setClipGetUpParts(v.value("levantar_unreal_partes", false));
                     // (12/11 04h30, ele: "os levantares correndo estao terminando muito cedo": sem o relogio da agilidade do treino, a
                     // rede - mais rapida que o clipe - ficava longe dele e o laboratorio encerrava aos 1,0-1,3 s.) Os pontos de entrega e
@@ -625,6 +684,8 @@ struct TrackingViewer3D::Impl {
                             v["estrela_curvas"][0].get<float>(), v["estrela_curvas"][1].get<float>(), v["estrela_curvas"][2].get<float>());
                     // (12/11 18h, ele: no comando, os dois cerebros ligados - caiu, o levantar levanta e devolve - como no treino.)
                     if (v.value("comando_levantar", false)) getUp->setCommandGetUp(true, v.value("comando_levantar_correndo", 0.5f));
+                    // (13/11, o cerebro unico: a queda num exercicio de locomocao vira comando - levanta e segue.)
+                    if (v.value("comando_levantar", false) && v.value("queda_vira_comando", false)) getUp->setFallToCommand(true);
                     // (12/11 18h40, ele: no levantar correndo a troca para a locomocao assim que fica de pe e o exercicio cortado nos dois
                     // passos depois - como no treino.)
                     if (v.value("levantar_correndo_troca", -1.0f) >= 0.0f) getUp->setRunHandoffAtStand(true, v.value("levantar_correndo_troca", -1.0f));
@@ -1089,9 +1150,10 @@ TrackingViewer3D::Conditions TrackingViewer3D::conditionsOf(const std::filesyste
 
 TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed,
     const std::string& drill, const std::filesystem::path& locomotionTask, float speedScale, float filterBeta,
-    Conditions conditions, const std::filesystem::path& getUpDirectory)
+    Conditions conditions, const std::filesystem::path& getUpDirectory, PhysicsScene3D* externalScene)
     : m_impl(std::make_unique<Impl>()) {
     Impl& impl = *m_impl;
+    impl.externalScene = externalScene;
     impl.heading = headingOf(drill);
     impl.drill = drill == "parado" ? TrackingDrill3D::Idle
         : drill == "giro"          ? TrackingDrill3D::Turn
@@ -1143,13 +1205,17 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     }
     // O visualizador nao recomeca pelo tempo (so pela queda ou o afastamento).
     settings.episodeSeconds = 1.0e6f;
-    impl.batch = std::make_unique<TrackingTraining3D>(settings);
-    impl.observation.assign(impl.batch->observationSize(), 0.0f);
-    impl.action.assign(impl.batch->actionSize(), 0.0f);
-    const RagdollProfile3D& p = impl.batch->profile();
-    for (std::size_t i = 0; i < p.links.size(); ++i)
-        if (p.links[i].id == "UpperChest") impl.chest = static_cast<std::uint32_t>(i);
-    impl.apply();
+    // (16/11, no jogo - o cerebro no corpo de um boneco -: sem o lote do rastreador, que so serve aos exercicios de fora do levantar; cada
+    // boneco carregava um motor de fisica e uma cena que ninguem usava.)
+    if (externalScene == nullptr || !isGetUpDrill(drill)) {
+        impl.batch = std::make_unique<TrackingTraining3D>(settings);
+        impl.observation.assign(impl.batch->observationSize(), 0.0f);
+        impl.action.assign(impl.batch->actionSize(), 0.0f);
+        const RagdollProfile3D& p = impl.batch->profile();
+        for (std::size_t i = 0; i < p.links.size(); ++i)
+            if (p.links[i].id == "UpperChest") impl.chest = static_cast<std::uint32_t>(i);
+        impl.apply();
+    }
     if (isGetUpDrill(drill)) {
         impl.getUpDirectory = getUpRun(getUpDirectory);
         impl.assets = assetsDirectory;
@@ -1455,6 +1521,39 @@ void TrackingViewer3D::setManualSpeed(std::optional<float> metersPerSecond) {
     Impl& impl = *m_impl;
     impl.speed = metersPerSecond.value_or(DefaultSpeed);
     impl.apply();
+}
+
+void TrackingViewer3D::adoptExternalBody(RagdollHandle3D handle) {
+    Impl& impl = *m_impl;
+    if (!impl.getUp || impl.externalScene == nullptr) throw std::logic_error("RL: sem a cena do jogo");
+    impl.getUp->adoptExternalBody(handle);
+}
+
+void TrackingViewer3D::applyExternalDrives() {
+    if (m_impl->getUp) m_impl->getUp->applyExternalDrives();
+}
+
+void TrackingViewer3D::setExternalAssist(float standing, float walking, float getUp) {
+    if (m_impl->getUp) m_impl->getUp->setExternalAssist(standing, walking, getUp);
+}
+
+void TrackingViewer3D::setExternalPoseBlend(std::span<const Vec3> coordinates, float weight) {
+    if (m_impl->getUp) m_impl->getUp->setExternalPoseBlend(coordinates, weight);
+}
+
+void TrackingViewer3D::finishExternalDecision() {
+    if (m_impl->getUp) m_impl->getUp->finishExternalDecision();
+}
+
+bool TrackingViewer3D::externalStanding() const { return m_impl->getUp && m_impl->getUp->externalStanding(); }
+bool TrackingViewer3D::externalGettingUp() const { return m_impl->getUp && m_impl->getUp->externalGettingUp(); }
+std::string TrackingViewer3D::externalState() const { return m_impl->getUp ? m_impl->getUp->externalState() : std::string(); }
+
+void TrackingViewer3D::setPlayerInput(int key, bool run, float viewYaw) {
+    Impl& impl = *m_impl;
+    if (!impl.getUp) return;
+    impl.getUp->setExternalCommand(true);
+    impl.getUp->setPlayerInput(0, key, run, viewYaw);
 }
 
 void TrackingViewer3D::push(Vec3 force, float seconds) {

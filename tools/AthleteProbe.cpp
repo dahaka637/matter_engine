@@ -25,6 +25,8 @@
 // Sem --cenario roda todos.
 #include "Engine/Tracking/TrackingGetUpPolicy3D.hpp"
 #include "athlete_probe/ProbeShared.hpp"
+#include "Engine/RL/Body/RLBody3D.hpp"
+#include "Workbench/ReinforcementLearning/RlBodyBrains3D.hpp"
 #include "Engine/Athlete/Policy/LocomotionPolicy3D.hpp"
 
 #include "Engine/Athlete/AthleteAssets3D.hpp"
@@ -204,6 +206,138 @@ std::vector<Scenario> scenarios() {
         list.push_back(drive);
         // (A conducao na disputa de ombro: o empurrao de lado de 250 N por 1,5 s
         // no meio - os contatos inteligentes, 28/10.)
+        // (17/11, a conducao automatica - pedido dele) Um drible fraco (0,2) e
+        // depois so as teclas: os toques saem sozinhos. Trotando reto, correndo
+        // reto e trotando com uma curva da camera (60 graus).
+        for (int variant = 0; variant < 3; ++variant) {
+            Scenario autoDrive { variant == 0 ? "conduz_auto" : variant == 1 ? "conduz_auto_corre" : "conduz_auto_curva",
+                9.0f, [variant](float t) {
+                    Keys k;
+                    k.forward = t > 0.3f ? 1.0f : 0.0f;
+                    k.sprint = variant == 1;
+                    if (variant == 2 && t > 4.0f) k.cameraYaw = std::min(1.05f, (t - 4.0f) * 0.5f);
+                    if (t >= 0.8f && t < 0.8f + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.2f; }
+                    return k; } };
+            autoDrive.ball = true;
+            autoDrive.ballStart = { 0.55f, 0.0f, 0.11f };
+            // (A bola posta a frente dele no aperto: correndo, ele passava por ela antes.)
+            autoDrive.placeAt = 0.8f;
+            autoDrive.placeOffset = { 0.45f, 0.08f, 0.11f };
+            list.push_back(autoDrive);
+        }
+        // (17/11 15h, ele: "se eu atuei para chutar mas mudei de direcao no meio... o pe
+        // no mesmo ato possa atualizar em tempo real"; "atos onde a janela de contato e
+        // curta, a bola passa rapido pela minha area de alcance") O chute e o toque com
+        // a virada logo depois do clique, e a bola cruzando rapido na frente dele.
+        for (int variant = 0; variant < 4; ++variant) {
+            static const char* const names[4] = { "ato_chute_vira", "ato_toque_vira", "ato_bola_cruza_chute",
+                "ato_bola_cruza_toque" };
+            const bool crossing = variant >= 2;
+            const BallActionKind3D kind = variant % 2 == 0 ? BallActionKind3D::Shot : BallActionKind3D::Dribble;
+            Scenario act { names[variant], 3.0f, [=](float t) {
+                Keys k;
+                k.forward = !crossing && t > 0.3f ? 1.0f : 0.0f;
+                if (!crossing && t >= 1.30f) k.cameraYaw = 0.6f;
+                if (t >= 1.2f && t < 1.2f + Dt) { k.ball = kind; k.power = kind == BallActionKind3D::Shot ? 0.6f : 0.3f; }
+                return k; } };
+            act.ball = true;
+            act.ballStart = { 0.55f, 0.0f, 0.11f };
+            act.placeAt = 1.15f;
+            act.placeOffset = crossing ? Vec3 { 0.45f, 1.6f, 0.11f } : Vec3 { 0.55f, 0.05f, 0.11f };
+            if (crossing) act.placeVelocity = { 0.0f, -6.0f, 0.0f };
+            list.push_back(act);
+        }
+        // (17/11 14h20, ele: "praticamente impossivel eu conduzir a bola para frente e
+        // tentar frear ela subitamente") Conduzindo com toques manuais (drible a 25% a
+        // cada 0,5 s com W), solta o W e aperta o drible: a bola tem que morrer nos pes.
+        for (int variant = 0; variant < 2; ++variant) {
+            Scenario brake { variant == 0 ? "manual_conduz_freia" : "manual_corre_freia", 5.0f, [variant](float t) {
+                Keys k;
+                k.forward = t > 0.3f && t < 3.0f ? 1.0f : 0.0f;
+                k.sprint = variant == 1;
+                for (float at = 1.0f; at < 2.9f; at += 0.5f)
+                    if (t >= at && t < at + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.25f; }
+                if (t >= 3.05f && t < 3.05f + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.2f; }
+                return k; } };
+            brake.ball = true;
+            brake.ballStart = { 0.55f, 0.0f, 0.11f };
+            brake.placeAt = 0.95f;
+            brake.placeOffset = { 0.45f, 0.05f, 0.11f };
+            list.push_back(brake);
+        }
+        // (17/11, ele: "eu devo poder correr livremente, alternar de direcao e
+        // tudo mais sem precisar me preocupar com a bola") A bateria dura da
+        // conducao automatica: viradas de 90 e 180 graus, ziguezague, parar e
+        // arrancar, de lado, de costas, o sprint virando e a corrida livre
+        // sorteada. Um drible fraco a 0,8 s e depois so as teclas.
+        {
+            struct Maneuver { const char* name; float seconds; std::function<Keys(float)> keys; };
+            const auto start = [](Keys& k, float t) {
+                if (t >= 0.8f && t < 0.8f + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.2f; }
+            };
+            std::vector<Maneuver> maneuvers {
+                { "conduz_auto_vira90", 7.0f, [=](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f;
+                    k.cameraYaw = 1.5708f * std::clamp((t - 3.0f) / 0.3f, 0.0f, 1.0f); start(k, t); return k; } },
+                { "conduz_auto_inverte", 7.0f, [=](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f;
+                    k.cameraYaw = 3.1416f * std::clamp((t - 3.0f) / 0.5f, 0.0f, 1.0f); start(k, t); return k; } },
+                { "conduz_auto_zigue", 9.0f, [=](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f;
+                    if (t > 2.0f) k.cameraYaw = (static_cast<int>((t - 2.0f) / 1.2f) % 2 == 0 ? 0.7854f : -0.7854f);
+                    start(k, t); return k; } },
+                { "conduz_auto_para", 8.0f, [=](float t) { Keys k;
+                    k.forward = t > 0.3f && (t < 3.0f || t > 4.5f) ? 1.0f : 0.0f; start(k, t); return k; } },
+                { "conduz_auto_lado", 7.0f, [=](float t) { Keys k;
+                    if (t > 0.3f && t < 2.5f) k.forward = 0.5f; else if (t >= 2.5f && t < 4.5f) k.left = 1.0f;
+                    else if (t >= 4.5f) k.forward = 0.5f;
+                    start(k, t); return k; } },
+                { "conduz_auto_tras", 7.0f, [=](float t) { Keys k;
+                    k.forward = t > 0.3f && t < 2.5f ? 0.5f : t >= 2.5f && t < 4.0f ? -0.5f : t >= 4.0f ? 0.5f : 0.0f;
+                    start(k, t); return k; } },
+                { "conduz_auto_sprint_vira", 7.0f, [=](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; k.sprint = true;
+                    k.cameraYaw = 1.5708f * std::clamp((t - 3.0f) / 0.4f, 0.0f, 1.0f); start(k, t); return k; } },
+                // (17/11 14h, ele: "testar movimentos bruscos, viradas fortes, paradas subitas") As
+                // viradas secas (o rumo muda num tick), a parada subita do sprint, girar parado.
+                { "conduz_auto_seco90", 7.0f, [=](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f;
+                    k.cameraYaw = t >= 3.0f ? 1.5708f : 0.0f; start(k, t); return k; } },
+                { "conduz_auto_seco180", 7.0f, [=](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f;
+                    k.cameraYaw = t >= 3.0f ? 3.1416f : 0.0f; start(k, t); return k; } },
+                { "conduz_auto_sprint_seco90", 7.0f, [=](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; k.sprint = true;
+                    k.cameraYaw = t >= 3.0f ? 1.5708f : 0.0f; start(k, t); return k; } },
+                { "conduz_auto_sprint_para", 8.0f, [=](float t) { Keys k; k.sprint = true;
+                    k.forward = t > 0.3f && (t < 3.0f || t > 4.5f) ? 1.0f : 0.0f;
+                    k.cameraYaw = t > 4.5f ? 1.5708f : 0.0f; start(k, t); return k; } },
+                { "conduz_auto_gira_parado", 7.0f, [=](float t) { Keys k; k.forward = t > 0.3f && t < 2.0f ? 0.5f : 0.0f;
+                    k.cameraYaw = t > 3.0f ? std::min(3.1416f, (t - 3.0f) * 3.1416f) : 0.0f; start(k, t); return k; } },
+            };
+            // A corrida livre: a cada 0,6 a 1,4 s um rumo novo (ate 120 graus para cada
+            // lado da camera), parado, trotando, correndo ou em sprint.
+            static std::vector<std::string> freeNames;
+            for (int seed = 1; seed <= 20; ++seed) {
+                std::vector<std::array<float, 4>> plan;
+                std::uint32_t state = 2463534242u * static_cast<std::uint32_t>(seed);
+                const auto next = [&]() { state ^= state << 13; state ^= state >> 17; state ^= state << 5;
+                    return static_cast<float>(state % 10000u) / 10000.0f; };
+                float yaw = 0.0f;
+                for (float at = 1.6f; at < 16.0f; at += 0.6f + 0.8f * next()) {
+                    yaw += (next() - 0.5f) * 4.2f;
+                    const float pace = next();
+                    plan.push_back({ at, yaw, pace < 0.12f ? 0.0f : pace < 0.45f ? 0.5f : 1.0f, pace > 0.8f ? 1.0f : 0.0f });
+                }
+                if (static_cast<int>(freeNames.size()) < seed) freeNames.push_back("conduz_auto_livre" + std::to_string(seed));
+                maneuvers.push_back({ freeNames[static_cast<std::size_t>(seed - 1)].c_str(),
+                    16.0f, [=](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f;
+                        for (const auto& step : plan) if (t >= step[0]) {
+                            k.cameraYaw = step[1]; k.forward = step[2]; k.sprint = step[3] > 0.5f; }
+                        start(k, t); return k; } });
+            }
+            for (const Maneuver& m : maneuvers) {
+                Scenario s { m.name, m.seconds, m.keys };
+                s.ball = true;
+                s.ballStart = { 0.55f, 0.0f, 0.11f };
+                s.placeAt = 0.8f;
+                s.placeOffset = { 0.45f, 0.08f, 0.11f };
+                list.push_back(s);
+            }
+        }
         Scenario driveDuel = drive;
         driveDuel.name = "gesto_conduz_duelo";
         driveDuel.pushes.push_back({ 2.0f, 1.5f, { 0.0f, -250.0f, 0.0f } });
@@ -814,6 +948,95 @@ std::vector<Scenario> scenarios() {
             s.rivalYaw = yaw;
             list.push_back(s);
         };
+        // (16/11, ele: "o sistema de capsulas... puxando o boneco, teleportando, arrastando") O boneco sozinho: nasce (o cerebro o
+        // levanta e o devolve ao padrao), leva um empurrao que ele segura com passos e um que o derruba - e volta ao padrao a cada vez.
+        {
+            Scenario s { "boneco_nasce", 6.0f, [](float) { return Keys {}; } };
+            s.rival = true;
+            s.rivalStart = { 3.0f, 2.5f, 0.0f };
+            s.rivalYaw = 0.5f;
+            list.push_back(s);
+            // (O empurrao: uma caixa no peito, de lado - ele vai ao fisico pela pancada, como no laboratorio.)
+            Scenario pushed = s;
+            pushed.name = "boneco_empurrao";
+            pushed.seconds = 10.0f;
+            {
+                Throw box;
+                box.at = 5.0f;
+                box.massKg = 12.0f;
+                box.start = { 0.0f, -1.2f, 1.25f };
+                box.velocity = { 0.0f, 6.0f, 0.0f };
+                box.atRival = true;
+                pushed.throws.push_back(box);
+            }
+            list.push_back(pushed);
+            Scenario knocked = s;
+            knocked.name = "boneco_tombo";
+            knocked.seconds = 14.0f;
+            {
+                Throw box;
+                box.at = 5.0f;
+                box.massKg = 30.0f;
+                box.start = { -1.2f, 0.0f, 1.25f };
+                box.velocity = { 9.0f, 0.0f, 0.0f };
+                box.atRival = true;
+                knocked.throws.push_back(box);
+            }
+            list.push_back(knocked);
+        }
+        {
+            // (16/11, ele: "a transicao... brusca... principalmente quando o boneco esta virado para outra direcao") A queda com a camera
+            // virada para outro lado: o cerebro levanta virado e o padrao assume e vira para a camera.
+            for (const int degrees : { 90, 180 }) {
+                char name[48];
+                std::snprintf(name, sizeof name, "queda_vista_%d", degrees);
+                const float yaw = static_cast<float>(degrees) * Pi / 180.0f;
+                Scenario s { name, 10.0f, [yaw](float) { Keys k; k.cameraYaw = yaw; return k; } };
+                s.throws.push_back({ 1.0f, 140.0f, { 0.3f, 0.3f, 0.3f }, { 0.0f, 1.5f, 0.9f }, { 0.0f, -9.0f, 0.0f } });
+                list.push_back(s);
+                std::snprintf(name, sizeof name, "queda_vista_%d_anda", degrees);
+                Scenario moving { name, 10.0f, [yaw](float t) { Keys k; k.cameraYaw = yaw; k.forward = t > 4.0f ? 0.5f : 0.0f; return k; } };
+                moving.throws = s.throws;
+                list.push_back(moving);
+            }
+            // (16/11, ele: "nao consigo usar o levantar correndo") A queda e W + shift segurados desde o chao (1,3 s) ou no meio do levantar
+            // (2,6 s).
+            for (const float from : { 1.3f, 2.6f }) {
+                char name[48];
+                std::snprintf(name, sizeof name, "queda_shift_%02d", static_cast<int>(from * 10.0f));
+                Scenario s { name, 8.0f, [from](float t) { Keys k; k.forward = t > from ? 1.0f : 0.0f; k.sprint = t > from; return k; } };
+                s.throws.push_back({ 1.0f, 140.0f, { 0.3f, 0.3f, 0.3f }, { 0.0f, 1.5f, 0.9f }, { 0.0f, -9.0f, 0.0f } });
+                list.push_back(s);
+            }
+            // (16/11, ele: "debrucado em alguma estrutura") Trotando contra uma caixa de 1,1 m e soltando a tecla.
+            Scenario box { "caixa_debruca", 9.0f, [](float t) { Keys k; k.forward = t > 0.3f && t < 1.6f ? 0.5f : 0.0f; return k; } };
+            box.statics.push_back({ { 3.4f, 0.0f, 0.55f }, { 0.8f, 0.8f, 0.55f }, {} });
+            list.push_back(box);
+            // (Empurrando a caixa com a tecla segurada por 3 s e soltando - debrucado nela.)
+            Scenario pushing { "caixa_empurra", 10.0f, [](float t) { Keys k; k.forward = t > 0.3f && t < 4.0f ? 0.5f : 0.0f; return k; } };
+            pushing.statics = box.statics;
+            list.push_back(pushing);
+            // (A caixa baixa, 0,9 m, chegando de lado.)
+            Scenario low { "caixa_baixa_lado", 9.0f, [](float t) { Keys k; k.forward = t > 0.3f && t < 2.5f ? 0.5f : 0.0f;
+                k.left = t > 0.3f && t < 2.5f ? 0.25f : 0.0f; return k; } };
+            low.statics.push_back({ { 3.0f, 1.0f, 0.45f }, { 0.6f, 0.6f, 0.45f }, {} });
+            list.push_back(low);
+            // (E "o boneco tenta levantar mas tem outro em cima dele": o jogador derrubado cai por cima do boneco ao lado.)
+            Scenario pile { "boneco_por_cima", 12.0f, [](float) { return Keys {}; } };
+            pile.throws.push_back({ 2.5f, 140.0f, { 0.3f, 0.3f, 0.3f }, { 0.0f, 1.5f, 0.9f }, { 0.0f, -9.0f, 0.0f } });
+            pile.rival = true;
+            pile.rivalStart = { 0.0f, -0.75f, 0.0f };
+            pile.rivalYaw = 0.0f;
+            list.push_back(pile);
+        }
+        {
+            // (16/11) O jogador encosta andando no boneco ja no padrao (depois de ele voltar do nascer): o empurrao na capsula dele.
+            Scenario s { "boneco_encosta", 9.0f, [](float t) { Keys k; k.forward = t > 3.6f && t < 6.5f ? 0.45f : 0.0f; return k; } };
+            s.rival = true;
+            s.rivalStart = { 2.6f, 0.15f, 0.0f };
+            s.rivalYaw = 0.0f;
+            list.push_back(s);
+        }
         rival("boneco_ombro_anda", 0.5f, { 5.0f, 0.4f, 0.0f }, 0.0f);
         rival("boneco_ombro_corre", 1.0f, { 8.0f, 0.4f, 0.0f }, 0.0f);
         rival("boneco_frente_corre", 1.0f, { 8.0f, 0.0f, 0.0f }, Pi);
@@ -1226,6 +1449,93 @@ namespace MatterEngine::Probe {
 
 
 // (trace: a impressao digital de cada tick do roteiro, para a paridade.)
+// (16/11, ele: "o sistema de capsulas... puxando o boneco, teleportando, arrastando") O que se ve de errado num corpo, por modo do
+// padrao: o salto (o elo andou mais do que a velocidade dele explica num tick - a pose posta a forca), o puxao (a aceleracao da pelve
+// pelas posicoes) e o arrasto (o ponto do pe que toca o chao andando no plano rente a ele), e a folga entre a pelve e a navegacao
+// (a capsula do jogador, a virtual do boneco). XCAPSULA=1: cada salto e arrasto grande na hora.
+struct CapsuleWatch {
+    static constexpr int Modes = 6;
+    float jump[Modes] {}, pelvisAcceleration[Modes] {}, drag[Modes] {}, dragPeak[Modes] {}, gap[Modes] {}, seconds[Modes] {};
+    int jumpTicks[Modes] {};
+    std::vector<Vec3> before, before2;
+    std::array<Vec3, 2> footBefore {};
+    std::array<bool, 2> footDown {};
+    // (O ultimo: o cerebro do RL dirigindo - o padrao esta no fisico.)
+    static const char* name(int b) { return b == Modes - 1 ? "cerebro" : bodyModeName3D(static_cast<BodyModeKind3D>(b)); }
+    void observe(const char* who, const RagdollProfile3D& profile, const RagdollState3D& state, BodyModeKind3D mode, bool brain,
+        Vec3 nav, bool navValid, PhysicsScene3D& scene, float t, float dt) {
+        if (state.links.empty()) return;
+        const int b = brain ? Modes - 1 : std::clamp(static_cast<int>(mode), 0, Modes - 2);
+        seconds[b] += dt;
+        const char* loudFlag = std::getenv("XCAPSULA");
+        const bool loud = loudFlag != nullptr && loudFlag[0] == '2';
+        if (before.size() == state.links.size()) {
+            float worst = 0.0f;
+            std::size_t worstLink = 0;
+            for (std::size_t i = 0; i < state.links.size(); ++i) {
+                const float j = (state.links[i].position - (before[i] + state.links[i].linearVelocity * dt)).length();
+                if (j > worst) { worst = j; worstLink = i; }
+            }
+            jump[b] = std::max(jump[b], worst);
+            if (worst > 0.01f) {
+                ++jumpTicks[b];
+                if (loud) std::printf("    [%s] t %.3f %s SALTO %.3f m (%s)\n", who, t, name(b), worst,
+                    profile.links[worstLink].id.c_str());
+            }
+            if (before2.size() == state.links.size()) {
+                const Vec3 a = (state.links.front().position - before.front() * 2.0f + before2.front()) * (1.0f / (dt * dt));
+                pelvisAcceleration[b] = std::max(pelvisAcceleration[b], a.length());
+            }
+        }
+        before2 = before;
+        before.resize(state.links.size());
+        for (std::size_t i = 0; i < state.links.size(); ++i) before[i] = state.links[i].position;
+        for (std::size_t i = 0; i < profile.links.size() && i < state.links.size(); ++i) {
+            const std::string& id = profile.links[i].id;
+            if (id != "LeftFoot" && id != "RightFoot") continue;
+            const std::size_t side = id == "LeftFoot" ? 0 : 1;
+            // (O ponto mais baixo da caixa do pe - os oito cantos - e a velocidade dele como ponto do corpo rigido: o deslize do ponto que
+            // toca o chao, rente ao chao estatico.)
+            const auto& collider = profile.links[i].collider;
+            const PhysicsBodyState3D& link = state.links[i];
+            Vec3 low { 0.0f, 0.0f, 1.0e9f }, lowArm;
+            for (int c = 0; c < 8; ++c) {
+                const Vec3 corner { (c & 1 ? 1.0f : -1.0f) * collider.boxHalfExtents.x, (c & 2 ? 1.0f : -1.0f) * collider.boxHalfExtents.y,
+                    (c & 4 ? 1.0f : -1.0f) * collider.boxHalfExtents.z };
+                const Vec3 arm = link.orientation.rotate(collider.localPosition + corner);
+                if (link.position.z + arm.z < low.z) { low = link.position + arm; lowArm = arm; }
+            }
+            PhysicsRayHit3D hit;
+            const bool floorFound = scene.raycastStatic({ low + Vec3 { 0.0f, 0.0f, 0.5f }, { 0.0f, 0.0f, -1.0f } }, 2.0f, hit);
+            const bool down = floorFound && low.z - hit.position.z < 0.02f;
+            const Vec3 w = link.angularVelocity;
+            const Vec3 pointVelocity = link.linearVelocity + Vec3 { w.y * lowArm.z - w.z * lowArm.y, w.z * lowArm.x - w.x * lowArm.z,
+                w.x * lowArm.y - w.y * lowArm.x };
+            const float slip = std::hypot(pointVelocity.x, pointVelocity.y);
+            if (down && footDown[side]) {
+                drag[b] += slip * dt;
+                dragPeak[b] = std::max(dragPeak[b], slip);
+                if (loud && slip > 1.0f)
+                    std::printf("    [%s] t %.3f %s ARRASTO %s %.2f m/s\n", who, t, name(b), id.c_str(), slip);
+            }
+            footDown[side] = down;
+            footBefore[side] = low;
+        }
+        if (navValid) {
+            const Vec3 p = state.links.front().position;
+            gap[b] = std::max(gap[b], std::hypot(p.x - nav.x, p.y - nav.y));
+        }
+    }
+    void print(const char* who) const {
+        for (int b = 0; b < Modes; ++b) {
+            if (seconds[b] <= 0.0f) continue;
+            std::printf("%-18s   %s %-9s %5.2f s | salto max %.3f m (%d ticks > 1 cm) | pelve acel max %6.1f m/s2 | arrasto %.3f m "
+                        "(pico %.2f m/s) | folga pelve-capsula max %.2f m\n", "", who, name(b),
+                seconds[b], jump[b], jumpTicks[b], pelvisAcceleration[b], drag[b], dragPeak[b], gap[b]);
+        }
+    }
+};
+
 Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const AthleteRuntimeSettings3D& settings,
     bool startPhysicalArgument, FILE* dump, int every, bool suppressRequests,
     std::vector<AthleteTickDigest3D>* trace, ContractHooks* hooks) {
@@ -1350,6 +1660,28 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     float airborneSeconds = 0.0f;
     AthleteState3D athlete;
     LegacyAthleteState3D& legacy = athlete.legacy;
+    // (16/11, XRL=1) O cerebro unico do RL no fisico do padrao, como no laboratorio (RlBodyBrains3D, o mesmo codigo): quando o padrao vai
+    // ao fisico, o cerebro assume; de pe, devolve. A medida da volta: as aceleracoes dos elos no 1 s depois de cada devolucao contra o 1 s
+    // antes dela (o cerebro de pe, calmo).
+    const bool rlOn = std::getenv("XRL") != nullptr;
+    RlBodyBrains3D brains;
+    RagdollHandle3D brainHandle = handle;
+    CapsuleWatch watchSelf, watchRival;
+    if (rlOn && std::getenv("XRL_REGISTRO") != nullptr)
+        brains.log = [&](const std::string& line) { std::printf("    [rl] %s\n", line.c_str()); };
+    struct RlReturnWatch {
+        float at = -1.0f;
+    };
+    std::vector<RlReturnWatch> rlReturns;
+    // (As aceleracoes por elo: a velocidade do tick anterior; o pico e a soma dos quadrados por janela - antes e depois de cada volta.)
+    std::vector<Vec3> rlVelocityBefore, rlPositionBefore, rlPositionBefore2;
+    struct RlWindow {
+        float peak = 0.0f, sum = 0.0f;
+        int samples = 0;
+        float pelvisPeak = 0.0f, handsPeak = 0.0f, feetPeak = 0.0f, headPeak = 0.0f;
+    };
+    RlWindow rlCalm, rlAfter;
+    std::vector<std::pair<float, float>> rlHistory;  // (t, pico de aceleracao do tick) para a janela de antes
     // O modo pela telemetria neutra (a reescrita, R0): a mesma bateria vale
     // para o caminho legado e para as pecas novas.
     const auto mode = [&]() { return athleteTelemetry3D(athlete).mode; };
@@ -1427,6 +1759,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         policySettings.getUpPolicy = true;
     }
     Vec3 followVelocity {};
+    // (17/11) O encontro guiado do toque (a saida do atleta no tick anterior).
+    bool approachValid = false;
+    Vec3 approachVelocity {};
     bool controlledAnimated = !startPhysical;
     float capsuleSpeedScale = 1.0f;
     Vec3 capsuleMoved {};
@@ -1691,7 +2026,18 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             command.passWalls = (pass == nullptr || pass[0] != '0') && settings.defaultLocomotion
                 && mode() == BodyModeKind3D::Animated;
         }
-        scene->moveCharacter(command, active, Dt);
+        // (17/11, o encontro guiado: o toque pedido que so da certo com o corpo indo
+        // ate a bola - a velocidade de encontro no lugar das teclas, como no laboratorio.)
+        if (approachValid && !down && active.sprintSpeed > 0.1f) {
+            const float speed = approachVelocity.length();
+            command.moveDirection = speed > 0.05f ? approachVelocity * (1.0f / speed) : Vec3 {};
+            command.sprint = true;
+            command.speedScale = speed / active.sprintSpeed;
+            // (So a velocidade: o rumo das teclas fica o dele - o dominio e "sem tecla".)
+            intent.requestedVelocityWorld = approachVelocity;
+        }
+        // (Com o cerebro dirigindo, a capsula so e colocada sob a pelve - finish, abaixo -, como no laboratorio.)
+        if (!(rlOn && brains.drives(1))) scene->moveCharacter(command, active, Dt);
         const PhysicsCharacterState3D& capsule = scene->characterState();
         {
             const Vec3 moved { (capsule.position.x - before.position.x) / Dt,
@@ -1852,6 +2198,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         AthleteRuntimeSettings3D tickSettings = step < 0 ? warmSettings : policySettings;
         // (XBONECOFISICO=1: o boneco no fisico, sem o padrao dos bonecos - 02/11, o empurrao nele.)
         if (scenario.rival) tickSettings.looseDefaultLocomotion = std::getenv("XBONECOFISICO") == nullptr;
+        // (Com o cerebro, como no laboratorio: o boneco empurrado vai ao fisico. XRL_PONTE=1: a ponte de antes, para comparar.)
+        tickSettings.looseContactsToPhysical = rlOn && std::getenv("XRL_PONTE") == nullptr;
+        if (const char* v = std::getenv("XVOLTA_ACEL")) tickSettings.rlReturnMovingAcceleration = static_cast<float>(std::atof(v));
         // A IA de captura: o boneco joga pelo piloto (o controlado e o jogador).
         AthleteCommand3D pilotCommand;
         if (scenario.rivalPilot && step >= 0 && !rivalState.links.empty()) {
@@ -1902,8 +2251,86 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             pilotCommand.pilot = true;
             slots[1].command = &pilotCommand;
         }
-        runtime.update(*scene, runtimeAssets, std::span<AthleteSlot3D>(slots.data(), scenario.rival ? 2 : 1), balls,
-            tickSettings, control, Dt, output);
+        std::size_t slotCount = scenario.rival ? 2 : 1;
+        std::size_t slotFirst = 0;
+        if (rlOn && step >= 0) {
+            RlBrainSettings3D rl;
+            rl.assetsDirectory = MATTERENGINE_ASSETS_DIR;
+            if (const char* home = std::getenv("HOME")) rl.runDirectory = std::filesystem::path(home) / ".local/share/matter-engine/rl/runs/cerebro_unico";
+            // (XRL_RUN: a rede de outro treino - o braco do A/B.)
+            if (const char* other = std::getenv("XRL_RUN"); other != nullptr && *other != '\0') rl.runDirectory = other;
+            // (XRL_FULL_ATE=<s>: o Fisico com RL ate ai e depois o Padrao - a troca de modo do painel, 16/11.)
+            rl.full = std::getenv("XRL_FULL_ATE") != nullptr && t < static_cast<float>(std::atof(std::getenv("XRL_FULL_ATE")));
+            rl.transitions = tickSettings.defaultLocomotion;
+            rl.gameLimitTension = profile.limitTension.enabled;
+            rl.gameProfile = &profile;
+            rl.avatar = &avatar;
+            rl.loadAsync = false;
+            // (A volta harmonica: a sombra do padrao. XRL_SEM_SOMBRA=1: a volta direta, para comparar.)
+            if (std::getenv("XRL_SEM_SOMBRA") == nullptr) {
+                rl.defaultClips = runtimeAssets.defaultClips;
+                rl.runtimeSettings = &tickSettings;
+                rl.body = runtimeAssets.body;
+            }
+            if (const char* v = std::getenv("XRL_MISTURA")) rl.blendSeconds = static_cast<float>(std::atof(v));
+            if (const char* v = std::getenv("XRL_DIRETA")) rl.directHalfLife = static_cast<float>(std::atof(v));
+            // (16/11 20h, a volta rapida depois do levantar: XRL_LEV_VEL a velocidade aceita, XRL_LEV_CALMA a calma, XRL_LEV=0 desliga.)
+            if (const char* v = std::getenv("XRL_LEV_VEL")) rl.getUpReturnSpeed = static_cast<float>(std::atof(v));
+            if (const char* v = std::getenv("XRL_LEV_CALMA")) rl.getUpReturnCalmSeconds = static_cast<float>(std::atof(v));
+            if (const char* v = std::getenv("XRL_LEV")) rl.quickGetUpReturn = std::atoi(v) != 0;
+            if (const char* v = std::getenv("XRL_LEV_MISTURA")) rl.getUpReturnBlend = std::atoi(v) != 0;
+            if (const char* v = std::getenv("XRL_AJUDA")) rl.blendAssist = static_cast<float>(std::atof(v));
+            RlBrainBody3D body;
+            body.entityId = 1;
+            body.handle = &brainHandle;
+            body.state = &bodyState;
+            body.athlete = &athlete;
+            body.usable = true;
+            body.controlled = true;
+            body.inDefault = tickSettings.defaultLocomotion;
+            body.commanded = true;
+            body.direction = control.intent.requestedDirectionWorld;
+            body.viewYaw = control.facingYawRadians;
+            body.sprint = control.intent.effort > 0.5f;
+            body.requestedVelocity = control.intent.requestedVelocityWorld;
+            body.lookPitch = control.lookPitchRadians;
+            std::vector<RlBrainBody3D> rlBodies { body };
+            // (O boneco tambem, como no laboratorio: um cerebro por boneco humano - no padrao dos bonecos, enquanto o padrao dele esta
+            // no fisico; o pilotado pelo comando do piloto.)
+            if (scenario.rival && !rivalState.links.empty()) {
+                RlBrainBody3D other;
+                other.entityId = 2;
+                other.handle = &rivalHandle;
+                other.state = &rivalState;
+                other.athlete = &rivalAthlete;
+                other.usable = true;
+                other.controlled = false;
+                other.inDefault = tickSettings.looseDefaultLocomotion;
+                if (slots[1].command != nullptr && slots[1].command->pilot) {
+                    other.commanded = true;
+                    other.direction = slots[1].command->intent.requestedDirectionWorld;
+                    if (other.direction.lengthSquared() < 1.0e-4f) other.direction = slots[1].command->intent.requestedVelocityWorld;
+                    other.viewYaw = slots[1].command->facingYawRadians;
+                    other.sprint = slots[1].command->sprinting || slots[1].command->intent.effort > 0.5f;
+                    other.requestedVelocity = slots[1].command->intent.requestedVelocityWorld;
+                }
+                rlBodies.push_back(other);
+            }
+            RlBodyBrains3D::Events events;
+            brains.update(*scene, std::span<RlBrainBody3D>(rlBodies), rl, Dt, events);
+            for (const std::uint64_t entity : brains.takeReturned())
+                if (entity == 1) rlReturns.push_back({ t });
+            if (brains.drives(1)) slotFirst = 1;
+        }
+        std::vector<AthleteSlot3D> runSlots;
+        for (std::size_t k = slotFirst; k < slotCount; ++k)
+            if (!(rlOn && step >= 0 && brains.drives(slots[k].entityId))) runSlots.push_back(slots[k]);
+        if (!runSlots.empty())
+            runtime.update(*scene, runtimeAssets, std::span<AthleteSlot3D>(runSlots), balls, tickSettings, control, Dt, output);
+            approachValid = output.approachValid;
+            approachVelocity = output.approachVelocity;
+            if (std::getenv("XAPROX") && approachValid)
+                std::printf("  APROX t %.2f v %+.2f %+.2f (%.2f m/s)\n", t, approachVelocity.x, approachVelocity.y, approachVelocity.length());
         if (scenario.rivalPilot && scenario.ball && step >= 0 && !rivalState.links.empty() && !bodyState.links.empty()) {
             const std::uint64_t owner = ownership.owner();
             const Vec3 a = rivalState.links.front().position, b = bodyState.links.front().position;
@@ -2074,6 +2501,32 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 world, relative, offset.x, offset.y, ballState.position.z, ballState.linearVelocity.x,
                 ballState.linearVelocity.y, ballState.linearVelocity.z, capsule.x, capsule.y);
         }
+        // (17/11) O resumo da conducao automatica (os cenarios conduz_auto*).
+        if (scenario.ball && !bodyState.links.empty() && scenario.name.rfind("conduz_auto", 0) == 0 && t >= 1.2f) {
+            const Vec3 offset = ballState.position - bodyState.links.front().position;
+            const float distance = std::hypot(offset.x, offset.y);
+            metrics.autoTotalTime += Dt;
+            if (distance <= 1.0f) metrics.autoNearTime += Dt;
+            metrics.autoMaxDistance = std::max(metrics.autoMaxDistance, distance);
+            metrics.autoFarTime = distance > 2.5f ? metrics.autoFarTime + Dt : 0.0f;
+            if (metrics.autoFarTime > 0.8f && metrics.autoLostAt < 0.0f) metrics.autoLostAt = t - 0.8f;
+            if (output.ballTouched) ++metrics.autoTouches;
+        }
+        // (17/11) A conducao automatica: a bola em relacao a pelve no rumo da
+        // capsula, a cada 0,25 s, e os toques (XCONDUZ=1).
+        if (std::getenv("XCONDUZ") && scenario.ball && !bodyState.links.empty()
+            && (output.ballTouched || std::fmod(t + 1e-4f, 0.25f) < Dt)) {
+            const Vec3 capsule = scene->characterState().velocity;
+            const Vec3 flatCapsule { capsule.x, capsule.y, 0.0f };
+            const Vec3 heading = flatCapsule.length() > 0.3f ? flatCapsule * (1.0f / flatCapsule.length()) : Vec3 { 1.0f, 0.0f, 0.0f };
+            const Vec3 offset = ballState.position - bodyState.links.front().position;
+            const Vec3 flat { offset.x, offset.y, 0.0f };
+            std::printf("  CONDUZ t %.2f %s frente %+.2f lado %+.2f | corpo %.2f m/s rumo %+4.0f | bola %.2f m/s | brilho %d\n", t,
+                output.ballTouched ? "TOQUE" : "     ", dot(flat, heading), dot(flat, Vec3 { -heading.y, heading.x, 0.0f }),
+                flatCapsule.length(), std::atan2(capsule.y, capsule.x) * 57.2958f,
+                Vec3 { ballState.linearVelocity.x, ballState.linearVelocity.y, 0.0f }.length(),
+                output.autoConductionGlow ? 1 : 0);
+        }
         if (output.ballTouched) {
             ++metrics.touches;
             if (dump != nullptr) std::fprintf(dump, "T\n");
@@ -2153,6 +2606,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     start += Vec3 { pelvis.position.x, pelvis.position.y, 0.0f };
                     velocity += Vec3 { pelvis.linearVelocity.x, pelvis.linearVelocity.y, 0.0f };
                 }
+                if (item.atRival && !rivalState.links.empty()) {
+                    const PhysicsBodyState3D& pelvis = rivalState.links.front();
+                    start += Vec3 { pelvis.position.x, pelvis.position.y, 0.0f };
+                }
                 createLocomotionThrow3D(*scene, { start, velocity, item.massKg, item.halfExtents });
                 if (dump != nullptr) std::fprintf(dump, "E caixa\n");
             }
@@ -2162,10 +2619,92 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 scene->applyRagdollLinkForce(handle, 2, push.force * 0.32f, {});
                 scene->applyRagdollLinkForce(handle, 3, push.force * 0.48f, {});
             }
+        for (const Push& push : scenario.rivalPushes)
+            if (scenario.rival && t >= push.at && t < push.at + push.seconds) {
+                scene->applyRagdollLinkForce(rivalHandle, 0, push.force * 0.20f, {});
+                scene->applyRagdollLinkForce(rivalHandle, 2, push.force * 0.32f, {});
+                scene->applyRagdollLinkForce(rivalHandle, 3, push.force * 0.48f, {});
+            }
         scene->simulate(Dt);
         bodyState = scene->ragdollState(handle);
+        if (rlOn && step >= 0) {
+            // (O resto da decisao e a navegacao de cada corpo dirigido nele - como o finishRlBrainTick do laboratorio.)
+            if (scenario.rival) rivalState = scene->ragdollState(rivalHandle);
+            std::array<RlBrainBody3D, 2> finished {};
+            finished[0].entityId = 1;
+            finished[0].handle = &brainHandle;
+            finished[0].state = &bodyState;
+            finished[0].athlete = &athlete;
+            finished[0].controlled = true;
+            finished[1].entityId = 2;
+            finished[1].handle = &rivalHandle;
+            finished[1].state = &rivalState;
+            finished[1].athlete = &rivalAthlete;
+            RlBrainSettings3D finishing;
+            finishing.avatar = &avatar;
+            finishing.gameProfile = &profile;
+            brains.finish(*scene, std::span<RlBrainBody3D>(finished.data(), scenario.rival ? 2 : 1), finishing);
+            // A medida: a aceleracao de cada elo neste tick - o corpo de cima (pelve, tronco, cabeca, bracos e maos; as pernas batem no
+            // chao a cada passo), a media dele e os picos da pelve, das maos, dos pes e da cabeca.
+            // (Pelas posicoes - o que se ve -: a segunda diferenca de cada elo; a velocidade publicada pelo motor some num tick na troca
+            // para o guiado.)
+            if (rlPositionBefore2.size() == bodyState.links.size()) {
+                float peak = 0.0f, pelvisA = 0.0f, handsA = 0.0f, feetA = 0.0f, headA = 0.0f, upperSum = 0.0f;
+                int upperCount = 0;
+                for (std::size_t i = 0; i < bodyState.links.size(); ++i) {
+                    const float a = (bodyState.links[i].position - rlPositionBefore[i] * 2.0f + rlPositionBefore2[i]).length() / (Dt * Dt);
+                    const std::string& id = profile.links[i].id;
+                    const bool leg = id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos
+                        || id.find("Foot") != std::string::npos || id.find("Toe") != std::string::npos;
+                    if (!leg) {
+                        upperSum += a;
+                        ++upperCount;
+                    }
+                    if (i == 0) pelvisA = a;
+                    if (i == hands[0] || i == hands[1]) handsA = std::max(handsA, a);
+                    if (i == leftFoot || i == rightFoot) feetA = std::max(feetA, a);
+                    if (i == headLink) headA = a;
+                }
+                peak = upperCount > 0 ? upperSum / static_cast<float>(upperCount) : 0.0f;
+                rlHistory.push_back({ t, peak });
+                if (std::getenv("XRL_TRACO") != nullptr)
+                    for (const RlReturnWatch& r : rlReturns)
+                        if (t >= r.at - 0.05f && t <= r.at + 1.4f && (step % 3 == 0 || t <= r.at + 0.15f)) {
+                            const Vec3 v = (bodyState.links.front().position - rlPositionBefore.front()) * (1.0f / Dt);
+                            const Vec3 forward = (bodyState.links.front().orientation * profile.links.front().modelOrientation.conjugate())
+                                .rotate({ 1.0f, 0.0f, 0.0f });
+                            std::printf("    volta +%.3f s %-9s corpo de cima %5.1f m/s2 | pelve %5.1f maos %5.1f cabeca %5.1f | pelve %.2f m/s alt %.2f rumo %.0f giro %.1f rad/s\n",
+                                t - r.at, bodyModeName3D(mode()), peak, pelvisA, handsA, headA, std::hypot(v.x, v.y),
+                                bodyState.links.front().position.z, std::atan2(forward.y, forward.x) * 57.2958f,
+                                bodyState.links.front().angularVelocity.z);
+                        }
+                for (const RlReturnWatch& r : rlReturns)
+                    if (t > r.at && t <= r.at + 1.0f) {
+                        rlAfter.peak = std::max(rlAfter.peak, peak);
+                        rlAfter.sum += peak * peak;
+                        ++rlAfter.samples;
+                        rlAfter.pelvisPeak = std::max(rlAfter.pelvisPeak, pelvisA);
+                        rlAfter.handsPeak = std::max(rlAfter.handsPeak, handsA);
+                        rlAfter.feetPeak = std::max(rlAfter.feetPeak, feetA);
+                        rlAfter.headPeak = std::max(rlAfter.headPeak, headA);
+                    }
+            }
+            rlVelocityBefore.resize(bodyState.links.size());
+            for (std::size_t i = 0; i < bodyState.links.size(); ++i) rlVelocityBefore[i] = bodyState.links[i].linearVelocity;
+            rlPositionBefore2 = rlPositionBefore;
+            rlPositionBefore.resize(bodyState.links.size());
+            for (std::size_t i = 0; i < bodyState.links.size(); ++i) rlPositionBefore[i] = bodyState.links[i].position;
+        }
+        if (step >= 0) {
+            const Vec3 nav = scene->characterState().position;
+            watchSelf.observe("jogador", profile, bodyState, athleteTelemetry3D(athlete).mode, rlOn && brains.drives(1), nav, true, *scene, t,
+                Dt);
+        }
         if (scenario.rival) {
             rivalState = scene->ragdollState(rivalHandle);
+            if (step >= 0)
+                watchRival.observe("boneco", profile, rivalState, athleteTelemetry3D(rivalAthlete).mode, rlOn && brains.drives(2),
+                    rivalAthlete.legacy.virtualCapsule.position, rivalAthlete.legacy.virtualCapsuleValid, *scene, t, Dt);
             const BodyModeKind3D now = athleteTelemetry3D(rivalAthlete).mode;
             if (now != rivalPrevious && step >= 0) metrics.rivalTrail += std::string(">") + bodyModeName3D(now);
             rivalPrevious = now;
@@ -3156,8 +3695,14 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (bodyState.links.front().position.z < 0.5f) metrics.fell = true;
         if (scenario.ball) metrics.ballSpeedAfter = std::max(metrics.ballSpeedAfter, ballState.linearVelocity.length());
         if (dump != nullptr && step % every == 0) {
-            dumpFrame(dump, profile, bodyState, t, athleteDumpModeCode3D(mode()));
-            if (scenario.rival) dumpLinks(dump, profile, rivalState, true);
+            // (XDUMP_BONECO=1: o boneco no quadro principal - a malha e a camera nele - e o controlado em linhas; 16/11.)
+            if (scenario.rival && std::getenv("XDUMP_BONECO") != nullptr) {
+                dumpFrame(dump, profile, rivalState, t, athleteDumpModeCode3D(athleteTelemetry3D(rivalAthlete).mode));
+                dumpLinks(dump, profile, bodyState, true);
+            } else {
+                dumpFrame(dump, profile, bodyState, t, athleteDumpModeCode3D(mode()));
+                if (scenario.rival) dumpLinks(dump, profile, rivalState, true);
+            }
             if (scenario.ball)
                 std::fprintf(dump, "K %.4f %.4f %.4f %.3f %.3f %.3f\n", ballState.position.x, ballState.position.y,
                     ballState.position.z, ballState.linearVelocity.x, ballState.linearVelocity.y,
@@ -3216,6 +3761,28 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     }
     for (std::size_t side = 0; side < 2; ++side)
         if (metrics.gestureGapNow[side] < 1e8f) metrics.gestureGaps.push_back(metrics.gestureGapNow[side]);
+    if (rlOn) {
+        // A janela de antes: os 0,4 s antes de cada volta (o cerebro de pe e calmo, pela regra da volta) - a mesma medida.
+        for (const RlReturnWatch& r : rlReturns)
+            for (const auto& [time, peak] : rlHistory)
+                if (time >= r.at - 0.4f && time < r.at) {
+                    rlCalm.peak = std::max(rlCalm.peak, peak);
+                    rlCalm.sum += peak * peak;
+                    ++rlCalm.samples;
+                }
+        std::printf("  RL %s: %zu volta(s) ao padrao", scenario.name.c_str(), rlReturns.size());
+        for (const RlReturnWatch& r : rlReturns) std::printf(" em %.2f s", r.at);
+        if (rlAfter.samples > 0 && rlCalm.samples > 0)
+            std::printf(" | corpo de cima (m/s2, media dos elos): cerebro calmo pico %.1f rms %.1f -> 1 s da volta pico %.1f rms %.1f | na volta: pelve %.0f maos %.0f pes %.0f cabeca %.0f",
+                rlCalm.peak, std::sqrt(rlCalm.sum / rlCalm.samples), rlAfter.peak, std::sqrt(rlAfter.sum / rlAfter.samples), rlAfter.pelvisPeak,
+                rlAfter.handsPeak, rlAfter.feetPeak, rlAfter.headPeak);
+        std::printf("\n");
+    }
+    if (std::getenv("XCAPSULA") != nullptr) {
+        std::printf("  CAPSULA %s\n", scenario.name.c_str());
+        watchSelf.print("jogador");
+        if (scenario.rival) watchRival.print("boneco ");
+    }
     return metrics;
 }
 
@@ -3301,6 +3868,11 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         std::printf("%-18s   levantar pelo padrao: %d comecos, %d no padrao, %d de volta ao fisico (ultimo de %.2f a %.2f s)\n",
             "", metrics.animatedGetUpStarts, metrics.animatedGetUpCompleted, metrics.animatedGetUpAborts,
             metrics.animatedGetUpStartAt, metrics.animatedGetUpEndAt);
+    if (metrics.autoTotalTime > 0.0f)
+        std::printf("AUTO %-24s perto %3.0f%% | max %5.2f m | toques %2d (%.2f/s) | perdida %s\n", "",
+            100.0f * metrics.autoNearTime / metrics.autoTotalTime, metrics.autoMaxDistance, metrics.autoTouches,
+            metrics.autoTouches / metrics.autoTotalTime,
+            metrics.autoLostAt < 0.0f ? "-" : (std::to_string(metrics.autoLostAt).substr(0, 4) + " s").c_str());
     if (metrics.conductionValid)
         std::printf("%-18s   conducao: rumo %+.2f graus da mira, giro de lado %+.1f rad/s, %d ticks conduzindo\n", "",
             metrics.conductionHeading, metrics.conductionSpin, metrics.conductionTicks);

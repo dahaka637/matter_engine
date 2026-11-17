@@ -436,6 +436,9 @@ struct DefaultLocomotionInput3D {
     // segue o corpo fisico por aqui: Athlete/Reference/PhaseLock3D). 1: o
     // normal.
     float phaseRateScale = 1.0f;
+    // (16/11) Parado, os pes apoiados ficam onde estao (sem o passo de acomodacao): a sombra da volta harmonica do RL enquanto os
+    // musculos ainda vao a pose dela.
+    bool holdStance = false;
 };
 
 struct DefaultLocomotionOutput3D {
@@ -550,6 +553,11 @@ struct DefaultLocomotionSeed3D {
     std::array<Vec3, 2> feetWorld {};
     std::array<Vec3, 2> feetVelocityWorld {};
     bool feetValid = false;
+    // (16/11, a navegacao no corpo) Os pes apoiados onde o corpo os tem: o padrao comeca com eles ali (o giro parado e a acomodacao
+    // ja engatados neles) e, parado, os leva a pose parada por passos - antes a volta os deslizava ate o lugar do clipe (20 a 45 cm).
+    // Os rumos deles (mundo) junto.
+    bool plantFeet = false;
+    std::array<Quaternion, 2> feetOrientationWorld {};
 };
 
 class DefaultLocomotion3D {
@@ -561,6 +569,9 @@ public:
     // em que os pes do clipe mais se parecem com os do corpo. Sem isso o
     // padrao nascia parado, olhando para a camera, no comeco do ciclo.
     void seed(const DefaultLocomotionSeed3D& seed);
+    // (16/11) Os pes apoiados de novo nestes (mundo; os do corpo), no proximo update - a sombra da volta harmonica do RL acompanha os
+    // pes do corpo enquanto os musculos vao a postura dela (com holdStance).
+    void plantFeet(const std::array<Vec3, 2>& feetWorld, const std::array<Quaternion, 2>& orientationsWorld);
     // Arrancada agachada (pedido do usuario, 05/10 noite: o levantar com
     // pressa vai ate perto do agachado e troca para o Crouched To Sprinting):
     // no proximo update o clipe animations.crouchToSprint, no rumo travelYaw,
@@ -848,6 +859,8 @@ private:
     bool m_started = false;
     // A semente (seed): aplicada no proximo update.
     bool m_seedPending = false;
+    // (Os pes da semente a apoiar - DefaultLocomotionSeed3D::plantFeet -, no proximo passo dos pes.)
+    bool m_plantPending = false;
     // A arrancada agachada: pedida (startCrouchSprint), o rumo e se corre; e
     // se o clipe em andamento (m_tackleClip) e ela, nao o carrinho.
     bool m_crouchStartPending = false;

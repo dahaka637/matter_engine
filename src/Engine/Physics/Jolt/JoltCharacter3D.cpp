@@ -65,6 +65,17 @@ void PhysicsScene3D::destroyCharacter() { m_impl->releaseCharacter(); }
 void PhysicsScene3D::placeCharacter(Vec3 feet,const CharacterMotorSettings3D& settings) {
     createCharacter(feet,settings);
 }
+void PhysicsScene3D::teleportCharacter(Vec3 feet, Vec3 velocity) {
+    if (!m_impl->character) return;
+    m_impl->character->SetPosition(toJolt(feet));
+    m_impl->character->SetLinearVelocity(toJolt(velocity));
+    PhysicsCharacterState3D& state = m_impl->characterState;
+    const float height = state.crouched ? m_impl->characterSettings.crouchedHeight : m_impl->characterSettings.standingHeight;
+    state.position = feet + Vec3 { 0.0f, 0.0f, height * 0.5f };
+    state.velocity = velocity;
+    state.grounded = true;
+    state.flying = false;
+}
 void PhysicsScene3D::setCharacterVelocity(Vec3 velocity) {
     m_impl->characterState.velocity=velocity;
     if(m_impl->character)m_impl->character->SetLinearVelocity(toJolt(velocity));

@@ -3036,8 +3036,11 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
                 evalRose = percent(row, (evalPrefix + (fire ? "sob_fogo" : "levantou")).c_str());
                 evalSeconds = plain(row, (evalPrefix + "tempo").c_str());
                 evalPose = percent(row, (evalPrefix + "pose").c_str());
-                // (Com o fogo, o estilo: a nota do juiz da recuperacao no exercicio, de -1 a 1, em %.)
-                if (fire && row.contains(evalPrefix + "juiz") && row[evalPrefix + "juiz"].is_number())
+                // (15/11, ele: o grafico do juiz "nao consegue refletir realmente a semelhanca de movimento" - o juiz do AMP treina junto com a
+                // rede e por construcao fica parado.) No levantar pelo clipe, a semelhanca com o clipe no teste (a nota do clipe, 0-1, em %).
+                if (row.contains(evalPrefix + "semelhanca") && row[evalPrefix + "semelhanca"].is_number())
+                    evalPose = percent(row, (evalPrefix + "semelhanca").c_str());
+                else if (fire && row.contains(evalPrefix + "juiz") && row[evalPrefix + "juiz"].is_number())
                     evalPose = 50.0f * (row[evalPrefix + "juiz"].get<float>() + 1.0f);
                 evalRecovered = percent(row, (evalPrefix + "recuperou").c_str());
                 // (O levantar pelo clipe: o tempo para levantar e a velocidade na troca - sem troca, sem o numero.)
@@ -3397,7 +3400,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
                          "sem dados deste levantar", &c.evalRose },
                 Panel { "Levantou de novo depois de ir ao chão (%)", &c.trainRecovered, nullptr, blue, "treino", "%.0f%%", "%", 100.0f,
                     "ainda não foi ao chão", &c.evalRecovered },
-                Panel { "Estilo, o juiz (%)", &c.evalPose, nullptr, violet, "teste", "%.0f%%", "%", 100.0f, "sem a nota do juiz ainda" },
+                Panel { "Semelhança com o clipe (%)", &c.evalPose, nullptr, violet, "teste", "%.0f%%", "%", 100.0f, "sem a semelhança ainda" },
                 Panel { "Tempo para levantar, limpo (s)", &c.trainRiseSeconds, nullptr, pink, "treino", "%.2f s", "s", 0.0f,
                     "sem dados deste levantar", &c.evalRiseSeconds },
                 Panel { running ? "Velocidade na troca, o impulso (m/s)" : "Velocidade na troca (m/s)", &c.trainHandSpeed, nullptr,

@@ -48,6 +48,16 @@ void GesturePlayer3D::start(const GestureSpec3D& spec, const GestureRig3D& rig, 
     m_lastBodyValid = false;
     m_spec = spec;
     m_spec.side = spec.side == 1 ? 1 : 0;
+    // (17/11, o toque realista) O pe vai ate onde a bola vai estar no contato:
+    // a armada e a batida do gesto com a bola de agora dao o instante, e a bola
+    // anda com o corpo ate ele (no contato marcado, a bola ja vem prevista).
+    if (m_spec.aimBall && m_spec.contactAt <= 0.0f) {
+        const GestureKeys3D first = gestureKeys3D(m_spec, rig);
+        Vec3 travel = m_spec.ballDrift * (first.windupTime + first.contactTime);
+        // (A previsao curta: ate 15 cm - a bola rapida vindo e a recepcao armada.)
+        if (travel.length() > m_spec.aimTravel) travel = travel * (m_spec.aimTravel / travel.length());
+        m_spec.ballAt = m_spec.ballAt + travel;
+    }
     m_keys = gestureKeys3D(m_spec, rig);
     m_active = true;
     m_returning = false;
@@ -56,6 +66,7 @@ void GesturePlayer3D::start(const GestureSpec3D& spec, const GestureRig3D& rig, 
     m_startOffsetValid = false;
     m_fadeStart = m_fadeEnd = -1.0f;
     m_time = 0.0f;
+    m_windupStart = 0.0f;
     // A batida, o acompanhamento e a volta. A perna passa pela bola no mais
     // rapido do gesto (a velocidade das juntas pelo rumo do pe no catalogo;
     // parada ali, ela arrancava do zero depois - 2.300 m/s2 no chute
@@ -79,7 +90,7 @@ void GesturePlayer3D::start(const GestureSpec3D& spec, const GestureRig3D& rig, 
     // dos limites da batida (a perna da corrida la na frente volta mais
     // devagar: em 68 ms, o pe vinha para tras a 18 m/s).
     float windup = 0.0f;
-    if (m_keys.windupTime > 0.0f) {
+    if (m_keys.windupTime > 0.0f && !m_spec.skipWindup) {
         const float nominal = std::min(m_keys.windupTime, 0.3f * duration);
         const float longest = std::max(nominal, std::min(0.22f, 0.4f * duration));
         windup = longest;
@@ -170,6 +181,13 @@ void GesturePlayer3D::start(const GestureSpec3D& spec, const GestureRig3D& rig, 
             windup = m_spec.contactAt - strike;
         else
             strike = m_spec.contactAt;
+        build(strike);
+    } else if (m_spec.contactAt > 0.0f && m_spec.contactAt < windup + strike - 1e-3f) {
+        // (17/11, o contato por plano) A janela curta - a bola passando rapido, o
+        // voleio: a armada e a batida mais rapidas para o pe chegar no instante.
+        const float scale = std::max(0.3f, m_spec.contactAt / (windup + strike));
+        windup *= scale;
+        strike = std::max(0.03f, strike * scale);
         build(strike);
     }
     for (std::size_t i = 0; i < 7 && windup > 0.0f; ++i)
@@ -287,6 +305,80 @@ void GesturePlayer3D::finishSoon(float seconds) {
     m_fadeEnd = m_time + span;
 }
 
+bool GesturePlayer3D::retarget(const GestureSpec3D& spec, const GestureRig3D& rig) {
+    const float t = m_time;
+    if (!m_active || m_returning || m_spec.part != GesturePart3D::Foot || (spec.side == 1 ? 1 : 0) != m_spec.side
+        || spec.contactAt <= 0.0f || t >= m_keys.contactTime - 0.03f)
+        return false;
+    GestureSpec3D next = spec;
+    next.side = m_spec.side;
+    next.seed = m_spec.seed;
+    const GestureKeys3D keys = gestureKeys3D(next, rig);
+    const bool shot = m_spec.kind == GestureKind3D::Shot && !m_spec.receive;
+    const bool calm = m_spec.receive || (m_spec.high && !shot);
+    const float limit = shot ? 26.0f : calm ? 10.0f : 14.0f;
+    const float tw = m_keys.windupTime, oldContact = m_keys.contactTime;
+    const float follow = std::max(1e-3f, m_keys.followTime - oldContact);
+    const float back = std::max(0.0f, m_keys.duration - m_keys.followTime);
+    const float contact = t + std::max(0.03f, spec.contactAt);
+    // A perna agora no trecho em que esta.
+    std::array<float, 7> p {}, v {}, a {};
+    for (std::size_t i = 0; i < 7; ++i) {
+        if (t < tw) {
+            const GestureQuintic& q = m_windup[i];
+            const float s = (t - m_windupStart) / q.h;
+            p[i] = q.position(s);
+            v[i] = q.velocity(s);
+            a[i] = q.acceleration(s);
+        } else {
+            const GestureQuintic& q = m_strike[i];
+            const float s = (t - tw) / q.h;
+            p[i] = q.position(s) + m_lift[i] * liftBump(s);
+            v[i] = q.velocity(s) + m_lift[i] * liftBumpSlope(s) / q.h;
+            a[i] = q.acceleration(s) + m_lift[i] * liftBumpCurve(s) / (q.h * q.h);
+        }
+    }
+    // Ainda armando e com tempo: a armada termina na pose armada nova e a batida
+    // guarda o tempo dela. Senao a batida sai daqui direto para a bola.
+    float strikeFrom = t;
+    const float strikeSpan = oldContact - tw;
+    if (t < tw && contact - strikeSpan - t >= 0.04f) {
+        strikeFrom = contact - strikeSpan;
+        for (std::size_t i = 0; i < 7; ++i) {
+            const float turn
+                = i < 4 ? 1.5f * (keys.contact.value[i] - keys.windup.value[i]) / (strikeSpan * strikeSpan) : 0.0f;
+            m_windup[i] = { p[i], v[i], a[i], keys.windup.value[i], 0.0f, turn, strikeFrom - t };
+            p[i] = keys.windup.value[i];
+            v[i] = 0.0f;
+            a[i] = turn;
+        }
+        m_windupStart = t;
+    }
+    const float strike = std::max(0.03f, contact - strikeFrom);
+    const float speed = keys.contactSpeed * keys.followDistance / follow;
+    for (std::size_t i = 0; i < 7; ++i) {
+        const float k1 = keys.contact.value[i], k2 = keys.follow.value[i];
+        const float v1 = i < 4 ? std::clamp(keys.contactTangent.value[i] * speed, -0.8f * limit, 0.8f * limit)
+                               : gestureMonotoneTangent((k1 - p[i]) / strike, (k2 - k1) / follow);
+        m_strike[i] = { p[i], v[i], a[i], k1, v1, 0.0f, strike };
+        m_follow[i] = { k1, v1, 0.0f, k2, 0.10f * (k2 - k1) / follow, -2.5f * (k2 - k1) / (follow * follow), follow };
+        m_lift[i] = 0.0f;
+    }
+    m_keys.windup = keys.windup;
+    m_keys.contact = keys.contact;
+    m_keys.follow = keys.follow;
+    m_keys.contactTangent = keys.contactTangent;
+    m_keys.followDistance = keys.followDistance;
+    m_keys.contactSpeed = keys.contactSpeed;
+    m_keys.windupTime = strikeFrom;
+    m_keys.contactTime = strikeFrom + strike;
+    m_keys.followTime = m_keys.contactTime + follow;
+    // (Sem encurtar: o corpo do gesto foi montado ate o fim de antes.)
+    m_keys.duration = std::max(m_keys.duration, m_keys.followTime + back);
+    m_spec.ballAt = spec.ballAt;
+    return true;
+}
+
 GestureFrame3D GesturePlayer3D::update(float dt, const GestureLegPose3D& live, float moving) {
     GestureFrame3D frame;
     if (!m_active) return frame;
@@ -302,7 +394,7 @@ GestureFrame3D GesturePlayer3D::update(float dt, const GestureLegPose3D& live, f
     frame.duration = end;
     const float tw = m_keys.windupTime;
     if (t < tw) {
-        for (std::size_t i = 0; i < 7; ++i) frame.leg.value[i] = m_windup[i].position(t / m_windup[i].h);
+        for (std::size_t i = 0; i < 7; ++i) frame.leg.value[i] = m_windup[i].position((t - m_windupStart) / m_windup[i].h);
     } else if (t < t1) {
         for (std::size_t i = 0; i < 7; ++i) {
             const float s = (t - tw) / m_strike[i].h;

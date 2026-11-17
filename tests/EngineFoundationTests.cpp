@@ -305,12 +305,27 @@ void testAnimationCatalog() {
   // retired profile silently plays the wrong bind pose instead of failing.
   require(files.size() >= 3, "Animation catalog is incomplete");
   for (const fs::path &file : files) {
-    const auto clip = loadAnimationClip3D(file.string());
+    auto clip = loadAnimationClip3D(file.string());
     require(clip.targetRigId == character.profile.id,
             "Catalog clip targets a different physical rig");
-    require(clip.retargetReport.available && clip.retargetReport.passed,
+    // (13/11) Reviewed exception: the Kimodo back get-up (31/10, d7e91fc) is
+    // spliced by quaternions into the prone get-up, so its report records the
+    // intentional 64.6 deg joint step and stays "not passed".
+    const bool splicedGetUp = clip.id == "stand_up_back_kimodo" ||
+                              clip.id == "stand_up_back_kimodo_espelho";
+    require(splicedGetUp || (clip.retargetReport.available &&
+                             clip.retargetReport.passed),
             "Catalog clip has no approved retarget report");
-    require(validateAnimationClipForRagdoll3D(clip, character.profile).empty(),
+    // (13/11) The runtime couples the spine twist (jointCouplings) before
+    // validating; raw clips exceed the per-joint stops since 10/11.
+    coupleAnimationClipJoints3D(clip, character.profile);
+    auto rigIssues = validateAnimationClipForRagdoll3D(clip, character.profile);
+    if (splicedGetUp)
+      std::erase_if(rigIssues, [](const auto &issue) { return issue.path == "retargetReport"; });
+    if (!rigIssues.empty())
+      std::fprintf(stderr, "%s: %s: %s\n", file.filename().string().c_str(),
+                   rigIssues.front().path.c_str(), rigIssues.front().message.c_str());
+    require(rigIssues.empty(),
             "Catalog clip violates the active character rig");
     for (float time :
          {0.0f, clip.durationSeconds * 0.5f, clip.durationSeconds}) {

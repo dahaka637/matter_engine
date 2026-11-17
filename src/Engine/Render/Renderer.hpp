@@ -54,6 +54,10 @@ public:
     void beginGuiFrame();
     void endGuiFrame();
     void endFrame();
+    // (17/11) A captura do proximo quadro (RGBA8), para as fotos automaticas
+    // do laboratorio (nunca a tela do usuario: so a imagem do proprio jogo).
+    void requestFrameCapture();
+    [[nodiscard]] bool takeFrameCapture(int& width, int& height, std::vector<std::byte>& rgbaPixels);
 
     // Switches window mode and/or size live, without recreating the window
     // or GL context. `width`/`height` are ignored in borderless fullscreen

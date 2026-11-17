@@ -71,6 +71,25 @@ struct GestureSpec3D {
     // ela chegar e bate na chegada: a armada - ou, sem ela, a batida - se
     // alonga ate la.
     float contactAt = 0.0f;
+    // (17/11, o toque realista - pedido dele: "o pe passa a ter hitbox... os
+    // gestos para o pe ir ate a bola") O pe vai ate a bola de verdade: onde ela
+    // esta no inicio do gesto no referencial do corpo (x frente, y esquerda, z
+    // sobre a base dos pes) e o quanto ela anda nele por segundo (a velocidade
+    // dela menos a do corpo). O tocador leva a bola ate o instante do contato.
+    // Sem aimBall, a bola de referencia do balde (o gesto pronto de 24/10).
+    bool aimBall = false;
+    Vec3 ballAt;
+    Vec3 ballDrift;
+    // A folga a mais da mira em volta da bola do balde e o teto da previsao
+    // (m; o toque da conducao automatica na curva vai mais longe atras dela).
+    float aimSlack = 0.0f;
+    float aimTravel = 0.15f;
+    // (17/11, o ajuste em tempo real) O gesto recomecado para corrigir a mira no
+    // meio do ato: sem armar de novo (a perna sai de onde esta direto para a bola).
+    bool skipWindup = false;
+    // (17/11) O ajuste do gesto em andamento nesta perna (GesturePlayer3D::retarget:
+    // a perna corrige a mira sem recomecar); sem gesto para ajustar, ele comeca.
+    bool retarget = false;
 };
 
 // Uma perna nas coordenadas de junta do esqueleto (os vetores de rotacao de

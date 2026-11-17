@@ -35,6 +35,12 @@ public:
     // corpo some junto (outro gesto comecou na outra perna: as duas no ar,
     // nenhum pe de apoio).
     void finishSoon(float seconds);
+    // (17/11, o ajuste em tempo real) Corrige a mira do gesto em andamento sem
+    // recomecar: o tempo e o corpo ficam; a perna sai de onde esta (a posicao, a
+    // velocidade e a aceleracao de agora: sem quina) para a pose de contato nova
+    // em spec.contactAt s (de agora). Falso se nao da (outro gesto, ja no
+    // contato): o chamador recomeca o gesto.
+    bool retarget(const GestureSpec3D& spec, const GestureRig3D& rig);
 
 private:
     // Um canal do corpo: o pico e os instantes do pulso (s; hold > top: o pico
@@ -70,6 +76,8 @@ private:
     GestureSpec3D m_spec;
     GestureKeys3D m_keys;
     std::array<GestureQuintic, 7> m_windup {};
+    // (O comeco da armada: 0, ou o instante do ajuste que a refez.)
+    float m_windupStart = 0.0f;
     std::array<GestureQuintic, 7> m_strike {};
     // O quanto a batida passa da curva no meio dela (a subida; zero sem).
     std::array<float, 7> m_lift {};

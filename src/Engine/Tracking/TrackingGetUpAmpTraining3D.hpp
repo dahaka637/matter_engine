@@ -156,6 +156,12 @@ struct TrackingGetUpAmpSettings3D {
     // de peso x (1 - forma); a forma compara a cabeca contra o peito (para tras, de lado) o peito contra a pelve (torcao e, 12h25, arqueado para tras) e o olhar para cima com a media
     // do proprio clipe NA MESMA ALTURA DA CABECA (nao no tempo: o ritmo e a tecnica seguem dele), com folga. 0: nada.
     float getUpFormWeight = 0.0f;
+    // (13/11 17h45, ele: "normalizar os tempos... o de costas levanta muito mais rapido que o de brucos... proximo de 1.5 segundos... o de
+    // costas pelo menos 1.2") getUpPaceWeight: no levantar adaptativo limpo de pe (sem fogo, sem o correndo), ate a entrega, custa por
+    // passo estar com a cabeca mais alta que a do clipe tocado no ritmo de getUpPaceSeconds ate a entrega (do instante do comeco da
+    // tentativa): w x clamp((cabeca - alvo - 0,05 m) / 0,25 m, 0, 1). Mais baixo ou outro movimento nao custa - so subir antes da hora.
+    // Medido (13/11, r110380): a rede pulava a pausa ajoelhada do clipe (~0,75 m) e ia de 0,45 a 1,5 m em 0,5 s. 0: desligado.
+    float getUpPaceWeight = 0.0f, getUpPaceSeconds = 1.5f;
     // (13/11 13h30, ele: "sem melhoras nenhuma quanto a mao" - medido: 100% dos de costas ainda apoiam a esquerda virada depois de 45 min;
     // dentro da forma a mao custava ~2 por levantar, ~10x menos que a subida que mudou) A mao virada com peso proprio: por passo,
     // isto x (1 - nota da mao), fora da forma. 0: a mao dentro da nota da forma (metade dela com mao apoiada).
@@ -464,6 +470,12 @@ struct TrackingGetUpAmpSettings3D {
     // caiu no comando, a cabeca do levantar levanta (o clipe de pe do lado do corpo, no trecho da pose, adaptativo, sem fogo) e, de pe e
     // firme, devolve a locomocao no idle alerta com o jogador parado; a queda nao encerra (a multa fica). false: como antes.
     bool commandGetUp = false;
+    // (13/11 17h, ele: "os treinos nao encerrarem so porque houve a queda... aprender com as falhas... como cair melhor, se recuperar
+    // melhor"; o cerebro unico) fallToCommand: com commandGetUp, a queda num exercicio de locomocao (os rumos, as manobras, a estrela,
+    // o giro) nao encerra - o episodio vira comando no instante da queda (o jogador emulado com a tecla e o shift do que ele fazia) e
+    // levanta como no comando; firme, o jogador retoma. O episodio segue contando no grupo de antes (sceneryPreset = a manobra
+    // original). false: como antes.
+    bool fallToCommand = false;
     // (12/11 18h, ele: "levantar correndo... quando ele ta caido mas quer correr") A fracao das quedas andando em que o jogador segue
     // segurando a tecla: o levantar correndo, e a troca ja correndo na frente da vista.
     float commandRunGetUpShare = 0.5f;
@@ -473,6 +485,33 @@ struct TrackingGetUpAmpSettings3D {
     // menos de ~45 graus, 0,2 s) sem exigir a velocidade e sem a janela depois; runAfterSeconds (>= 0) o tempo da locomocao depois
     // da troca no exercicio do correndo (os dois passos), no lugar do clipGetUpAfterSeconds. false / -1: como antes.
     bool runHandoffAtStand = false;
+    // (15/11, do wip: o laboratorio igual ao treino) clipSideNow: o "virou para o outro lado" da tentativa nova compara o peito com o do clipe
+    // no quadro de agora, nao o do comeco - o clipe de costas ROLA para de brucos no meio e, sem isto, segui-lo abria uma tentativa falsa no
+    // clipe de brucos (a fase da observacao pulava aos 0,7 s). false: como antes.
+    bool clipSideNow = false;
+    // (15/11, o treino com --parado-preso) idleClipAnchor: so o passo de recuperacao (empurrao recente ou fogo) re-ancora o parado - a
+    // ancora entra na observacao, entao o laboratorio segue a regra do treino; desligado: todo pouso re-ancora, como antes.
+    bool idleClipAnchor = false;
+    // (15/11 15h, o treino com --revisao-15h) reviewFixes: as misturas entre clipes como no treino - o clipe sem ciclo fica no fim, o de
+    // ciclo leva o rumo dos ciclos, a mistura leva a inclinacao de quando comecou, e saindo do levantar ela parte do clipe dele na fase da
+    // nota. A mistura entra nos alvos dos motores (bracos e cabeca): o laboratorio segue a regra do treino.
+    bool reviewFixes = false;
+    // (15/11 21h, ele: "trazer ele para o in-game... a locomocao fisica por RL... atender aos comandos") externalCommand: o comando com o
+    // jogador de verdade - a tecla do rumo (0-7 contra a vista; -1 solta), o shift (correr) e a vista vem de setPlayerInput, no lugar
+    // das teclas e do mouse sorteados; o levantar escolhe o correndo pelo shift segurado (e troca para ele no meio do de pe se o shift
+    // vier depois); e nada encerra o episodio (so cair do mundo). O resto - arrancar, frear, trocar, cair, levantar - e o do treino.
+    bool externalCommand = false;
+    // (16/11, ele: "controlar o corpo como um cerebro REAL... fisica real") externalScene: a cena do JOGO no lugar das do treino. O mundo 0
+    // nao cria cena, chao nem corpo: dirige o ragdoll do jogo (adoptExternalBody) com os motores, e a fisica e o passo do jogo -
+    // applyExternalDrives antes de cada tick de 1/120 s, finishExternalDecision depois do 4o. Sem mao, empurrao nem fogo do treino.
+    PhysicsScene3D* externalScene = nullptr;
+    // (16/11, o plano de melhoria do RL - foco 5) externalSeesEnvironment: na cena do jogo, os raios e as alturas do ambiente da rede leem
+    // a cena de verdade - so para a rede treinada com coisas em volta na locomocao (o run.json com locomocao_ambiente > 0). Desligado: o
+    // ambiente lido como o do treino sem obstaculos (livre, o chao plano), como desde 16/11 02h.
+    bool externalSeesEnvironment = false;
+    // (externalScene, 16/11, ele: "eu gostaria de poder configurar o nivel de forca auxiliar") A mao do treino (a ajuda auxiliar linear: a
+    // x%, x% do teto - 0 e nenhuma forca de fora) no jogo, pelas reguas do painel: parado, andando/correndo e levantando (0..1).
+    float externalAssistStanding = 0.0f, externalAssistWalking = 0.0f, externalAssistGetUp = 0.0f;
     float runAfterSeconds = -1.0f;
     // (12/11 19h10, ele: "um exercicio que treina focado na TROCA de brains... inicia caido, de costas ou brucos, e precisa levantar,
     // haver a troca de brain para o da locomocao e ele ir ate um ponto proximo se locomovendo, marcado no mapa, coisa de 5 - 10
@@ -575,6 +614,11 @@ struct TrackingGetUpAmpSettings3D {
     // a rigidez e o amortecimento vezes isto. Medido: as 3 juntas de 440 N.m/rad em serie dao ~150 N.m/rad no tronco, contra ~250-440
     // in vivo com os musculos pre-ativados (Moorhouse & Granata 2005; Andersen 2004) e ~785 (Cholewicki 2000). 1: como antes.
     float spineTone = 1.0f;
+    // (17/11, o Codex achou a causa dos bracos abertos) clipVelocityRotation: a velocidade-alvo do clipe nos bracos e na cabeca por JUNTA,
+    // como o backend a entrega ao Jolt (a velocidade angular no referencial da junta do filho): w = Log(conj(Exp(a_agora)) Exp(a_proximo))
+    // / dt. Antes, a derivada de cada coordenada: no ombro as duas diferem ate 6 rad/s e o braco abria 8 cm de cada lado. A mesma conta do
+    // treino (matter_engine_wip, build-base-n132); o run.json leva velocidade_rotacao. Desligado: como antes.
+    bool clipVelocityRotation = false;
     // (10/11 14h30, ele: "pos-freio parece a coluna quebrada", "a coluna torta"; medido: a rede empurra as juntas da coluna contra os
     // batentes para se enrijecer - a lombar no batente de flexao na freada, a torcao no batente no parado.) O custo do batente: por
     // decisao, o torque que os batentes da coluna fazem (todos os eixos) alem de JamSlack, em unidades de JamScale, vezes isto.
@@ -728,6 +772,10 @@ struct TrackingGetUpAmpSettings3D {
     // continuo do fogo do levantar e o empurrao ou a pancada de agora; no jogo, a dos contatos) e a aceleracao do centro de massa
     // (suavizada em ~0,1 s), no rumo do corpo (frente, lado, cima), em pesos do corpo e em g. Muda o tamanho: so no construtor.
     bool fireObservation = false;
+    // (17/11, o plano de desentortar - D2, ele: "Igualar") contactForceObservation: a entrada da forca externa do fogo soma a forca dos
+    // contatos que nao sao o apoio (outro corpo que se move; parede ou coisa estatica de normal de lado) - no jogo ela era sempre zero.
+    // A mesma conta do treino (matter_engine_wip, build-base-n131). O run.json leva forca_contatos. Desligado: como antes.
+    bool contactForceObservation = false;
     bool balanceSteps = false;
     bool idleThroughPushes = false;
     float balanceDrillFraction = 0.0f;
@@ -1421,7 +1469,32 @@ public:
     void setCrookedStart(float share, float bonus, float close);
     void setStarRework(float pathWeight, float pathWidth, float curveShare, float curveMin, float curveMax);
     void setCommandGetUp(bool on, float runShare = 0.5f);
+    void setExternalCommand(bool on);
+    // (externalCommand) A entrada do jogador no mundo: key 0-7 (0 frente, 2 esquerda, 4 tras, 6 direita, contra a vista), -1 sem
+    // tecla; run, o shift; viewYaw, o rumo da camera (rad).
+    void setPlayerInput(std::size_t world, int key, bool run, float viewYaw);
+    // (externalScene) O corpo do jogo que o mundo 0 dirige, do estado em que esta (de pe: o parado; caido: o levantar do comando).
+    void adoptExternalBody(RagdollHandle3D handle);
+    // (externalScene) Os alvos dos motores da decisao de agora no corpo do jogo - antes de cada tick da cena do jogo.
+    void applyExternalDrives();
+    // (externalScene) As reguas da ajuda auxiliar do painel (0..1): parado, andando/correndo, levantando.
+    void setExternalAssist(float standing, float walking, float getUp);
+    // (externalScene, 16/11, a volta ao padrao harmonica) Os alvos dos motores da rede misturados, com o peso dado (0..1), aos angulos de
+    // junta de uma pose (por elo, nas coordenadas das juntas - as do padrao): os proprios musculos levam o corpo a ela. Peso 0 desliga.
+    void setExternalPoseBlend(std::span<const Vec3> coordinates, float weight);
+    // (externalScene) Depois do 4o tick do jogo: o resto da decisao (as fases, a referencia, a observacao da proxima).
+    void finishExternalDecision();
+    // (externalScene) De pe na cabeca da locomocao (nem caido nem levantando): o jogo pode devolver o corpo ao modo dele.
+    [[nodiscard]] bool externalStanding() const;
+    // (16/11 20h) No levantar pelo clipe agora (a volta rapida do jogo depois de um levantar de verdade, RlBodyBrains3D).
+    [[nodiscard]] bool externalGettingUp() const;
+    // (externalScene) O estado do cerebro em texto curto (o diagnostico do jogo e das sondas).
+    [[nodiscard]] std::string externalState() const;
+    void setFallToCommand(bool on);
     void setRunHandoffAtStand(bool on, float afterSeconds);
+    void setClipSideNow(bool enabled);
+    void setIdleClipAnchor(bool enabled);
+    void setReviewFixes(bool enabled);
     void setGetUpGo(float share, float minMeters, float maxMeters);
     void setTurnVariety(bool on, float spineReward);
     void setStillCost(float weight);
@@ -1588,6 +1661,7 @@ public:
     void setAdaptiveTimeFall(float seconds);
     void setAdaptiveTimeFire(float slack);
     void setGetUpForm(float weight);
+    void setGetUpPace(float weight, float seconds);
     void setGetUpPalm(float weight);
     void setIdlePelvisLevel(float weight);
     // (13/11 11h30) Para as sondas: a tabela da forma do clipe do exercicio (altura da cabeca, cabeca para a frente, de lado, torcao do

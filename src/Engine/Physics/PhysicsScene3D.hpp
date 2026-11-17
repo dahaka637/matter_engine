@@ -733,6 +733,9 @@ public:
     void destroyCharacter();
     void placeCharacter(Vec3 feetPosition,
         const CharacterMotorSettings3D& settings);
+    // (16/11) Leva a capsula ja criada a estes pes, com esta velocidade, no chao - sem recria-la: placeCharacter zera o estado (no
+    // ar ate o proximo moveCharacter) e o padrao lia o primeiro tick como um voo.
+    void teleportCharacter(Vec3 feetPosition, Vec3 velocity);
     // Escala do atrito de todos os corpos de um ragdoll (1 = o do material).
     // Carrinho: deslizando, o corpo escorrega na grama.
     void setRagdollFrictionScale(RagdollHandle3D ragdoll, float scale);

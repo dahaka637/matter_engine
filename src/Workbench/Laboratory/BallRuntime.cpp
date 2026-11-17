@@ -294,6 +294,10 @@ void WorkbenchApp::appendInflatedBallRenderables(
             mesh.visibleInCamera = visible;
             mesh.shadowCascadeMask = shadowMask;
             mesh.pixelArtHighDetail = true;
+            // (17/11) A bola nunca vira vidro (a camera sem empurrao).
+            mesh.seeThrough = false;
+            // (17/11) O brilho azul da conducao automatica.
+            mesh.glow = ball.autoGlow;
             if (deformed) {
                 mesh.skinMatrices = ball.skinMatrices;
                 mesh.previousSkinMatrices = ball.previousSkinMatrices;

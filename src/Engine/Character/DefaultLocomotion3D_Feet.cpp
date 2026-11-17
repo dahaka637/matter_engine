@@ -155,9 +155,22 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
         // O giro parado pelos passos (StandTurnFeet3D): parado, no chao, sem
         // gesto de bola; andar devolve os pes a locomocao na hora.
         {
+            // (16/11) Os pes da semente apoiados onde o corpo os tem (DefaultLocomotionSeed3D::plantFeet).
+            if (m_plantPending) {
+                m_plantPending = false;
+                if (m_feet[0] != 0 && m_feet[1] != 0) {
+                    std::array<StandTurnFoot3D, 2> planted;
+                    for (std::size_t side = 0; side < 2; ++side)
+                        planted[side] = { m_seed.feetWorld[side], m_seed.feetOrientationWorld[side].normalized() };
+                    m_standTurnFeet.engage(profile, m_feet, planted, m_yaw, feet.z);
+                    m_feetShown = planted;
+                    m_feetShownValid = true;
+                }
+            }
             StandTurnFeetInput3D turn;
             turn.standing = s.standTurnSteps && speed <= 0.3f && requested.length() <= 0.1f && ground > 0.99f
                 && !gestureFeet[0] && !gestureFeet[1];
+            turn.settle = !input.holdStance;
             turn.facingYawRadians = m_yaw;
             turn.targetYawRadians = m_standTurnTarget;
             turn.turnRateRadiansPerSecond = m_yawRate;

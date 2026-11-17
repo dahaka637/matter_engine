@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "Engine/RHI/RHIDevice.hpp"
 #include "Engine/Render/Scene3D.hpp"
 #include <array>
@@ -46,6 +48,10 @@ public:
     void drawWorldSprite(TextureHandle source, const std::array<float, 8>& corners,
         const std::array<float, 4>& perspectiveDepths) override;
     void endFrame() override;
+    // (17/11) A captura do proximo quadro apresentado (RGBA8), para as fotos
+    // automaticas do laboratorio; false enquanto nao chegou.
+    void requestFrameCapture();
+    [[nodiscard]] bool takeFrameCapture(Extent2D& extent, std::vector<std::byte>& rgbaPixels);
     void requestSwapchainRebuild() override;
     void waitIdle() override;
     [[nodiscard]] Extent2D drawableExtent() const override;

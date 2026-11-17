@@ -134,6 +134,16 @@ struct AthleteRuntimeOutput3D {
     // forca saiu neste tick (o toque).
     bool ballRequestConsumed = false;
     bool ballTouched = false;
+    // (17/11) A conducao automatica ligada com a bola no alcance (o brilho
+    // azul na bola dela).
+    bool autoConductionGlow = false;
+    InflatedBallHandle3D autoConductionBall;
+    // (17/11 14h45, ele: "pode reduzir a velocidade do jogador ou dar uma puxada
+    // nele, desde que bem suave e harmonico, para garantir a viabilidade do ato")
+    // O toque pedido que so da certo com o corpo indo ate a bola: a velocidade de
+    // encontro (mundo) que o laboratorio usa no lugar das teclas ate o contato.
+    bool approachValid = false;
+    Vec3 approachVelocity;
     // O referencial das areas de alcance do controlado (o da escolha do gesto):
     // a pelve no chao, o rumo do corpo e a altura da pelve (o laboratorio as
     // desenha).

@@ -40,6 +40,15 @@ layout(location = 4) in vec4 instancePositionScale;
 layout(location = 5) in vec4 instanceOrientationX;
 layout(location = 6) in vec4 instanceOrientationY;
 layout(location = 7) in vec4 instanceOrientationZ;
+#ifdef MATTER_SEE_THROUGH
+// (17/11) O pre-pass das superficies que podem virar vidro (ver
+// scene3d_mesh_depth.frag): a posicao, a normal e os flags para a mascara.
+layout(location = 1) in vec3 inNormal;
+layout(location = 8) in vec4 instanceMaterialAndFlags;
+layout(location = 0) out vec3 seeWorldPosition;
+layout(location = 1) out vec3 seeWorldNormal;
+layout(location = 5) flat out int seeMaterialFlags;
+#endif
 
 void main() {
     // Calculo identico ao de scene3d_mesh.vert, de proposito: o passe de cor
@@ -60,4 +69,11 @@ void main() {
     }
     gl_Position = scene.cameraViewProjection * vec4(worldPosition, 1.0);
     gl_Position.y = -gl_Position.y;
+#ifdef MATTER_SEE_THROUGH
+    seeWorldPosition = worldPosition;
+    seeWorldNormal = instanceOrientationX.w > 0.5
+        ? normalize(mat3(skinTransform(uint(instanceOrientationX.w))) * inNormal)
+        : normalize(orientation * inNormal);
+    seeMaterialFlags = int(round(instanceMaterialAndFlags.w));
+#endif
 }

@@ -44,12 +44,19 @@ struct StandTurnFeetInput3D {
     // parada da o passo de acomodacao.
     std::array<StandTurnFoot3D, 2> shown {};
     bool shownValid = false;
+    // (16/11) Falso: os pes apoiados ficam onde estao - sem o passo de acomodacao (a volta harmonica do RL, enquanto os musculos
+    // ainda vao a pose: o passo e do padrao, depois do encaixe).
+    bool settle = true;
     float deltaTime = 0.0f;
 };
 
 class StandTurnFeet3D final {
 public:
     void reset();
+    // (16/11, a navegacao no corpo) Comeca ja apoiado nestes pes (mundo; os do corpo de verdade, na volta ao padrao): eles ficam onde
+    // estao, sem mistura, e a acomodacao os leva a pose parada por passos - nunca deslizando.
+    void engage(const RagdollProfile3D& profile, std::array<std::size_t, 2> feet, const std::array<StandTurnFoot3D, 2>& planted,
+        float facingYawRadians, float groundHeight);
     // feet: os links dos pes (esquerdo, direito).
     void update(const RagdollProfile3D& profile, std::array<std::size_t, 2> feet, const StandTurnFeetInput3D& input);
     // O peso dos pes daqui sobre os da locomocao (0..1) e o pe de cada lado.

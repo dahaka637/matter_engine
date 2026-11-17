@@ -79,6 +79,21 @@ void StandTurnFeet3D::reset() {
     m_weight = 0.0f;
 }
 
+void StandTurnFeet3D::engage(const RagdollProfile3D& profile, std::array<std::size_t, 2> feet,
+    const std::array<StandTurnFoot3D, 2>& planted, float facingYawRadians, float groundHeight) {
+    reset();
+    if (feet[0] == 0 || feet[1] == 0 || feet[0] >= profile.links.size() || feet[1] >= profile.links.size()) return;
+    for (std::size_t side = 0; side < 2; ++side) {
+        StandTurnFoot3D foot = planted[side];
+        foot.position.z = footLockHeight3D(profile.links[feet[side]], groundHeight, foot.orientation);
+        m_feet[side].anchor = foot;
+        m_pose[side] = foot;
+    }
+    m_engaged = true;
+    m_weight = 1.0f;
+    m_lastFacing = facingYawRadians;
+}
+
 float StandTurnFeet3D::landingYaw(const StandTurnFeetInput3D& input, const Foot& foot) const {
     // A pose parada ja no rumo final da pelve, ate StepLimit a partir do rumo
     // em que o passo comecou, no sentido em que ele comecou.
@@ -150,7 +165,7 @@ void StandTurnFeet3D::update(const RagdollProfile3D& profile, std::array<std::si
             || std::hypot(shown.position.x - reference.position.x, shown.position.y - reference.position.y) > SettleDrift
             || std::abs(wrap(footYaw3D(link, shown.orientation) - footYaw3D(link, reference.orientation))) > SettleYaw;
     }
-    if (!input.standing || (!m_engaged && !turning && !displaced)) {
+    if (!input.standing || (!m_engaged && !turning && (!displaced || !input.settle))) {
         // Andando (ou parado sem giro): os pes sao os da locomocao; o que
         // estava aqui sai em 0,08 s (andando) ou 0,15 s (assentado).
         m_engaged = false;
@@ -260,7 +275,7 @@ void StandTurnFeet3D::update(const RagdollProfile3D& profile, std::array<std::si
                 : staggered ? rear : (remaining > 0.0f ? 0 : 1);
             start(profile, feet[first], input, first, staggered && first == rear ? Path::Around : Path::Pivot);
             m_pending = static_cast<int>(1 - first);
-        } else if (!turning) {
+        } else if (!turning && input.settle) {
             // Assentou: o pe mais fora da pose da um passo de acomodacao; com
             // os dois no lugar, os pes voltam a locomocao.
             int worst = -1;

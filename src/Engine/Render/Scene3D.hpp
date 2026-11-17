@@ -64,6 +64,9 @@ struct MeshRender3D {
     // ragdoll's random pale color, see SpawnedRagdollInstance::tintColor)
     // need to touch it.
     Vec3 tintColor { 1.0f, 1.0f, 1.0f };
+    // (17/11, a conducao automatica) O brilho azul da bola conduzida (0 a 1;
+    // ver scene3d_mesh.frag): um aro de luz pulsando de leve.
+    float glow = 0.0f;
     RHI::TextureHandle albedoTexture;
     RHI::TextureHandle metallicRoughnessTexture;
     RHI::TextureHandle normalTexture;
@@ -99,6 +102,10 @@ struct MeshRender3D {
     // especular no shader.
     bool matteSurface = false;
     bool visibleInCamera = true;
+    // (17/11) Pode virar vidro quando fica entre a camera e o jogador (ver
+    // SeeThroughSettings3D). Os bonecos e a bola desligam: so o cenario e os
+    // objetos ficam translucidos.
+    bool seeThrough = true;
     bool castsShadow = true;
     // Um bit por Cascaded Shadow Map. O Workbench calcula em quais volumes
     // o objeto realmente entra; o backend evita renderiza-lo quatro vezes
@@ -304,6 +311,32 @@ struct OceanRender3D {
     std::uint32_t indexCount = 0;
 };
 
+// (17/11, pedido dele) A camera nao e mais empurrada pelo que fica entre ela e
+// o jogador: o que obstrui (cenario, objetos, a trave; nunca os bonecos nem a
+// bola, MeshRender3D::seeThrough) vira vidro numa janela em volta do corpo
+// dele, com o perfil aceso para a forma continuar legivel. O pre-pass tira
+// essas superficies da profundidade e um passe de vidro as desenha por cima,
+// misturadas (ver scene3d_mesh_depth.frag e scene3d_mesh.frag).
+struct SeeThroughSettings3D {
+    bool enabled = false;
+    // O corpo do jogador como um segmento pe-cabeca (m, mundo).
+    Vec3 bodyBottom;
+    Vec3 bodyTop;
+    // Tudo na frente da profundidade dele vira vidro (gradativo pela
+    // profundidade, ver seeThroughMask); junto da linha da camera ao corpo (o
+    // quanto o raio passa dele: ate innerRadius, sumindo ate outerRadius) a
+    // volta a opaco e curta, para o que esta colado na frente dele nao o esconder.
+    float innerRadius = 0.6f;
+    float outerRadius = 1.4f;
+    // O piso nesta altura (+0,25 m) nunca vira vidro.
+    float groundHeight = 0.0f;
+    // O que passa muito perto da lente vira vidro em qualquer lugar da tela.
+    float nearFullMeters = 0.45f;
+    float nearZeroMeters = 1.3f;
+    // 0..1: a rampa no tempo de quem liga e desliga o efeito.
+    float strength = 1.0f;
+};
+
 struct Scene3DFrame {
     SceneRenderMode3D renderMode = SceneRenderMode3D::Standard;
     PixelArtSettings3D pixelArt;
@@ -378,6 +411,7 @@ struct Scene3DFrame {
     AmbientOcclusionSettings3D ambientOcclusion;
     OpticalEffectsSettings3D opticalEffects;
     FogSettings3D fog;
+    SeeThroughSettings3D seeThrough;
     bool oceanEnabled = false;
     OceanRender3D ocean;
     float oceanSubmersion = 0.0f;

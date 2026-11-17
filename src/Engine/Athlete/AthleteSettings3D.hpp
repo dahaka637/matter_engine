@@ -214,6 +214,22 @@ struct AthleteRuntimeSettings3D {
     // subindo de bridgeAuthorityStart a cheio - e entao o guiado. O contato
     // no padrao entra nela pela ponte de contato (abaixo).
     bool physicalBridge = true;
+    // (16/11, ele: "o momento de transicao da locomocao fisica para a default... os movimentos de transicao sao muito bruscos, do corpo sendo
+    // colocado no lugar a forca") A volta quando quem devolve e o cerebro unico do RL (LegacyAthleteState3D::rlReturn): o corpo ja chega
+    // equilibrado, entao sem a ponte nem o Corpo Ativo (que o arrastavam: a pelve a 0,4-0,9 m/s parado, as maos a 57 m/s2) - direto ao
+    // guiado, partindo do estado exato do corpo (juntas, velocidades, pelve) e chegando a pose do padrao pela mola da inercia, mais
+    // lenta que a da volta de sempre: meia-vida (s) e duracao (s).
+    float rlReturnHalfLife = 0.30f;
+    float rlReturnSeconds = 1.20f;
+    // (E a velocidade: a capsula - e a pose do padrao presa nela - sai da do corpo e vai a pedida nesta aceleracao (m/s2), tambem sem
+    // tecla - parada, a capsula freava 0,8 m/s em 50 ms e levava o corpo junto -, por ate rlReturnRampSeconds.)
+    float rlReturnAcceleration = 4.0f;
+    float rlReturnRampSeconds = 1.5f;
+    // (16/11) Com tecla, a da volta pelo cerebro: a da capsula do padrao (capsuleResponsePercent - no laboratorio ~24 m/s2), comecando
+    // suave em rlReturnMovingOnsetSeconds (sem degrau). (Ele, 16h50: "fica lento quando levanta ou volta ao modo default por um
+    // pouquinho": a 5 m/s2 - e a 9, a de antes - o padrao levava ~1 s para chegar a velocidade das teclas.) > 0: este valor fixo (m/s2).
+    float rlReturnMovingAcceleration = 0.0f;
+    float rlReturnMovingOnsetSeconds = 0.15f;
     // (0,45 ate 28/10: a volta ao padrao mais rapida, pedido do usuario.)
     float bridgeSeconds = 0.30f;
     float bridgeMovingSeconds = 0.30f;
@@ -231,6 +247,11 @@ struct AthleteRuntimeSettings3D {
     // contactBridgeSecondsPerDeltaV x Dv (m/s), ate contactBridgeMaxSeconds.
     bool contactBridge = true;
     float contactBridgeHardDeltaV = 1.2f;
+    // (16/11, ele: "puxando o boneco... arrastando") Os bonecos soltos no padrao, com o fisico pelo cerebro do RL: o encostao e o
+    // empurrao de quem se move vao ao fisico - o cerebro segura com passos de verdade e devolve pela volta harmonica -, nao a ponte de
+    // contato nem ao empurrao da capsula virtual (os dois deslizavam os pes: 1,3 m a 12 m/s parado e 2,2 m na ponte, num empurrao de 1 s).
+    // Desligado (o padrao): como antes - o jogador fica sempre na ponte.
+    bool looseContactsToPhysical = false;
     float contactBridgeBaseSeconds = 0.25f;
     float contactBridgeSecondsPerDeltaV = 0.25f;
     float contactBridgeMaxSeconds = 0.8f;
@@ -303,6 +324,17 @@ struct AthleteRuntimeSettings3D {
     // (24/10: os tempos que o usuario calibrou no laboratorio.)
     float touchGestureSeconds = 0.45f;
     float shotGestureSeconds = 0.58f;
+    // (17/11, pedido dele; as duas ligadas por padrao, com checkbox no
+    // laboratorio) O toque realista: o gesto vai ate a bola de verdade e a
+    // forca do pe so sai quando a chuteira encosta nela. A conducao
+    // automatica: o drible com a barra ate autoConductionBar liga os toques
+    // sozinhos, de verdade e o minimo deles, mantendo a bola logo a frente dos
+    // pes.
+    bool realisticTouch = true;
+    // (17/11 14h20, ele: "por hora o manejo automatico fica de fora" - desligada
+    // por padrao; a checkbox liga para testar.)
+    bool autoConduction = false;
+    float autoConductionBar = 0.35f;
 };
 
 } // namespace MatterEngine

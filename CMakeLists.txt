@@ -275,7 +275,7 @@ set(MATTERENGINE_SHADER_OUTPUTS)
 foreach(shader render2d.vert render2d.frag sprite.vert sprite.frag
         scene3d_sky.vert scene3d_sky.frag
         scene3d_mesh.vert scene3d_mesh.frag scene3d_mesh_shadow.vert scene3d_mesh_shadow_thin.frag
-        scene3d_mesh_depth.vert
+        scene3d_mesh_depth.vert scene3d_mesh_depth.frag
         tonemap.vert tonemap.frag auto_exposure.frag
         gtao.frag bloom_glare.frag
         taa_resolve.frag
@@ -302,6 +302,25 @@ foreach(stage vert frag)
         COMMAND $<TARGET_FILE:glslang-standalone> -V --target-env vulkan1.4 -DMATTER_CHARACTER -o "${shader_output}" "${shader_source}"
         DEPENDS glslang-standalone "${shader_source}"
         COMMENT "Compiling Vulkan shader scene3d_character.${stage}"
+        VERBATIM
+    )
+    list(APPEND MATTERENGINE_SHADER_OUTPUTS "${shader_output}")
+endforeach()
+# (17/11) A camera sem empurrao: o pre-pass com a mascara do vidro e o passe de
+# vidro (scene3d_mesh.frag com MATTER_SEE_THROUGH_GHOST).
+foreach(variant "scene3d_mesh_depth.vert|scene3d_mesh_depth_see.vert|MATTER_SEE_THROUGH"
+        "scene3d_mesh.frag|scene3d_mesh_ghost.frag|MATTER_SEE_THROUGH_GHOST")
+    string(REPLACE "|" ";" variant_parts "${variant}")
+    list(GET variant_parts 0 variant_source)
+    list(GET variant_parts 1 variant_name)
+    list(GET variant_parts 2 variant_define)
+    set(shader_source "${CMAKE_SOURCE_DIR}/assets/shaders/${variant_source}")
+    set(shader_output "${MATTERENGINE_SHADER_OUTPUT_DIR}/${variant_name}.spv")
+    add_custom_command(
+        OUTPUT "${shader_output}"
+        COMMAND $<TARGET_FILE:glslang-standalone> -V --target-env vulkan1.4 -D${variant_define} -o "${shader_output}" "${shader_source}"
+        DEPENDS glslang-standalone "${shader_source}"
+        COMMENT "Compiling Vulkan shader ${variant_name}"
         VERBATIM
     )
     list(APPEND MATTERENGINE_SHADER_OUTPUTS "${shader_output}")
@@ -848,6 +867,7 @@ add_library(MatterAthlete STATIC
     src/Engine/Athlete/AthleteRuntime3D.cpp
     src/Engine/Athlete/AthleteTelemetry3D.cpp
     src/Engine/Athlete/Pilot/CapturePilot3D.cpp
+    src/Engine/Athlete/Ball/BallContactPlanner3D.cpp
     src/Engine/Athlete/Ball/BallOutcome3D.cpp
     src/Engine/Athlete/Ball/ShotConduction3D.cpp
     src/Engine/Athlete/Reference/BodyForecast3D.cpp
@@ -865,6 +885,7 @@ add_library(MatterAthlete STATIC
     src/Engine/Athlete/Synthesis/LegClearance3D.cpp
     src/Engine/Athlete/Synthesis/LegSynthesis3D.cpp
     src/Engine/Athlete/Legacy/LegacyAthleteStep3D.cpp
+    src/Engine/Athlete/Navigation/BodyNavigation3D.cpp
     src/Engine/Athlete/Legacy/LegacyReference3D.cpp
     src/Engine/Athlete/Modes/ContactClasses3D.cpp
     src/Engine/Athlete/Modes/ModeRules3D.cpp
@@ -1019,6 +1040,7 @@ add_library(MatterWorkbench STATIC
     src/Workbench/ReinforcementLearning/LocomotionViewer3D.cpp
     src/Workbench/ReinforcementLearning/MotorViewer3D.cpp
     src/Workbench/ReinforcementLearning/TrackingViewer3D.cpp
+    src/Workbench/ReinforcementLearning/RlBodyBrains3D.cpp
 )
 
 # A tela de Aprendizado por Reforco usa o modulo de RL inteiro (os mundos, a
@@ -1057,6 +1079,11 @@ add_custom_command(OUTPUT "${MATTER_GALPAO_GLB}"
     VERBATIM)
 add_custom_target(MatterMapAssets DEPENDS "${MATTER_GALPAO_GLB}")
 add_dependencies(MatterEngineApp MatterMapAssets)
+# (16/11) A sonda sem janela do cerebro unico do RL no jogo.
+add_executable(MatterRlBrainProbe tools/rl_ingame/RlBrainProbe.cpp)
+target_link_libraries(MatterRlBrainProbe PRIVATE MatterWorkbench)
+target_compile_definitions(MatterRlBrainProbe PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
+
 add_executable(MatterMapVerify tools/maps/VerificarMapa.cpp)
 target_link_libraries(MatterMapVerify PRIVATE MatterEngine)
 add_custom_command(TARGET MatterEngineApp POST_BUILD
@@ -1348,7 +1375,7 @@ endif()
 # com a fisica de verdade, sem janela; o dump vai para MatterModelInspector quadros.
 add_executable(MatterAthleteProbe tools/AthleteProbe.cpp tools/athlete_probe/ProbeL0.cpp)
 target_include_directories(MatterAthleteProbe PRIVATE tools)
-target_link_libraries(MatterAthleteProbe PRIVATE MatterEngine MatterObjects)
+target_link_libraries(MatterAthleteProbe PRIVATE MatterEngine MatterObjects MatterWorkbench)
 if(MATTERENGINE_BUILD_RL)
     target_link_libraries(MatterAthleteProbe PRIVATE MatterTracking)
 endif()

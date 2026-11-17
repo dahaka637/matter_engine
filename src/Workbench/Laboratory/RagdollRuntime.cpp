@@ -1,3 +1,5 @@
+#include "Engine/Athlete/Navigation/BodyNavigation3D.hpp"
+#include "Engine/Tracking/TrackingGetUpAmpTraining3D.hpp"
 #include "Workbench/WorkbenchApp.hpp"
 
 #include "Engine/Appearance/Compose/KitCompositor.hpp"
@@ -17,6 +19,7 @@
 #include <cstdio>
 #include <memory>
 #include <filesystem>
+#include <chrono>
 #include <fstream>
 #include <cstdlib>
 #include <cmath>
@@ -591,10 +594,22 @@ void WorkbenchApp::takeControlOfLatestCharacter() {
         return;
     }
     endPhysGunGrab();
-    const Vec3 root = candidate->physicsState.links.front().position;
-    const float floor = ragdollGroundHeight(root);
-    m_physicsScene->placeCharacter({ root.x, root.y, floor },
-        m_avatarCharacterSettings);
+    {
+        // (16/11, ele: "teleportando") A capsula do jogador continua de onde a navegacao do boneco esta: a virtual, se o padrao o
+        // conduz (a raiz do padrao nao salta da capsula para a pelve); senao, o corpo (BodyNavigation3D).
+        LegacyAthleteState3D& legacy = candidate->athlete.legacy;
+        const bool defaultLed = legacy.virtualCapsuleValid
+            && (legacy.bodyMode == LegacyBodyMode3D::Animated || legacy.bodyMode == LegacyBodyMode3D::Returning);
+        if (defaultLed) {
+            const Vec3 center = legacy.virtualCapsule.position;
+            m_physicsScene->placeCharacter({ center.x, center.y, center.z - 0.5f * m_avatarCharacterSettings.standingHeight },
+                m_avatarCharacterSettings);
+            m_physicsScene->setCharacterVelocity(legacy.virtualCapsule.velocity);
+        } else {
+            placeBodyNavigation3D(*m_physicsScene, m_avatarCharacterSettings, true, legacy,
+                bodyNavigationPoint3D(*m_physicsScene, *m_humanRagdollProfile, candidate->physicsState));
+        }
+    }
     m_controlledCharacterEntityId = candidate->entityId;
     candidate->athlete.legacy.locomotion.reset(*m_humanRagdollProfile,
         candidate->physicsState);
@@ -607,23 +622,8 @@ void WorkbenchApp::takeControlOfLatestCharacter() {
         .orientation.rotate({ 1.0f, 0.0f, 0.0f });
     m_characterDesiredFacingYaw = std::atan2(forward.y, forward.x);
     m_laboratoryCameraYaw = m_characterDesiredFacingYaw;
-    // (02/11, ele: o boneco nascia no fisico.) De pe e com o padrao ligado, ele
-    // comeca no padrao, olhando para onde o corpo olha.
-    {
-        const Vec3 up = (candidate->physicsState.links.front().orientation
-            * m_humanRagdollProfile->links.front().modelOrientation.conjugate())
-            .rotate({ 0.0f, 0.0f, 1.0f });
-        auto& legacy = candidate->athlete.legacy;
-        if (m_defaultLocomotion && up.z > 0.85f
-            && legacy.bodyMode == LegacyBodyMode3D::Physical) {
-            legacy.guideFacingYawRadians = m_characterDesiredFacingYaw;
-            legacy.defaultLocomotion.reset(m_characterDesiredFacingYaw);
-            legacy.guided = true;
-            legacy.bodyMode = LegacyBodyMode3D::Animated;
-            legacy.bodyModeSeconds = 0.0f;
-            m_physicsScene->setRagdollGuided(candidate->physicsRagdoll, true);
-        }
-    }
+    // (16/11, ele: "teleportando") Assumir nao troca o modo do corpo nem o poe em pose nenhuma (antes, de pe no fisico, ele ia ao padrao
+    // na hora - a pose do parado posta a forca): no fisico, ele volta ao padrao pela volta de sempre, do corpo como esta.
     m_laboratoryCameraPitch = -0.20f;
     m_characterProxyVelocityWorld = {};
     m_characterSprinting = false;
@@ -642,6 +642,27 @@ void WorkbenchApp::takeControlOfLatestCharacter() {
 
 void WorkbenchApp::releaseControlledCharacter() {
     if (m_controlledCharacterEntityId == 0) return;
+    // (16/11) O boneco solto continua de onde a capsula do jogador estava (o padrao conduzindo) ou do corpo: a virtual dele nasce ali, e
+    // a raiz do padrao nao salta.
+    if (m_physicsScene && m_physicsScene->hasCharacter() && m_humanRagdollProfile)
+        for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
+            if (instance.entityId != m_controlledCharacterEntityId || instance.physicsState.links.empty()) continue;
+            LegacyAthleteState3D& legacy = instance.athlete.legacy;
+            if (legacy.bodyMode == LegacyBodyMode3D::Animated || legacy.bodyMode == LegacyBodyMode3D::Returning) {
+                const PhysicsCharacterState3D& capsule = m_physicsScene->characterState();
+                legacy.virtualCapsule = capsule;
+                legacy.virtualCapsule.position.z = capsule.position.z
+                    - 0.5f * (capsule.crouched ? m_avatarCharacterSettings.crouchedHeight : m_avatarCharacterSettings.standingHeight)
+                    + 0.5f * m_avatarCharacterSettings.standingHeight;
+                legacy.virtualCapsule.crouched = false;
+                legacy.virtualCapsuleValid = true;
+                legacy.virtualFollowVelocity = {};
+                legacy.virtualPushVelocity = {};
+            } else {
+                placeBodyNavigation3D(*m_physicsScene, m_avatarCharacterSettings, false, legacy,
+                    bodyNavigationPoint3D(*m_physicsScene, *m_humanRagdollProfile, instance.physicsState));
+            }
+        }
     m_controlledCharacterEntityId = 0;
     m_characterProxyVelocityWorld = {};
     m_characterSprinting = false;
@@ -868,6 +889,137 @@ void WorkbenchApp::toggleControlledCharacterFrozen() {
     };
 }
 
+namespace {
+// (16/11) O registro do cerebro no jogo (~/.local/share/matter-engine/rl/rl_jogo.log): o que ele faz quando o jogador testa - quem assume,
+// o estado a cada 0,25 s, a volta ao padrao, as trocas do modo do padrao. Recomeca a cada abertura do jogo.
+void rlBrainLog(const std::string& line) {
+    static std::ofstream file = [] {
+        namespace fs = std::filesystem;
+        fs::path data;
+        if (const char* root = std::getenv("MATTER_RL_DATA"); root != nullptr && *root != '\0') data = root;
+        else if (const char* home = std::getenv("HOME"); home != nullptr) data = fs::path(home) / ".local/share/matter-engine/rl";
+        std::error_code error;
+        fs::create_directories(data, error);
+        return std::ofstream(data / "rl_jogo.log", std::ios::trunc);
+    }();
+    if (!file) return;
+    static const auto start = std::chrono::steady_clock::now();
+    char stamp[32];
+    std::snprintf(stamp, sizeof stamp, "%8.2f ", std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+    file << stamp << line << '\n';
+    file.flush();
+}
+} // namespace
+
+// (16/11, ele: "controlar o corpo como um cerebro REAL... fisica real") O cerebro unico do RL no corpo do jogador (Fisico com RL): o
+// controlador do treino le o ragdoll do jogador NA CENA DO JOGO e poe os alvos dos motores dele - o chao, a bola, os outros jogadores, as
+// paredes e as pancadas sao os do jogo, nenhuma pose copiada. O corpo e o do treino (o perfil do cerebro), criado na pose e nas
+// velocidades do corpo do jogo. A cada tick de 1/120 s: updateRlBrain antes da simulacao (a entrada; a decisao da rede a cada 4 ticks, 30
+// Hz como no treino; os alvos) e finishRlBrainTick depois (o resto da decisao no 4o tick; a capsula sob o corpo, sem empurrar nada).
+// (16/11, ele: "controlar o corpo como um cerebro REAL... fisica real") O cerebro unico do RL nos bonecos humanos (RlBodyBrains3D): dirige
+// no Fisico com RL sempre; no Padrao com o fisico pelo RL, enquanto o padrao daquele boneco esta no fisico (o jogador e, com "bonecos no
+// padrao", os outros) - e sempre nos bonecos fora do padrao. A entrada: o jogador pelas teclas e pela camera; o boneco pilotado (aba IA)
+// pelo comando do piloto; o boneco solto fica parado no lugar. A cada tick de 1/120 s: updateRlBrain antes da simulacao e
+// finishRlBrainTick depois.
+void WorkbenchApp::updateRlBrain(float deltaTime) {
+    if (!m_physicsScene) return;
+    namespace fs = std::filesystem;
+    fs::path data;
+    if (const char* root = std::getenv("MATTER_RL_DATA"); root != nullptr && *root != '\0') data = root;
+    else if (const char* home = std::getenv("HOME"); home != nullptr) data = fs::path(home) / ".local/share/matter-engine/rl";
+    RlBrainSettings3D settings;
+    settings.assetsDirectory = fs::path(MATTERENGINE_ASSETS_DIR);
+    settings.runDirectory = data / "runs" / "cerebro_unico";
+    settings.full = m_locomotionPolicyOn;
+    // (So no corpo base, o do treino: com outro corpo o padrao segue com o perfil dele, e o cerebro nao foi treinado nele.)
+    const bool trainingBody = isBaseBody3D(laboratoryBody()) && m_ragdollRigidityPercent <= 0.0f;
+    settings.transitions = m_defaultLocomotion && m_defaultPhysicalPolicy && trainingBody;
+    settings.recreateBody = !trainingBody;
+    settings.assistStanding = m_e5StandingAssistPercent * 0.01f;
+    settings.assistWalking = m_e5WalkingAssistPercent * 0.01f;
+    settings.assistGetUp = m_getUpAssistPercent * 0.01f;
+    settings.gameLimitTension = m_ragdollLimitTension;
+    settings.gameProfile = m_humanRagdollProfile;
+    settings.gameRigidityPercent = m_ragdollRigidityPercent;
+    settings.avatar = &m_avatarCharacterSettings;
+    settings.loadAsync = true;
+    // (A volta harmonica ao padrao: a sombra dele, com os clipes e os ajustes de agora - como em updateActiveRagdolls.)
+    const auto clips = characterLocomotionAnimations();
+    const auto defaultClips = m_ragdollCharacter
+        ? defaultLocomotionAnimations3D(clips, m_ragdollCharacter->defaultLocomotionClipIds, laboratoryClips()) : clips;
+    const AthleteRuntimeSettings3D runtimeSettings = athleteRuntimeSettings();
+    settings.defaultClips = &defaultClips;
+    settings.runtimeSettings = &runtimeSettings;
+    settings.body = laboratoryBody();
+    if (!m_rlBrains.log) m_rlBrains.log = [](const std::string& line) { rlBrainLog(line); };
+    std::vector<RlBrainBody3D> bodies;
+    bodies.reserve(m_spawnedRagdolls.size());
+    for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
+        RlBrainBody3D body;
+        body.entityId = instance.entityId;
+        body.handle = &instance.physicsRagdoll;
+        body.state = &instance.physicsState;
+        body.previousState = &instance.previousPhysicsState;
+        body.simulationPreviousState = &instance.simulationPreviousState;
+        body.athlete = &instance.athlete;
+        body.usable = instance.kind == ArticulatedRigKind::Human && instance.active && !instance.frozen;
+        body.controlled = instance.entityId == m_controlledCharacterEntityId;
+        body.inDefault = body.controlled ? m_defaultLocomotion : m_looseDefaultLocomotion;
+        if (body.controlled) {
+            body.commanded = true;
+            body.direction = m_characterIntent.requestedDirectionWorld;
+            body.viewYaw = m_characterDesiredFacingYaw;
+            body.sprint = m_characterIntent.effort > 0.5f;
+            body.requestedVelocity = m_characterIntent.requestedVelocityWorld;
+            body.lookPitch = m_laboratoryCameraPitch;
+        } else if (m_captureAi && instance.pilotCommand.pilot) {
+            body.commanded = true;
+            body.direction = instance.pilotCommand.intent.requestedDirectionWorld;
+            if (body.direction.lengthSquared() < 1.0e-4f) body.direction = instance.pilotCommand.intent.requestedVelocityWorld;
+            body.viewYaw = instance.pilotCommand.facingYawRadians;
+            body.sprint = instance.pilotCommand.sprinting || instance.pilotCommand.intent.effort > 0.5f;
+            body.requestedVelocity = instance.pilotCommand.intent.requestedVelocityWorld;
+        }
+        bodies.push_back(body);
+    }
+    RlBodyBrains3D::Events events;
+    m_rlBrains.update(*m_physicsScene, bodies, settings, deltaTime, events);
+    if (!m_rlBrains.label().empty()) m_rlBrainLabel = m_rlBrains.label();
+    for (const std::uint64_t entity : events.releasedFromFull) {
+        // (16/11, ele: "teleportando") Saindo do Fisico com RL sem a volta pelo cerebro: o atleta ja recomecou no fisico, do corpo como
+        // esta (nada recriado nem posto de pe); do jogador, a capsula deixa de ir atras do que ia.
+        if (entity == m_controlledCharacterEntityId) {
+            m_characterFollowVelocity = {};
+            m_characterProxyVelocityWorld = {};
+            m_characterSprinting = false;
+        }
+    }
+    const bool wasActive = m_rlBrainActive;
+    m_rlBrainActive = m_controlledCharacterEntityId != 0 && m_rlBrains.drives(m_controlledCharacterEntityId);
+    if (m_rlBrainActive && !wasActive) m_controlledAnimated = false;
+}
+
+void WorkbenchApp::finishRlBrainTick() {
+    if (!m_physicsScene) return;
+    // (Os estados ja os deste passo: o resto da decisao e a navegacao de cada corpo dirigido nele - a capsula do jogador posta sob a
+    // pelve, nunca movida, e a virtual dos bonecos; BodyNavigation3D.)
+    std::vector<RlBrainBody3D> bodies;
+    bodies.reserve(m_spawnedRagdolls.size());
+    for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
+        RlBrainBody3D body;
+        body.entityId = instance.entityId;
+        body.handle = &instance.physicsRagdoll;
+        body.state = &instance.physicsState;
+        body.athlete = &instance.athlete;
+        body.controlled = instance.entityId == m_controlledCharacterEntityId;
+        bodies.push_back(body);
+    }
+    RlBrainSettings3D settings;
+    settings.avatar = &m_avatarCharacterSettings;
+    settings.gameProfile = m_humanRagdollProfile;
+    m_rlBrains.finish(*m_physicsScene, bodies, settings);
+}
+
 void WorkbenchApp::reloadLocomotionPolicy(bool applyTaskAssist) {
     namespace fs = std::filesystem;
     fs::path file;
@@ -965,6 +1117,8 @@ void WorkbenchApp::reloadGetUpPolicy() {
 
 void WorkbenchApp::watchRlPolicies(float deltaTime) {
     namespace fs = std::filesystem;
+    // (16/11) As redes antigas nao dirigem mais ninguem (athleteRuntimeSettings): nada a vigiar - o cerebro unico le a rede dele.
+    if (deltaTime >= 0.0f) return;
     const bool rlPhysical = m_locomotionPolicyOn || (m_defaultLocomotion && m_defaultPhysicalPolicy);
     if (!rlPhysical || (m_rlPolicyWatch += deltaTime) < 2.0f) return;
     m_rlPolicyWatch = 0.0f;
@@ -1052,6 +1206,8 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.defaultSprintBackwardSpeed = m_defaultSprintBackwardSpeed;
     settings.defaultMaxSprintSpeed = m_defaultMaxSprintSpeed;
     settings.ballForce = m_ballForce;
+    settings.realisticTouch = m_realisticTouch;
+    settings.autoConduction = m_autoConduction;
     settings.touchGestureSeconds = m_touchGestureMilliseconds / 1000.0f;
     settings.shotGestureSeconds = m_shotGestureMilliseconds / 1000.0f;
     settings.activeBody = m_activeBody;
@@ -1059,6 +1215,9 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.contactBridge = m_contactBridge;
     settings.contactBridgeHardDeltaV = m_contactBridgeHardDeltaV;
     settings.looseDefaultLocomotion = m_looseDefaultLocomotion;
+    // (16/11) Com o fisico do padrao pelo cerebro (o corpo do treino), o boneco empurrado vai ao fisico - o cerebro segura com passos.
+    settings.looseContactsToPhysical = m_defaultLocomotion && m_defaultPhysicalPolicy && isBaseBody3D(laboratoryBody())
+        && m_ragdollRigidityPercent <= 0.0f;
     settings.defaultTackleBoostPercent = m_defaultTackleBoostPercent;
     settings.modeTable = m_modeTable;
     settings.physicalUsesDefaultSpeeds = m_physicalDefaultSpeeds;
@@ -1066,8 +1225,9 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     // (01/11, ele: no Fisico com RL e, no Padrao com o Fisico com RL nas transicoes, na fase fisica - o runtime so liga a
     // da locomocao no fisico -, a rede do levantar com ela e as trocas entre as duas; com o levantar pelo padrao ligado,
     // o levantar continua o do padrao.)
-    settings.locomotionPolicy = (m_locomotionPolicyOn || (m_defaultLocomotion && m_defaultPhysicalPolicy))
-        && m_athleteRuntime.locomotionPolicy() != nullptr;
+    // (16/11) As redes antigas (a da locomocao e a do levantar, separadas) nao dirigem mais ninguem: o fisico por RL e o cerebro unico,
+    // em cada boneco (updateRlBrain). Ele: "nunca uma segunda rede".
+    settings.locomotionPolicy = false;
     settings.getUpPolicy = settings.locomotionPolicy && m_athleteRuntime.getUpPolicy() != nullptr && !m_animatedGetUp;
     settings.protectiveFallBeforeGetUp = m_protectiveFallBeforeGetUp;
     // Com a rede, a regua e as viradas do treino dela (no Fisico com RL; no Padrao, a regua dele).
@@ -1133,8 +1293,12 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
     std::vector<AthleteSlot3D> athletes;
     athletes.reserve(m_spawnedRagdolls.size());
     for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
-        athletes.push_back({ instance.entityId, instance.physicsRagdoll, &instance.physicsState, instance.active,
-            instance.frozen, &instance.athlete });
+        // (16/11) Quem esta com o cerebro unico e so dele: nenhum controlador do atleta mexe nos motores; o piloto (aba IA) segue decidindo
+        // - o comando dele vai ao cerebro.
+        const bool brainDriven = rlBrainDrives(instance.entityId);
+        if (!brainDriven)
+            athletes.push_back({ instance.entityId, instance.physicsRagdoll, &instance.physicsState, instance.active,
+                instance.frozen, &instance.athlete });
         const bool piloted = m_captureAi && instance.kind == ArticulatedRigKind::Human && instance.active
             && !instance.frozen && instance.entityId != m_controlledCharacterEntityId
             && !instance.physicsState.links.empty();
@@ -1170,7 +1334,7 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
         }
         instance.pilotCommand =
             instance.pilot.update(view, pilotSettings, runtimeSettings, m_avatarGaitSpeeds, reach, deltaTime);
-        athletes.back().command = &instance.pilotCommand;
+        if (!brainDriven) athletes.back().command = &instance.pilotCommand;
     }
     std::vector<AthleteBall3D> balls;
     balls.reserve(m_inflatedBalls.size());
@@ -1206,6 +1370,10 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
     }
     m_controlledSpeedScale = output.controlledSpeedScale;
     if (output.ballRequestConsumed) m_ballRequest = BallActionKind3D::None;
+    m_autoConductionGlow = output.autoConductionGlow;
+    m_autoConductionBall = output.autoConductionBall;
+    m_approachValid = output.approachValid;
+    m_approachVelocity = output.approachVelocity;
     m_reachValid = output.reachValid;
     if (output.reachValid) {
         m_reachOrigin = output.reachOrigin;
