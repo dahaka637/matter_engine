@@ -63,3 +63,6 @@ __pycache__/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Fontes baixadas das dependencias (o CMake baixa de novo)
+/_fontes_deps/

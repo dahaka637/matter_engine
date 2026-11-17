@@ -18,13 +18,13 @@ plain = dict(v2, moving_push_newtons=(0.0, 0.0), moving_push_hold_newtons=(0.0, 
 res = {}
 for name, kind, band in (("trote", 4, 1), ("corrida", 4, 2), ("parado", 3, 0)):
     kw = dict(evaluation_kind=kind, **({"evaluation_band": band} if band else {}))
-    b = L.get_up_batch(str(L.REPO / "assets"), environments=32, threads=4, seed=780 + band, evaluation=True, **kw, **plain)
+    b = L.get_up_batch(str(L.REPO / "assets"), environments=32, threads=4, seed=780 + band + 97 * int(__import__("os").environ.get("SEMENTE_PROVA", "0")), evaluation=True, **kw, **plain)
     L.configurar(b, args, counters, False)
     b.set_locomotion_fire(0.0, [0.0] * 6, args.locomocao_fogo_liberdade)
     b.set_locomotion_fire_exam(True, level)
     L.loco_fire_extras(b, args)
     b.set_drill_assist([0.0] * len(L.DRILL_KEYS))
-    b.reset(12345)
+    b.reset(12345 + 1000 * int(__import__("os").environ.get("SEMENTE_PROVA", "0")))
     model = amb.model(b)
     done = {}
     for _ in range(int(b.episode_seconds / b.policy_dt) + 2):

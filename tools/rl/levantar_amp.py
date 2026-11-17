@@ -143,9 +143,25 @@ def calibrate_new_columns(model, batch, device: torch.device, start: int, stop: 
     return out
 
 
-def skill_logp(model, dist, act, obs):
-    """O log da probabilidade da acao, sem os canais do passo nas linhas da recuperacao (ela nao os usa: aprenderia ruido)."""
+# (17/11, o plano de desentortar - Fase 1, item 6; --loco-saidas-vivas) As saidas sem efeito na marcha, medidas na r130240 com a
+# suite/portao/sonda_saidas_mortas.py (+0,8 numa saida em toda decisao, o corpo bit a bit igual): na corrida e no comando, as 4 do passo e
+# 21 velocidades-alvo (a torcao da coluna, o pescoco, a cabeca e os bracos); no parado so o passo.vai. Nas linhas da marcha (o clipe de
+# ciclo, a coluna 0 do espelho) o ruido delas nao mexe no corpo: so balancava a razao do PPO e o freio de KL.
+LOCO_DEAD_OUTPUTS = ("passo.vai", "passo.pouso_frente", "passo.pouso_esquerda", "passo.tempo", "vel.Abdomen.twist", "vel.Chest.twist",
+                     "vel.UpperChest.twist", "vel.Neck.twist", "vel.Neck.swing1", "vel.Neck.swing2", "vel.Head.twist", "vel.Head.swing1",
+                     "vel.Head.swing2", "vel.LeftUpperArm.twist", "vel.LeftUpperArm.swing1", "vel.LeftUpperArm.swing2",
+                     "vel.LeftForearm.twist", "vel.LeftHand.twist", "vel.LeftHand.swing1", "vel.RightUpperArm.twist",
+                     "vel.RightUpperArm.swing1", "vel.RightUpperArm.swing2", "vel.RightForearm.twist", "vel.RightHand.twist",
+                     "vel.RightHand.swing1")
+
+
+def skill_logp(model, dist, act, obs, gait=None):
+    """O log da probabilidade da acao, sem os canais do passo nas linhas da recuperacao (ela nao os usa: aprenderia ruido) e, com
+    --loco-saidas-vivas (model.gait_dead), sem as saidas mortas nas linhas da marcha (gait: o clipe de ciclo, do espelho)."""
     lp = dist.log_prob(act)
+    dead = getattr(model, "gait_dead", None)
+    if dead is not None and gait is not None:
+        lp = torch.where(gait.unsqueeze(-1) & dead, torch.zeros_like(lp), lp)
     if model.split and lp.shape[-1] > len(model.joint_names) and model.joint_names:
         channel = torch.arange(lp.shape[-1], device=lp.device) >= len(model.joint_names)
         if model.recovery_velocity:
@@ -153,6 +169,64 @@ def skill_logp(model, dist, act, obs):
             channel = channel & (torch.arange(lp.shape[-1], device=lp.device) < len(model.joint_names) + model.step_count)
         lp = torch.where((obs[..., -1:] <= .5) & channel, torch.zeros_like(lp), lp)
     return lp.sum(-1)
+
+
+def set_single_brain(model) -> None:
+    """(13/11, ele: "um brain so para tudo") A cabeca da locomocao comanda tambem o levantar: ator, critico, normalizacao e desvio
+    dela em todas as linhas; a ultima entrada (a habilidade, que o ambiente segue pondo) vira a fase - 0 levantando, 1 de pe."""
+    model.single = model.actor.single = model.critic.single = model.norm.single = True
+
+
+def merge_norm_single(model, share: float, names, rows: int = 4096):
+    """(13/11, --cerebro-unico) Uma vez: a normalizacao da locomocao (so de pe: deitado, 26,7 das 343 entradas por linha passavam do
+    corte em 5 dela - a altura, a orientacao, as velocidades angulares - e o levantar ficava sem elas) vira, nas entradas que o
+    levantar precisa, a mistura dela com a da recuperacao (share = a fracao das linhas do levantar); a primeira camada do ator e do
+    critico da locomocao e compensada: z_antigo = (s_novo z_novo + m_novo - m_antigo) / s_antigo, entao W' = W s_novo/s_antigo e
+    b' = b + W (m_novo - m_antigo)/s_antigo - fora do corte a saida e a mesma.
+    As entradas misturadas: as que cortariam mais de 0,5% das linhas do levantar (normal pela media e desvio da recuperacao); fora os
+    contatos com o chao (0/1: cortado em 5 a informacao fica, e misturar mudava a locomocao nos tropecos) e as que no levantar sao
+    constantes (o estado do passo). Medido na coleta do treino (r109450): de pe, as linhas com acao mudada > 0,01 caem de 6,0% (tudo
+    misturado) para 0,9%; deitado, 1,8 entradas cortadas por linha (eram 26,7). A habilidade passa crua (fica).
+    Devolve a maior diferenca em estados de pe sinteticos (sem corte) e quantas entradas misturou."""
+    loco, rec = model.norm.locomotion, model.norm.recovery
+    gen = torch.Generator(device=loco.mean.device).manual_seed(13)
+    with torch.no_grad():
+        m_old, s_old = loco.mean.float().clone(), torch.sqrt(loco.var.float() + 1e-8)
+        sl, sr = torch.sqrt(loco.var + 1e-8), torch.sqrt(rec.var + 1e-8)
+        phi = lambda z: 0.5 * (1.0 + torch.erf(z / math.sqrt(2.0)))  # noqa: E731
+        cut = 1.0 - (phi((loco.mean + 5.0 * sl - rec.mean) / sr) - phi((loco.mean - 5.0 * sl - rec.mean) / sr))
+        contact = torch.tensor([n.startswith("chao.contato.") for n in names], device=cut.device)
+        chosen = (cut > 0.005) & ~contact & (sr > 0.1 * sl)
+        chosen[-1] = False
+        # (Estados de pe a ate 3 desvios: sem corte nem antes nem depois - a mistura tem s_novo >= 0,84 s_antigo com share 0,3.)
+        x = m_old + s_old * torch.randn(rows, m_old.numel(), generator=gen, device=m_old.device).clamp(-3.0, 3.0)
+        x[:, -1] = 1.0
+        z = lambda: torch.cat([loco(x)[:, :-1], x[:, -1:]], 1)  # noqa: E731 (como a SplitNorm: a habilidade crua)
+        before = [model.actor.locomotion(z()), model.critic.locomotion(z())]
+        mean = (1.0 - share) * loco.mean + share * rec.mean
+        var = (1.0 - share) * (loco.var + loco.mean ** 2) + share * (rec.var + rec.mean ** 2) - mean ** 2
+        mean = torch.where(chosen, mean, loco.mean)
+        var = torch.where(chosen, var, loco.var).clamp_min(0.0)
+        m_new, s_new = mean.float(), torch.sqrt(var.float() + 1e-8)
+        for head in (model.actor.locomotion, model.critic.locomotion):
+            weight, bias = head[0].weight, head[0].bias
+            bias += weight[:, :-1] @ ((m_new - m_old) / s_old)[:-1]
+            weight[:, :-1] *= (s_new / s_old)[:-1]
+        loco.mean.copy_(mean)
+        loco.var.copy_(var)
+        after = [model.actor.locomotion(z()), model.critic.locomotion(z())]
+    return max(float((a - b).abs().max()) for a, b in zip(after, before)), int(chosen.sum())
+
+
+def sync_single_brain(model) -> None:
+    """(13/11, --cerebro-unico) A cabeca da recuperacao como copia da locomocao (ao salvar e exportar): o laboratorio, a exportacao e
+    as sondas escolhem a cabeca pela ultima entrada - com as duas iguais, todas rodam o cerebro unico sem mudar nada."""
+    with torch.no_grad():
+        model.actor.recovery.load_state_dict(model.actor.locomotion.state_dict())
+        model.critic.recovery.load_state_dict(model.critic.locomotion.state_dict())
+        model.norm.recovery.load_state_dict(model.norm.locomotion.state_dict())
+        floor = getattr(model, "loco_log_floor", None)
+        model.log_std.copy_(model.loco_log_std if floor is None else torch.maximum(model.loco_log_std, floor))
 
 
 def anchor_distance(model, obs, target):
@@ -258,6 +332,8 @@ class Policy(nn.Module):
     joint_names: tuple = ()
     recovery_velocity = False
     step_count = 0
+    # (13/11, --cerebro-unico: set_single_brain) A cabeca da locomocao em todas as linhas.
+    single = False
 
     # (04/11 23h10, ele: "precisamos de algo com forte poder de adaptacao... a prova de fogo, os empurroes" e "ato de ficar
     # em pe na cabeca da locomocao") A autoridade sob ameaca: de pe, sem pedido de deslocamento, o limite da correcao abre
@@ -298,15 +374,112 @@ class Policy(nn.Module):
             return torch.where(obs[..., -1:] > .5, self.action_half * clamped * self.reach(), absolute)
         return absolute
 
+    # (14/11 16h25, --levantar-costas-adaptador) O ramo proprio do levantar de costas: uma rede pequena somada a acao so onde a marca
+    # (levantar.variante, normalizada) passa do limiar - nas outras linhas ela vale exatamente zero. A ultima camada nasce em zero.
+    has_costas_adapter = False
+
+    def enable_costas_adapter(self, obs: int, actions: int, gate_index: int, gate_threshold: float, hidden: int = 256):
+        net = nn.Sequential(nn.Linear(obs, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU(), nn.Linear(hidden, actions))
+        nn.init.zeros_(net[-1].weight)
+        nn.init.zeros_(net[-1].bias)
+        self.costas_adapter = net.to(self.action_mid.device)
+        self.has_costas_adapter = True
+        self.register_buffer("costas_gate", torch.tensor([float(gate_index), float(gate_threshold)], device=self.action_mid.device))
+
+    def costas_gate_of(self, obs_n: torch.Tensor) -> torch.Tensor:
+        return (obs_n[..., int(self.costas_gate[0])] >= self.costas_gate[1]).to(obs_n.dtype)[..., None]
+
+    # (14/11 17h, --levantar-costas-enxerto; ele: "vamos levar dias para conseguir uma coisa tao banal nesse ritmo") O professor do de
+    # costas inteiro dentro do cerebro, congelado: no de costas levantando sem empurrao (a marca, a fase 0, as entradas do fogo zeradas)
+    # a acao media e a dele. A entrada dele refeita da normalizacao do principal (desfeita; os contatos 0/1 pelo zero normalizado; a
+    # marca zerada, como ele viu) - medido: 0,09 entradas cortadas por linha no levantar, o resto exato.
+    has_costas_expert = False
+
+    def enable_costas_expert(self, teacher: "Policy", mark_index: int, mark_value: float, contact: torch.Tensor, push: torch.Tensor):
+        dev = self.action_mid.device
+        self.costas_expert = copy.deepcopy(teacher.actor.locomotion).to(dev)
+        for parameter in self.costas_expert.parameters():
+            parameter.requires_grad_(False)
+        tn = teacher.norm.locomotion
+        self.register_buffer("expert_mean", tn.mean.float().clone().to(dev))
+        self.register_buffer("expert_std", torch.sqrt(tn.var.float() + 1e-8).clone().to(dev))
+        self.register_buffer("expert_contact", contact.bool().to(dev))
+        self.register_buffer("expert_push", push.bool().to(dev))
+        self.register_buffer("expert_mark", torch.tensor([float(mark_index), float(mark_value)], device=dev))
+        self.has_costas_expert = True
+
+    def costas_expert_mean(self, obs_n: torch.Tensor, mean: torch.Tensor) -> torch.Tensor:
+        nm = self.norm.locomotion if self.split else self.norm
+        mm, sm = nm.mean.float(), torch.sqrt(nm.var.float() + 1e-8)
+        raw = obs_n * sm + mm
+        raw = torch.where(self.expert_contact, (obs_n > -mm / sm + 1e-3).to(raw.dtype), raw)
+        raw = torch.cat([raw[..., :-1], obs_n[..., -1:]], -1)
+        at, value = int(self.expert_mark[0]), float(self.expert_mark[1])
+        clean = raw[..., -1] < 0.5
+        if bool(self.expert_push.any()):
+            clean = clean & (raw[..., self.expert_push].abs().sum(-1) < 1.0e-3)
+        experts = [((raw[..., at] >= 0.5 * value) & clean, self.costas_expert, self.expert_mean, self.expert_std)]
+        if self.has_brucos_expert:
+            experts.append(((raw[..., at] <= 0.5 * float(self.brucos_mark[0])) & clean, self.brucos_expert, self.brucos_mean, self.brucos_std))
+        seen = None
+        for gate, net, e_mean, e_std in experts:
+            if not bool(gate.any()):
+                continue
+            if seen is None:
+                seen = raw.clone()
+                seen[..., at] = 0.0
+            z = torch.cat([((seen[..., :-1] - e_mean[:-1]) / e_std[:-1]).clamp(-5.0, 5.0), seen[..., -1:]], -1)
+            mean = torch.where(gate[..., None], net(z), mean)
+        return mean
+
+    # (14/11 17h40, --levantar-brucos-enxerto/--levantar-brucos-marca) O de brucos pelo mesmo enxerto, com a marca negativa (-0,4) na
+    # mesma entrada levantar.variante. A base, o ramo e o critico a veem zerada (o de brucos chega a eles como antes); so a porta a ve.
+    has_brucos_expert = False
+
+    def enable_brucos_expert(self, teacher: "Policy", mark_value: float):
+        assert self.has_costas_expert and mark_value < 0.0
+        dev = self.action_mid.device
+        self.brucos_expert = copy.deepcopy(teacher.actor.locomotion).to(dev)
+        for parameter in self.brucos_expert.parameters():
+            parameter.requires_grad_(False)
+        tn = teacher.norm.locomotion
+        self.register_buffer("brucos_mean", tn.mean.float().clone().to(dev))
+        self.register_buffer("brucos_std", torch.sqrt(tn.var.float() + 1e-8).clone().to(dev))
+        self.register_buffer("brucos_mark", torch.tensor([float(mark_value)], device=dev))
+        self.has_brucos_expert = True
+
+    def without_brucos_mark(self, obs_n: torch.Tensor) -> torch.Tensor:
+        if not self.has_brucos_expert:
+            return obs_n
+        at = int(self.expert_mark[0])
+        nm = self.norm.locomotion if self.split else self.norm
+        m, s = nm.mean[at].float(), torch.sqrt(nm.var[at].float() + 1e-8)
+        out = obs_n.clone()
+        out[..., at] = torch.where(obs_n[..., at] * s + m <= 0.5 * self.brucos_mark[0], -m / s, obs_n[..., at])
+        return out
+
     def distribution(self, obs_n: torch.Tensor) -> torch.distributions.Normal:
-        mean = self.actor(obs_n)
+        base_in = self.without_brucos_mark(obs_n)
+        mean = self.actor(base_in)
+        if self.has_costas_adapter:
+            mean = mean + self.costas_gate_of(base_in) * self.costas_adapter(base_in)
+        if self.has_costas_expert:
+            mean = self.costas_expert_mean(obs_n, mean)
         std = self.log_std.clamp(LOG_STD_MIN, LOG_STD_MAX).exp().expand_as(mean)
         if self.split:
             # (07/11, --ruido-velocidade: o piso de cada eixo - nos alvos de velocidade, mais baixo.)
             floor = getattr(self, "loco_log_floor", None)
             loco = self.loco_log_std.clamp(LOG_STD_MIN, LOG_STD_MAX) if floor is None \
                 else torch.maximum(self.loco_log_std, floor).clamp(max=LOG_STD_MAX)
-            std = torch.where((obs_n[..., -1] > .5)[..., None], loco.exp() * self.idle_noise_scale(obs_n), std)
+            if self.single:
+                # (13/11, --cerebro-unico) O desvio da locomocao em todas as linhas; a exploracao parada so de pe - deitado, com o
+                # pedido zero e o corpo quieto, ela cortaria a exploracao no comeco do levantar.
+                scale = self.idle_noise_scale(obs_n)
+                if not isinstance(scale, float):
+                    scale = torch.where((obs_n[..., -1] > .5)[..., None], scale, torch.ones_like(scale))
+                std = (loco.exp() * scale).expand_as(mean)
+            else:
+                std = torch.where((obs_n[..., -1] > .5)[..., None], loco.exp() * self.idle_noise_scale(obs_n), std)
         return torch.distributions.Normal(mean, std)
 
     # (10/11 12h55, ele: "no treino de IDLE o corpo e MUITO instavel... precisa ficar paradinho corretinho"; --ruido-parado) Medido: com o
@@ -331,7 +504,7 @@ class Policy(nn.Module):
         return list(self.actor.parameters()) + [self.log_std] + ([self.loco_log_std] if self.split else [])
 
     def value(self, obs_n: torch.Tensor) -> torch.Tensor:
-        return self.critic(obs_n).squeeze(-1)
+        return self.critic(self.without_brucos_mark(obs_n)).squeeze(-1)
 
 
 class Discriminator(nn.Module):
@@ -561,6 +734,30 @@ LEVANTAR_UNREAL_START_BIAS = (1.0, 1.0, 1.0, 1.0)
 LEVANTAR_UNREAL_DELIVER = (60 / 30, 66 / 30, 51 / 30, 47 / 30)
 # (12/11 03h20) Quais dos quatro sao o levantar correndo (o peso da agilidade deles e o segundo de --levantar-unreal-agilidade).
 LEVANTAR_UNREAL_RUN = (False, False, True, True)
+# (14/11 v1, ele: "fazer o ROLAR para virar de brucos no levantar de costas... adaptar o proprio levantar de costas correndo") O clipe
+# emendado (tools/animation/clips/emendar_rolar_brucos.py; 05h40: o correndo de costas ate 0,80 s + o de costas de pe de 1,13 s) e a entrega
+# dele (a do brucos deslocada).
+COSTAS_ROLA = ("levantar/levantar_costas_rola", 1.67)
+
+
+def usar_costas_rola(ligado) -> None:
+    """(14/11 v1, --levantar-costas-rola [CLIPE ENTREGA]) O levantar de costas de pe por outro clipe (07h40: o rolar do Kimodo + o
+    levantar de brucos); sem CLIPE, o de COSTAS_ROLA. O correndo de costas fica como esta."""
+    global LEVANTAR_UNREAL_DELIVER
+    if ligado is None or ligado is False:
+        return
+    clip, deliver = (ligado[0], float(ligado[1])) if isinstance(ligado, (list, tuple)) and len(ligado) >= 2 else COSTAS_ROLA
+    LEVANTAR_UNREAL[0] = clip
+    LEVANTAR_UNREAL_DELIVER = (deliver,) + tuple(LEVANTAR_UNREAL_DELIVER[1:])
+
+
+def usar_brucos_clipe(ligado) -> None:
+    """(14/11 17h35, --levantar-brucos-clipe CLIPE ENTREGA) O levantar de brucos de pe por outro clipe (o mesmo, mais rapido)."""
+    global LEVANTAR_UNREAL_DELIVER
+    if not ligado:
+        return
+    LEVANTAR_UNREAL[1] = ligado[0]
+    LEVANTAR_UNREAL_DELIVER = (LEVANTAR_UNREAL_DELIVER[0], float(ligado[1])) + tuple(LEVANTAR_UNREAL_DELIVER[2:])
 
 
 def clip_get_up_agility(args, counters: dict | None, full: bool = False) -> list:
@@ -638,7 +835,7 @@ def fire_extras(args) -> tuple:
 FIRE_GETUP_MASTERED, FIRE_GETUP_STUCK = 0.90, 0.10
 
 
-def get_up_fire_step(state: dict, rows: np.ndarray, update: int, band: tuple | None = None, frozen: bool = False) -> list:
+def get_up_fire_step(state: dict, rows: np.ndarray, update: int, band: tuple | None = None, frozen: bool = False, tracked: int = 0) -> list:
     """(12/11 07h15, ele: "nossa meta e que ele consiga se levantar de forma dinamica e inteligente mediante adversidades 100% das vezes.
     Depois disso, aumentamos um pouco mais as adversidades, e garantimos a adaptacao".) A escada do fogo do levantar, partindo dos niveis
     da recalibracao de 10-30%: por exercicio, nas tentativas deitadas (a coluna 56) da faixa de cima (a fracao sorteada >= 0,8), o
@@ -658,6 +855,10 @@ def get_up_fire_step(state: dict, rows: np.ndarray, update: int, band: tuple | N
         # exercicio descem 15% (>= 40 atualizacoes no nivel) e nada sobe; a forca so sobe com o limpo >= 95%.
         clean = sel[sel[:, 49] == 0]
         clean_rate = float((clean[:, 18] >= 0).mean()) if len(clean) >= 10 else 1.0
+        # (14/11 15h30) No exercicio que segue o clipe no limpo (--levantar-rastrear), a coluna 18 vem -1 (o firme do adaptativo nao e
+        # medido ali): a guarda lia 0% e baixou as pancadas do de costas de 2,5 a 0,3. Ali ela nao age (a escada segue congelada).
+        if tracked and (tracked >> e) & 1:
+            clean_rate = 1.0
         if clean_rate < 0.90:
             for t in range(1, 4):
                 if update - state["desde"][key][t] >= 40:
@@ -1287,6 +1488,8 @@ LOCO_FIRE_VERSION, LOCO_FIRE_SPEED_TOL = 2, 0.03
 # mesmo das 17h55-18h30 em L 0,3; com 35% de fogo (16h35-17h55) o limpo subia. A fatia agora e conquistada: comeca em
 # --locomocao-fogo-fatia-inicial e o piso desce a 0,3.)
 LOCO_FIRE_SIM_TOL, LOCO_FIRE_CROOKED_TOL, LOCO_FIRE_SHARE_MIN, LOCO_FIRE_SHARE_STEP = 0.05, 0.15, 0.3, 0.1
+# (13/11 18h50) Quantas medidas boas seguidas para a fatia do fogo subir (--locomocao-fogo-fatia-subida).
+LOCO_FIRE_SHARE_GOOD = 3
 LOCO_FIRE_CLEAN_DROP, LOCO_FIRE_BASE_N, LOCO_FIRE_CLEAN_DECAY = 0.08, 60, 0.85
 LOCO_FIRE_STEP, LOCO_FIRE_DWELL, LOCO_FIRE_MIN = 0.1, 100, 30
 LOCO_FIRE_WINDOWS = [0]
@@ -1429,9 +1632,10 @@ def loco_fire_protect(prot: dict, ok: bool, top: float) -> str:
     prot["fatia"] = min(float(prot.get("fatia", top)), top)
     prot["ruins"], prot["boas"] = (0, prot.get("boas", 0) + 1) if ok else (prot.get("ruins", 0) + 1, 0)
     if prot["ruins"] >= 1 and prot["fatia"] > LOCO_FIRE_SHARE_MIN + 1e-9:
-        prot["fatia"], prot["ruins"] = round(max(LOCO_FIRE_SHARE_MIN, prot["fatia"] - LOCO_FIRE_SHARE_STEP), 3), 0
+        # (13/11 v1, a revisao: o degrau acelerado - --locomocao-fogo-aceleracao - so sobe; descer segue de 0,1, a de sempre.)
+        prot["fatia"], prot["ruins"] = round(max(LOCO_FIRE_SHARE_MIN, prot["fatia"] - min(LOCO_FIRE_SHARE_STEP, 0.1)), 3), 0
         return f"a fatia do fogo desce para {prot['fatia']} (o limpo abaixo da guarda)"
-    if prot["boas"] >= 3 and prot["fatia"] < top - 1e-9:
+    if prot["boas"] >= LOCO_FIRE_SHARE_GOOD and prot["fatia"] < top - 1e-9:
         prot["fatia"], prot["boas"] = round(min(top, prot["fatia"] + LOCO_FIRE_SHARE_STEP), 3), 0
         return f"a fatia do fogo volta para {prot['fatia']} (o limpo bom tres vezes)"
     return ""
@@ -1730,6 +1934,21 @@ def run_tracking_settings(b, v2: dict) -> None:
     b.set_lateral_hand_push(not v2.get("trote_lateral_sem_puxao", False))
     if hasattr(b, "set_phase_sync"):
         b.set_phase_sync(bool(v2.get("sincronizar_fase", False)))
+    # (17/11, Fase 1 - build-base-n131) Os consertos e a paridade com o jogo, como no treino: a fase nos dois pes e a forca dos contatos
+    # mudam o que a rede ve; o chao de grama, o que ela pisa. MATTER_CHAO_GRAMA troca a fatia para medir num chao so (0 ou 1).
+    if hasattr(b, "set_grass_ground_fraction"):
+        rumo = v2.get("rumo_medio") or [0.0]
+        b.set_reference_side_fix(bool(v2.get("referencial_clipe", False)))
+        b.set_phase_sync_both_feet(bool(v2.get("fase_dois_pes", False)))
+        b.set_heading_bias(float(rumo[0]), float(rumo[1]) if len(rumo) > 1 else 0.10)
+        b.set_contact_force_observation(bool(v2.get("forca_contatos", False)))
+        b.set_grass_ground_fraction(float(os.environ.get("MATTER_CHAO_GRAMA", v2.get("chao_grama", 0.0))))
+        b.set_straight_command(bool(v2.get("reta_comando", False)))
+        if hasattr(b, "set_clip_velocity_rotation"):
+            b.set_clip_velocity_rotation(bool(v2.get("velocidade_rotacao", False)))
+        lado, portao = v2.get("lado_medio") or [0.0], v2.get("imitacao_portao") or [0.0]
+        b.set_lateral_bias(float(lado[0]), float(lado[1]) if len(lado) > 1 else 0.03)
+        b.set_imitation_gate(float(portao[0]), float(portao[1]) if len(portao) > 1 else 0.6)
     if hasattr(b, "set_arm_clip_reach"):
         b.set_arm_clip_reach(float(v2.get("bracos_clipe", -1.0)))
     if hasattr(b, "set_gait_cycles"):
@@ -1817,6 +2036,8 @@ def run_tracking_settings(b, v2: dict) -> None:
                     b.set_launch_step_reward(float(v2.get("largada_passo", 0.0)))
                 if hasattr(b, "set_launch_in_place_penalty"):
                     b.set_launch_in_place_penalty(float(v2.get("largada_no_lugar", 0.0)))
+                    if float(v2.get("largada_inclinar", 0.0)) > 0 and hasattr(b, "set_launch_lean"):
+                        b.set_launch_lean(float(v2["largada_inclinar"]))
                 if hasattr(b, "set_launch_calm_arms"):
                     b.set_launch_calm_arms(bool(v2.get("largada_bracos_calmos", False)))
                 if hasattr(b, "set_spine_velocity_feedforward"):
@@ -2127,7 +2348,7 @@ def evaluate(model: Policy, batch, device: torch.device, prefix: str = "", judge
     for _ in range(int(batch.episode_seconds / batch.policy_dt) + 2):
         with torch.no_grad():
             obs = torch.as_tensor(batch.observations(), device=device)
-            action = model.env_action(model.actor(model.norm(obs)), obs).cpu().numpy().astype(np.float32)
+            action = model.env_action(model.distribution(model.norm(obs)).mean, obs).cpu().numpy().astype(np.float32)
         batch.step(action)
         if judges is not None:
             with torch.no_grad():
@@ -2448,6 +2669,51 @@ def build_parser() -> argparse.ArgumentParser:
                              "a troca... e ele ir ate um ponto proximo... 5 - 10 metros') a fracao dos levantares pelo clipe que, depois da "
                              "troca, vao ate um ponto marcado a MIN-MAX m (o trote no de pe, a corrida no correndo; sem o fogo do levantar); "
                              "chegar a 1 m e o sucesso")
+    parser.add_argument("--levantar-vista", type=float, default=0.0, metavar="NOTA",
+                        help="(15/11 07h15, ele: 'quando ele se levanta, ele ja va girando para onde deve olhar, onde a camera estaria "
+                             "apontada... mesmo que tenha que fazer um 180') nos levantares de pe com vista (o levantar e ir de pe - o ponto em "
+                             "qualquer rumo, a vista nele desde o comeco - e o do comando), a vista na observacao do levantar, a nota soma NOTA x a "
+                             "subida x o peito para a vista e na troca a vista fica (build-base-n113); 0: como antes")
+    parser.add_argument("--levantar-brucos-tempo", type=float, default=1.0, metavar="ESCALA",
+                        help="(15/11 07h12, ele: o de brucos 0,3 s mais lento que o de costas, 'ambos com as mesmas velocidades') o levantar de "
+                             "brucos de pe com a faixa do tempo, o ritmo e o ritmo da imitacao vezes ESCALA (build-base-n113); 1: como antes")
+    parser.add_argument("--mao-atras", type=float, default=0.0, metavar="PESO",
+                        help="(15/11 08h30, ele: 'penalizar a mao ficar travada atras das costas, em todos os casos') de pe, cada mao mais de 10 cm "
+                             "atras da pelve e a menos de 15 cm do meio por mais de 0,3 s seguidos custa PESO x (tempo alem de 0,3 s / 0,5 s, ate 1) "
+                             "por passo (build-base-n114); 0: nada")
+    parser.add_argument("--levantar-imitar-ancora", action="store_true",
+                        help="(15/11 12h15) nos levantares de pe, o clipe da imitacao no ritmo preso no mundo desde o comeco (build-base-n117)")
+    parser.add_argument("--pernas-alinhadas", type=float, nargs="+", default=None, metavar=("PESO", "LARGURA_GRAUS"),
+                        help="(15/11 12h50) nos retos, a semelhanca vezes (1-PESO)+PESO x o alinhamento das coxas e dos pes contra o clipe (build-base-n120)")
+    parser.add_argument("--largada-maos", type=float, default=0.0,
+                        help="(15/11 15h56) na largada, a semelhanca cobra as maos contra o peito mais rapidas que no clipe (build-base-n128)")
+    parser.add_argument("--parado-centro", type=float, default=0.0,
+                        help="(15/11 15h20) no parado, o bonus vezes (1-PESO)+PESO/(1+(d/2,5cm)^2), d o centro de massa contra o meio dos pes menos o do clipe (build-base-n127)")
+    parser.add_argument("--velocidade-largura", type=float, default=0.0,
+                        help="(15/11 15h20) a largura do termo da velocidade como fracao da pedida (0: a de sempre, 0,35) (build-base-n127)")
+    parser.add_argument("--corrida-largura", type=float, default=0.0,
+                        help="(15/11 15h15) correndo reto, a semelhanca vezes (1-PESO)+PESO x exp(-((abertura-clipe-4cm)/6cm)^2) (build-base-n126)")
+    parser.add_argument("--pernas-alinhadas-comando", action="store_true",
+                        help="(15/11 15h15) as pernas alinhadas tambem no comando andando (build-base-n126)")
+    parser.add_argument("--largada-margem-lado", action="store_true",
+                        help="(15/11 15h10, a revisao) na largada, a margem do equilibrio so de lado no rumo pedido (build-base-n125)")
+    parser.add_argument("--revisao-15h", action="store_true",
+                        help="(15/11 15h, a revisao profunda) as misturas entre clipes corrigidas e o fogo aliviando o parado e o giro (build-base-n124)")
+    parser.add_argument("--ppo-clipe-duplo", type=float, default=0.0,
+                        help="(15/11 15h, a revisao profunda) o clipe duplo do PPO: com a vantagem negativa, a perda nao passa de C x A (0: desliga)")
+    parser.add_argument("--parado-lugar", type=float, nargs="+", default=None, metavar=("PESO", "LARGURA_M"),
+                        help="(15/11 13h00) no parado, o bonus vezes (1-PESO)+PESO/(1+(d/LARGURA)^2), d a distancia ao ponto onde o parado comecou (build-base-n121)")
+    parser.add_argument("--parado-preso", action="store_true",
+                        help="(15/11 12h23) no parado, o clipe do idle da imitacao preso na ancora do parado, nao na pelve de agora (build-base-n118)")
+    parser.add_argument("--clipe-sob-pelve", action="store_true",
+                        help="(15/11 12h20) o quadro posto sob a pelve poe a PELVE do clipe na do corpo, nao a origem dele (build-base-n117)")
+    parser.add_argument("--levantar-lado-agora", action="store_true",
+                        help="(15/11 09h05) o lado do clipe na nova tentativa e o do quadro de agora (set_clip_side_now): o clipe de costas ROLA "
+                             "para de brucos no meio e, sem isto, seguir o clipe certo abria uma tentativa falsa no clipe de brucos (medido: a fase "
+                             "da observacao pulava aos 0,7 s e tentou_de_novo do de costas era 1,00)")
+    parser.add_argument("--levantar-chegada-de-pe", type=float, default=1.0, metavar="ESCALA",
+                        help="(15/11 09h10, ele: 'o sucesso ao levantar deve ficar mais fraco do que o ganho por se assemelhar ao clipe') o premio "
+                             "da chegada (--levantar-adaptativo-velocidade) nos levantares de pe vezes ESCALA; os correndo inteiros (build-base-n115)")
     parser.add_argument("--levantar-correndo-troca", type=float, default=-1.0, metavar="DEPOIS_S",
                         help="(12/11 18h40, ele: no levantar correndo 'assim que ele comeca ficar de pe ja trocar para a locomocao.. nunca "
                              "deixar o brain do levantar ser usado para a locomocao em si' e cortar o exercicio nos 'primeiros dois passos' "
@@ -2642,6 +2908,13 @@ def build_parser() -> argparse.ArgumentParser:
                         metavar=("TROTE", "CORRIDA", "LADO"),
                         help="(12/11 19h55) a escada do fogo da locomocao so sobe com a velocidade do limpo (capacidade, sobre a pedida) "
                              "a 0,05 destas: trote (frente/diagonais), corrida e trote de lado; zeros sem guarda")
+    parser.add_argument("--locomocao-fogo-degrau-rodadas", type=int, default=0,
+                        help="(13/11 17h35, ele: elevar o fogo para perto de 100%% do levantar, acelerar o aprendizado) as rodadas minimas num "
+                             "nivel antes de subir o proximo degrau (e 2x antes de descer por travado); 0: as de sempre (100)")
+    parser.add_argument("--locomocao-fogo-aceleracao", type=float, nargs=3, default=(0.0, 0.1, 3),
+                        metavar=("TOL_TORTO", "PASSO_FATIA", "MEDIDAS_BOAS"),
+                        help="(13/11 18h50, ele: o fogo perto de 100%% do levantar, acelerar o aprendizado) a tolerancia do reajuste do torto na "
+                             "guarda do limpo (0: a de sempre, 0,15), o degrau da fatia do fogo e as medidas boas seguidas para ela subir")
     parser.add_argument("--locomocao-fogo-congelar", action="store_true",
                         help="a escada do fogo da locomocao sem subir (as guardas ainda descem)")
     parser.add_argument("--locomocao-fogo-prova", type=float, default=1.0,
@@ -2656,6 +2929,32 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(11/11, ele: 'Parado - penaliza micromovimentos') com --parado-unico, o custo do movimento no parado (0-1)")
     parser.add_argument("--parado-fora-pose", type=float, default=0.0,
                         help="(11/11, ele: 'penaliza fora da pose') com --parado-unico, o custo da distancia a pose no parado (0-1)")
+    parser.add_argument("--levantar-imitar", type=int, default=0, metavar="MASCARA",
+                        help="(14/11 v1, ele: o levantar de costas MUITO distante do clipe, 'o mais semelhante possivel') os alvos da "
+                             "imitacao supervisionada (--cerebro-unico-imitar) nos levantares limpos da MASCARA (bit 0 costas, 1 brucos, "
+                             "2 e 3 os correndo) = o clipe do comeco no ritmo do --levantar-ritmo (nao o relogio adaptativo); os outros "
+                             "sem alvo; 0: como antes (build-base-n104)")
+    parser.add_argument("--levantar-imitar-longe", type=float, nargs=2, default=(0.0, 0.6), metavar=("LIMIAR", "SEGUNDOS"),
+                        help="(14/11 v1) com --levantar-imitar: a semelhanca com o clipe no ritmo abaixo de LIMIAR por SEGUNDOS encerra o "
+                             "levantar (o fim cedo); 0: sem (build-base-n106)")
+    parser.add_argument("--levantar-imitar-ritmo-correndo", type=float, default=0.0, metavar="SEGUNDOS",
+                        help="(14/11 21h45, ele: 'cobrar mais semelhanca com o clipe para os nossos levantares correndo') com --levantar-imitar: o "
+                             "ritmo proprio dos correndo (s ate o ponto de entrega; os de pe ficam no do --levantar-ritmo) (build-base-n109); 0: o mesmo")
+    parser.add_argument("--levantar-imitar-nota", type=float, default=0.0, metavar="PESO",
+                        help="(14/11 v1) com --levantar-imitar: a nota por passo da semelhanca da pose com o clipe do comeco no ritmo, "
+                             "nos levantares limpos da mascara ate a troca; 0: sem (build-base-n105)")
+    parser.add_argument("--parada-bracos-clipe", type=float, default=-1.0, metavar="CORRECAO",
+                        help="(13/11 v1: na freada a rede jogava a mao ~50 cm acima do clipe em 36%% das paradas; medido, sem a correcao dela "
+                             "nos bracos, 14%% e 0 queda) freando, a correcao da rede nos bracos (--bracos-clipe) vira CORRECAO; 0 = so o clipe; "
+                             "< 0 desligado; muda o movimento: vale em todos os lotes (precisa da build-base-n103)")
+    parser.add_argument("--virado-tolerancia", type=float, default=0.0, metavar="SEGUNDOS",
+                        help="(13/11 v1: das quedas do comando e da estrela livre, ~80%% eram o fim por virado - a referencia saltando ou girando de "
+                             "proposito e o corpo ainda virando) o limite do virado ganha SEGUNDOS enquanto a referencia do rumo gira a mais de "
+                             "~70 graus/s e ate SEGUNDOS depois; 0: desligado (precisa da build-base-n101)")
+    parser.add_argument("--parado-quieto-na-base", type=float, default=0.0, metavar="TRAVA",
+                        help="(13/11 v1, a volta a base do idle: depois de parar ele ficava com os pes paralelos - o idle alerta tem um pe ~14 cm "
+                             "a frente) a quietude do parado vale 1 - TRAVA x (1 - perto da base dos pes), sem fogo: quieto na base errada "
+                             "vale menos e o passo de acerto se paga; 0: desligado (precisa da build-base-n100)")
     parser.add_argument("--parado-recompensa", type=float, nargs=3, default=[0.0, 0.0, 0.0],
                         help="(11/11 08h58, ele) com --parado-unico, a nota do parado: POSE x proximidade da pose alvo + QUIETO x quietude "
                              "- DESLIZE x velocidade dos pes apoiados (m/s); 0 0 0: a nota de antes")
@@ -2729,6 +3028,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--largada-mao", type=float, default=0.0,
                         help="(10/11 07h15, aprovado por ele: 'mao so na largada') na janela da largada do treino, a mao na pelve neste nivel, "
                              "descendo a 0 junto com a parcela do --largada-clipe (as avaliacoes e as reguas sem ela)")
+    parser.add_argument("--largada-inclinar", type=float, default=0.0, metavar="PESO",
+                        help="(14/11 20h40, ele: 'os bracos estabanados na arrancada e os passinhos parado/curtos' - visto: o clipe sai inclinado "
+                             "20-26 graus e a rede reta, 0-8) na janela da largada, de pe, um custo por passo de PESO x min(1,5, (inclinacao do "
+                             "clipe - a do corpo - 5 graus) / 15 graus): o tronco (peito alto contra a pelve) no rumo do movimento; so o menos "
+                             "inclinado custa (build-base-n109); 0: nada")
+    parser.add_argument("--largada-velocidade-parcela", type=float, default=0.0, metavar="PARCELA",
+                        help="(14/11 22h10, o Codex: pagar a velocidade cedo fora dos multiplicadores de forma) na largada da corrida de frente, "
+                             "com a janela da largada como envelope, a nota do rastreio vira (1 - PARCELA x janela) x ela + PARCELA x janela x "
+                             "(a velocidade do centro de massa no rumo / max(1, a pedida agora)) (build-base-n110); 0: nada")
+    parser.add_argument("--largada-imitar", type=float, default=0.0, metavar="NOTA",
+                        help="(15/11 06h30, ele: 'basta ele seguir o clipe da arrancada para correr corretamente') na largada de pe da corrida de "
+                             "frente, soma NOTA x a semelhanca do corpo com o clipe da largada no relogio dele (a nota do levantar: pose por partes, "
+                             "tronco, maos e pes, centro de massa e a velocidade dele na rampa do clipe) x a janela da largada (build-base-n112); 0: nada")
     parser.add_argument("--largada-no-lugar", type=float, default=0.0,
                         help="(10/11 08h20, ele: 'pelo menos tirar os passinhos no lugar') na largada, cada pe que pousa sem ter andado 15 cm "
                              "no rumo pedido custa ate isto na nota (para tras, o maximo); 0: sem")
@@ -2939,7 +3251,48 @@ def build_parser() -> argparse.ArgumentParser:
     # (01/11 04h45, ele: "nossa rede tem dificuldade de levantar-se se o cenario nao e limpo - tem algo esbarrando nele,
     # ou um boneco por cima": as paredes e caixas encostadas e os pesos caindo em cima.)
     parser.add_argument("--obstaculo", type=float, default=0.0, help="a fatia com uma parede ou caixa encostada no corpo")
+    parser.add_argument("--locomocao-ambiente", type=float, default=0.0,
+                        help="(16/11, foco 5) a fatia da locomocao comandada com 2-5 caixas, paredes e pilares do tamanho de um jogador em volta do caminho (build-base-n130); no jogo, a rede treinada assim le o ambiente de verdade")
     parser.add_argument("--peso-em-cima", type=float, default=0.0, help="a fatia com um peso caindo em cima do corpo")
+    # (17/11, o plano de desentortar - Fase 1; build-base-n131) Os consertos do que pagava o torto e a paridade com o jogo (D2).
+    parser.add_argument("--referencial-clipe", action="store_true",
+                        help="o rolamento do peito, a largura dos pes e o joelho do clipe medidos no eixo de lado DO CLIPE (antes no do corpo)")
+    parser.add_argument("--fase-dois-pes", action="store_true", help="a fase do clipe acertada no pouso dos dois pes (antes so no esquerdo)")
+    parser.add_argument("--rumo-medio", type=float, nargs="+", default=[0.0],
+                        help="PESO [LARGURA rad, 0.10]: nas retas, o rumo medio da pelve (~0,6 s) contra o do clipe derruba a semelhanca")
+    parser.add_argument("--forca-contatos", action="store_true",
+                        help="a entrada da forca externa soma os contatos que nao sao o apoio (outro corpo, parede) - no jogo tambem (run.json)")
+    parser.add_argument("--chao-grama", type=float, default=0.0, help="a fatia dos mundos com o chao de grama do campo (o resto no concreto)")
+    parser.add_argument("--reta-comando", action="store_true",
+                        help="os fatores da reta (peito de lado, rumo medio, pernas, largura, pe cruzado) tambem no comando numa reta (antes so na manobra 0)")
+    parser.add_argument("--simetria-comando", action="store_true",
+                        help="a perda de simetria tambem nas linhas do comando (a manobra 12) com o clipe de ciclo - o modo do jogo")
+    parser.add_argument("--ancora-sem-locomocao", action="store_true",
+                        help="a ancora do principal (--levantar-imitar-professor-ancora) so nos levantares: a locomocao livre dela (o modo de ensino fica)")
+    parser.add_argument("--loco-saidas-vivas", action="store_true",
+                        help="nas linhas da marcha (clipe de ciclo) as 25 saidas sem efeito ficam fora do log da probabilidade (sonda_saidas_mortas.py)")
+    parser.add_argument("--lado-medio", type=float, nargs="+", default=[0.0],
+                        help="(Fase 2) PESO [LARGURA m, 0.03]: nas retas, o lado medio (~0,6 s) da cabeca, do peito alto e do meio dos pes contra o clipe")
+    parser.add_argument("--imitacao-portao", type=float, nargs="+", default=[0.0],
+                        help="(Fase 2) G [CHEIA, 0.6]: andando, a nota inteira vezes (1 - G) + G x min(1, semelhanca / CHEIA)")
+    parser.add_argument("--velocidade-rotacao", action="store_true",
+                        help="(17/11, o Codex: os bracos abertos) a velocidade-alvo do clipe nos bracos e na cabeca por junta, como o Jolt a quer "
+                             "(a velocidade angular no referencial do filho), e nao a derivada de cada coordenada (build-base-n132; run.json)")
+    parser.add_argument("--imitar-velocidade", action="store_true",
+                        help="(17/11) na imitacao supervisionada (--imitar) as saidas de velocidade seguem a velocidade do clipe por junta (antes "
+                             "eram puxadas para zero, freando os motores) e os canais do passo ficam fora (build-base-n133)")
+    parser.add_argument("--projeteis", type=float, nargs="+", default=[0.0],
+                        help="(17/11, Fase 3) TAXA [IMPULSO_MIN IMPULSO_MAX SEGUNDOS]: na locomocao de pe, projeteis pequenos e frequentes (DReCon) - "
+                             "por segundo, um impulso de 10-40 N.s num elo sorteado, em 0,06 s (build-base-n134)")
+    parser.add_argument("--ancora-parado", action="store_true",
+                        help="(17/11 09h) com --ancora-sem-locomocao: a ancora tambem nas linhas de pe sem pedido (o parado e a freada) - o equilibrio "
+                             "parado da ancora (a prova de fogo do parado caiu sem ela)")
+    parser.add_argument("--ancora-fogo", type=float, default=0.0,
+                        help="(17/11 11h) com --ancora-sem-locomocao: as linhas da locomocao com forca de fogo (fogo.forca.* != 0) agora ou nos ultimos "
+                             "S segundos voltam para a ancora r130240 - a reacao a empurrao dela (a prova de fogo caiu ~5 de 71 com a ancora fora da "
+                             "locomocao, no A e no C); a forma sem fogo segue livre. 0 desliga")
+    parser.add_argument("--teto-custo-tarefa", action="store_true",
+                        help="o teto dos custos da locomocao e a parte da tarefa (peso x nota), nao a nota inteira - com ele, melhorar a nota nunca tira premio")
     # (02/11, ele: "parede ao lado, paredes aos lados, pilares, corpos ragdoll embaixo dele... e tambem em cima dele, em
     # terrenos inclinados": as fatias de cada ambiente, sorteadas uma a uma.)
     parser.add_argument("--ambientes", type=float, nargs=6, default=[0.0] * 6,
@@ -3043,6 +3396,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(12/11 02h50, ele: forcar melhor a semelhanca do levantar de costas com o clipe) o reforco da pose do tronco e "
                              "dos bracos so no de costas (TrackingClipGetUp3D::Widths::emphasis), subindo de 0 ao ALVO em ATUALIZACOES "
                              "(o comeco guardado nos contadores; 0: nada)")
+    parser.add_argument("--levantar-unreal-reforco-correndo", type=float, default=0.0, metavar="ALVO",
+                        help="(14/11 20h45, ele: 'cobrar mais semelhanca com o clipe para os nossos levantares correndo') o mesmo reforco da "
+                             "pose do tronco e dos bracos do --levantar-unreal-reforco nos dois correndo (de costas e de brucos), com a rampa "
+                             "propria (as ATUALIZACOES do --levantar-unreal-reforco desde a primeira com ele); 0: nada")
+    parser.add_argument("--levantar-unreal-reforco-brucos", type=float, default=0.0, metavar="ALVO",
+                        help="(14/11 20h55, ele: 'melhorar a semelhanca com o clipe de todos os levantares, hoje muito moles e diferentes') o "
+                             "mesmo reforco da pose do tronco e dos bracos no de brucos de pe, com a rampa propria; 0: nada")
     parser.add_argument("--levantar-unreal-agilidade", type=float, nargs=3, default=(0.0, 0.0, 100), metavar=("PARADO", "CORRENDO", "ATUALIZACOES"),
                         help="(12/11 03h20, ele: recompensar a velocidade e a agilidade de levantar, e no correndo o impulso) o relogio do "
                              "clipe acompanha o corpo (ate 1,75x) e o premio e o peso x a nota x o adiantamento; o peso dos dois de pe e o "
@@ -3102,6 +3462,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--parado-quadril-nivel", type=float, default=0.0, metavar="PESO",
                         help="(13/11 14h, ele: no parado 'o quadril dele retinho alinhado'; medido -14,9 graus de lado, o clipe 0) no parado, "
                              "um custo por passo de PESO x (1 - e^-(inclinacao de lado da pelve / 6 graus)^2); 0: nada")
+    parser.add_argument("--levantar-ritmo", type=float, nargs=2, default=(0.0, 1.5), metavar=("PESO", "SEGUNDOS"),
+                        help="(13/11 17h45, ele: normalizar o tempo de levantar ~1,5 s, o de costas pelo menos 1,2) no levantar adaptativo limpo de "
+                             "pe, ate a entrega, custa por passo a cabeca acima da do clipe no ritmo de SEGUNDOS ate a entrega (margem 5 cm, "
+                             "escala 25 cm); precisa de --levantar-forma; 0: sem")
     parser.add_argument("--levantar-forma-mao", type=float, default=0.0, metavar="PESO",
                         help="(13/11 13h30, ele: sem melhora na mao virada; dentro da forma ela custava ~2 por levantar) com --levantar-forma, a "
                              "mao apoiada virada com peso proprio: por passo, PESO x (1 - nota da mao); 0: dentro da nota da forma")
@@ -3112,6 +3476,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="(13/11 11h30, ele: 'essa cabeca e peito torto quando levanta') na subida e na firmeza do levantar adaptativo, "
                              "um custo por passo de PESO x (1 - forma): a cabeca contra o peito (para tras, de lado) e a torcao do peito contra "
                              "a pelve, contra a media do clipe na mesma altura da cabeca, com folga de 8 graus; 0: nada")
+    parser.add_argument("--levantar-forma-perna", type=float, nargs=2, default=(0.0, 1.0), metavar=("PESO", "MASCARA"),
+                        help="(14/11 20h10, ele: 'o mesmo metodo... para trazer a semelhanca com o clipe' na perna do de costas) a forma da "
+                             "perna esquerda como a da cabeca e do peito: limpo, na subida e na firmeza, nos exercicios da MASCARA (bit e = "
+                             "exercicio e; 1: o de costas), um custo por passo de PESO x min(1,5, (erro - 5 cm) / 30 cm); o erro e o joelho e o "
+                             "pe esquerdos contra a pelve, contra o clipe na mesma altura da cabeca; 0: nada")
     parser.add_argument("--levantar-tempo-fogo", type=float, default=-1.0, metavar="FOLGA",
                         help="(13/11 10h55, medido: sob fogo o levantar leva 0,2-0,8 s a mais, e a faixa nos dois prendia o tempo no meio) "
                              "no levantar com fogo a faixa vira so um teto, o maximo dela + FOLGA s, sem piso; o ritmo fica pelos limpos; "
@@ -3150,12 +3519,111 @@ def build_parser() -> argparse.ArgumentParser:
                              "fogo em que a forca vem de cima, inclinada 45-80 graus para baixo (a pancada no alto do tronco)")
     parser.add_argument("--levantar-fogo-niveis", type=str, default="",
                         help="(12/11 04h40) o JSON dos niveis de partida (a F0: a forca que hoje faz falhar ~100%%), uma vez nos contadores")
+    parser.add_argument("--levantar-rastrear", type=int, default=0, metavar="MASCARA",
+                        help="(14/11 v1) bit k: o levantar limpo do exercicio k (0 de costas, 1 de brucos, 2 e 3 correndo) pelo rastreio do "
+                             "clipe (a nota e a semelhanca, o fim quando longe - o levantar de 11/11) mesmo com --levantar-adaptativo; sob "
+                             "fogo e no comando seguem adaptativos; 0: nada (build-base-n108)")
+    parser.add_argument("--levantar-costas-rola", nargs="*", default=None, metavar="CLIPE_ENTREGA",
+                        help="(14/11 v1) o levantar de costas de pe pelo clipe que rola (o rolar do correndo de costas + o levantar de "
+                             "brucos, levantar_costas_rola) ou por CLIPE com ENTREGA (s); o correndo de costas como esta (build-base-n107)")
+    parser.add_argument("--levantar-brucos-marca", type=float, default=0.0, metavar="VALOR",
+                        help="(14/11 17h40) a marca do de brucos de pe na entrada levantar.variante (negativa, ex. -0.4; a base, o ramo, o "
+                             "critico e a ancora a veem zerada); 0: sem")
+    parser.add_argument("--levantar-brucos-enxerto", default=None, metavar="CHECKPOINT",
+                        help="(14/11 17h40) o especialista do de brucos (CHECKPOINT) congelado dentro do cerebro, como o do de costas "
+                             "(precisa de --levantar-brucos-marca e --levantar-costas-enxerto)")
+    parser.add_argument("--levantar-brucos-clipe", nargs=2, default=None, metavar=("CLIPE", "ENTREGA"),
+                        help="(14/11 17h35) o levantar de brucos de pe por outro CLIPE com ENTREGA (s): levantar/levantar_brucos_rapido133 1.654")
+    parser.add_argument("--levantar-costas-enxerto", default=None, metavar="CHECKPOINT",
+                        help="(14/11 17h) o professor do de costas (CHECKPOINT) inteiro e congelado dentro do cerebro: a acao dele no de costas "
+                             "levantando sem empurrao (precisa de --levantar-costas-marca)")
+    parser.add_argument("--levantar-costas-clipe", nargs=2, default=None, metavar=("CLIPE", "ENTREGA"),
+                        help="(14/11 v1) o levantar de costas de pe por outro CLIPE com ENTREGA (s), sem o lado no quadro de agora do "
+                             "--levantar-costas-rola (o mesmo levantar mais rapido: levantar/levantar_costas_rapido 1.45)")
+    parser.add_argument("--levantar-unreal-pesos", type=float, nargs=4, default=None, metavar=("COSTAS", "BRUCOS", "CORR_COSTAS", "CORR_BRUCOS"),
+                        help="(14/11 v1, o especialista do de costas) os pesos fixos do sorteio dos 4 exercicios do levantar pelo clipe "
+                             "(sem --levantar-unreal-prioridade); sem: os quatro iguais")
     parser.add_argument("--levantar-unreal-prioridade", type=float, default=0.0,
                         help="(11/11 16h25) > 0: o sorteio dos 4 exercicios do levantar pelo clipe pela dificuldade - o peso de cada um e "
                              "este piso mais a fracao que nao entrega (ultimos episodios do treino); 0: os quatro iguais")
     parser.add_argument("--congelar-locomocao", action="store_true",
                         help="(11/11) com as habilidades separadas, so a cabeca da recuperacao aprende; a da locomocao, o critico "
                              "dela, o juiz dela e a normalizacao dela ficam como vieram")
+    parser.add_argument("--cerebro-unico", action="store_true",
+                        help="(13/11, ele: 'um brain so para tudo... a locomocao tambem aprende a se levantar') com as habilidades separadas, "
+                             "a cabeca da locomocao comanda tudo - ator, critico, normalizacao e desvio dela em todas as linhas; a ultima "
+                             "entrada vira a fase (0 levantando, 1 de pe). Na primeira vez: a normalizacao dela vira a mistura das duas "
+                             "(--cerebro-unico-mistura) com a primeira camada compensada (a locomocao sai igual) e o critico aquece "
+                             "(--aquecer-critico); depois ela fica parada. Ao salvar, a cabeca da recuperacao vira copia dela (o laboratorio "
+                             "e as sondas rodam o cerebro unico sem mudar nada)")
+    parser.add_argument("--cerebro-unico-peso-levantar", type=float, default=0.0,
+                        help="(13/11 15h20) com --cerebro-unico, a fracao da perda do PPO das linhas do levantar (as de pe com o resto); "
+                             "0: pela contagem das linhas (~17%%)")
+    parser.add_argument("--cerebro-unico-imitar", type=float, nargs=2, default=(0.0, 300), metavar=("PESO", "ATUALIZACOES"),
+                        help="(13/11 15h45) com --cerebro-unico, nas linhas do levantar, a media da acao puxada (MSE, so os eixos das juntas) "
+                             "para os alvos de motor do clipe uma decisao a frente, o peso caindo de PESO a zero em ATUALIZACOES a partir da "
+                             "primeira vez (contadores); enquanto imita, a fase do levantar nao freia pelo KL e a taxa fica parada")
+    parser.add_argument("--cerebro-unico-imitar-taxa", type=float, default=0.0,
+                        help="(13/11 15h42) a taxa do ator da cabeca unica enquanto --cerebro-unico-imitar imita (0: a que estava, parada); "
+                             "depois o ajuste pelo KL do levantar segue dela")
+    parser.add_argument("--cerebro-unico-destilar", type=float, nargs=2, default=(0.0, 500), metavar=("PESO", "ATUALIZACOES"),
+                        help="(13/11 16h, ele escolheu: copiar o cerebro do levantar) com --cerebro-unico, o kickstarting: o cerebro unico age e "
+                             "o professor de duas cabecas (--cerebro-unico-professor) diz o que faria em cada estado - a cabeca do levantar no "
+                             "chao, a da locomocao de pe; a perda da acao media (MSE, sem os canais do passo no levantar), metade de cada fase, "
+                             "soma-se a do PPO com o peso caindo de PESO a zero em ATUALIZACOES desde a primeira vez; enquanto ensina, a fase do "
+                             "levantar nao freia pelo KL e a taxa e a --cerebro-unico-destilar-taxa")
+    parser.add_argument("--cerebro-unico-destilar-puro", type=int, default=0,
+                        help="(13/11 16h20) com --cerebro-unico e --cerebro-unico-professor, as primeiras N rodadas so de copia (DAgger): o aluno "
+                             "age, os estados das ultimas --cerebro-unico-destilar-reserva rodadas recebem a acao media e o valor do professor "
+                             "(o levantar no chao, a locomocao de pe), e o ator e o critico fazem --cerebro-unico-destilar-passos passos "
+                             "supervisionados por rodada (metade de cada fase), sem o PPO; o juiz segue. Depois, o PPO com a taxa da locomocao/5")
+    parser.add_argument("--cerebro-unico-destilar-passos", type=int, default=200,
+                        help="(13/11 16h20) os passos supervisionados por rodada do --cerebro-unico-destilar-puro (lotes de 4096)")
+    parser.add_argument("--cerebro-unico-destilar-reserva", type=int, default=8,
+                        help="(13/11 16h20) quantas rodadas de estados a copia pura guarda (a reserva do DAgger)")
+    parser.add_argument("--cerebro-unico-destilar-taxa", type=float, default=0.0,
+                        help="(13/11 16h) a taxa do ator enquanto --cerebro-unico-destilar ensina (0: a que estava)")
+    parser.add_argument("--levantar-imitar-professor", nargs=2, default=None, metavar=("CHECKPOINT", "PESO"),
+                        help="(14/11 v1, o DAgger do de costas) com --levantar-imitar: nas linhas do levantar da mascara (limpo, antes da "
+                             "troca), a media da acao puxada (MSE) para a do CHECKPOINT (o especialista de cerebro unico, congelado) "
+                             "no mesmo estado, com PESO")
+    parser.add_argument("--ancora-so-locomocao", action="store_true",
+                        help="(16/11, ele: os levantares na velocidade original do clipe) a ancora (--levantar-imitar-professor-ancora) so nas "
+                        "linhas da locomocao: os levantares livres para mudar o ritmo (com a marca do de costas, os outros levantares tambem "
+                        "ficavam presos a rede antiga)")
+    parser.add_argument("--levantar-imitar-professor-ancora", nargs=2, default=None, metavar=("CHECKPOINT", "PESO"),
+                        help="(14/11 13h50) com --levantar-imitar-professor: em todas as OUTRAS linhas (a locomocao, o parado, os outros "
+                             "levantares, o fogo), a media da acao puxada (MSE) para a do CHECKPOINT (o principal congelado) com PESO - o "
+                             "resto preso enquanto o de costas muda para o professor (sem ela, a taxa que copia arrastava a locomocao: KL 0,79)")
+    parser.add_argument("--levantar-costas-adaptador", type=float, default=0.0, metavar="TAXA",
+                        help="(14/11 16h25) o ramo proprio do levantar de costas (precisa de --levantar-costas-marca): uma rede pequena somada a "
+                             "acao so com a marca, o otimizador dele com TAXA; com --levantar-imitar-professor, o professor ensina so o ramo "
+                             "(a base destacada). 0: sem o ramo")
+    parser.add_argument("--levantar-imitar-professor-pernas", type=float, default=1.0, metavar="PESO",
+                        help="(14/11 15h40) com --levantar-imitar-professor: o peso dos canais das pernas (coxa, canela e pe) na puxada do "
+                             "professor - na media dos 82 canais o erro da perna esquerda no giro (77 cm do clipe; o professor 10-31) pesava pouco")
+    parser.add_argument("--levantar-costas-marca", type=float, default=0.0, metavar="VALOR",
+                        help="(14/11 14h15) a entrada levantar.variante vale VALOR no levantar de costas de pe (os outros 0): a rede sabe "
+                             "qual levantar e (o correndo de costas comeca igual) e, com --levantar-imitar-professor-ancora, a ancora prende "
+                             "todas as linhas sem a marca; o professor ve 0 nela (o convenio dele). Precisa de --levantar-unreal-variante")
+    parser.add_argument("--levantar-imitar-professor-taxa", type=float, default=0.0, metavar="TAXA",
+                        help="(14/11 v1, 08h50) com --levantar-imitar-professor: a taxa da rede unica fica em TAXA a cada atualizacao (o ajuste pelo KL a deixava no piso 1e-6 desde 13/11 e o DAgger nao andaria); 0: a do ajuste")
+    parser.add_argument("--cerebro-unico-professor", type=str, default="",
+                        help="(13/11 16h) o checkpoint de duas cabecas que ensina o --cerebro-unico-destilar")
+    parser.add_argument("--cerebro-unico-queda-aprende", action="store_true",
+                        help="(13/11 17h, ele: evitar e melhorar as quedas iminentes, a recuperacao rapida e adaptativa) com --cerebro-unico, as "
+                             "linhas do levantar dentro de um episodio de locomocao (a queda no comando, que levanta e segue) aprendem, com os "
+                             "pesos e os custos do levantar; sem isto, so as de pe aprendem nesses episodios, como com duas cabecas")
+    parser.add_argument("--cerebro-unico-queda-custo", type=float, default=0.1,
+                        help="(13/11 17h05) com --cerebro-unico-queda-aprende, o custo por passo caido no meio da locomocao (a nota do levantar, o "
+                             "premio da entrega e o estilo saem ali - cair nunca compensa)")
+    parser.add_argument("--queda-vira-comando", action="store_true",
+                        help="(13/11 17h, ele: 'os treinos nao encerrarem so porque houve a queda... aprender com as falhas... como cair melhor, se "
+                             "recuperar melhor') com --comando-levantar, a queda num exercicio de locomocao (rumos, manobras, estrela, giro) nao "
+                             "encerra: o episodio vira comando ali (o jogador emulado com a tecla e o shift do que ele fazia), levanta como no "
+                             "comando e segue (pelo menos 4 s depois da queda); conta no grupo de antes")
+    parser.add_argument("--cerebro-unico-mistura", type=float, default=0.3,
+                        help="(13/11) a fracao das linhas do levantar na mistura das normalizacoes do --cerebro-unico")
     parser.add_argument("--recuperacao-norma", action="store_true",
                         help="(11/11) a normalizacao das entradas da recuperacao aprende com as linhas dela (a cabeca do levantar "
                              "recomecada do zero; sem isto ela fica como veio)")
@@ -3203,6 +3671,19 @@ def aplicar_receita(parser: argparse.ArgumentParser, args) -> None:
         GETUP_CLIP[0] = True
     if args.congelar_recuperacao and not args.habilidades_separadas:
         parser.error("--congelar-recuperacao exige --habilidades-separadas")
+    if args.locomocao_fogo_degrau_rodadas > 0:
+        # (13/11 17h35) O degrau da escada do fogo da locomocao mais curto - a queda agora vira aula (--queda-vira-comando).
+        global LOCO_FIRE_DWELL
+        LOCO_FIRE_DWELL = int(args.locomocao_fogo_degrau_rodadas)
+    if args.locomocao_fogo_aceleracao[0] > 0:
+        # (13/11 18h50) A subida do fogo mais rapida: a tolerancia do reajuste do torto na guarda do limpo (um limiar ruidoso - 0,26-0,37
+        # na mesma rede - segurava o programa inteiro com 0,28 contra 0,29), o degrau da fatia e as medidas boas para ela subir.
+        global LOCO_FIRE_CROOKED_TOL, LOCO_FIRE_SHARE_STEP, LOCO_FIRE_SHARE_GOOD
+        LOCO_FIRE_CROOKED_TOL, LOCO_FIRE_SHARE_STEP, LOCO_FIRE_SHARE_GOOD = (float(args.locomocao_fogo_aceleracao[0]),
+                                                                             float(args.locomocao_fogo_aceleracao[1]),
+                                                                             int(args.locomocao_fogo_aceleracao[2]))
+    if args.cerebro_unico and (not args.habilidades_separadas or args.congelar_locomocao or args.congelar_recuperacao):
+        parser.error("--cerebro-unico exige --habilidades-separadas e nao combina com --congelar-locomocao/--congelar-recuperacao")
     if args.peso_tarefa_loco is None:
         args.peso_tarefa_loco = args.peso_tarefa
     if args.peso_estilo_loco is None:
@@ -3223,6 +3704,26 @@ def aplicar_receita(parser: argparse.ArgumentParser, args) -> None:
         BATCH_EXTRA.update(episode_seconds=args.parado_segundos)
         IDLE_SECONDS[0] = args.parado_segundos
     VELOCITY_ACTIONS[0] = bool(args.acao_velocidade)
+    usar_costas_rola(args.levantar_costas_rola)
+    if args.levantar_costas_clipe:
+        if args.levantar_costas_rola is not None:
+            raise SystemExit("--levantar-costas-clipe e --levantar-costas-rola juntos")
+        usar_costas_rola(args.levantar_costas_clipe)
+    usar_brucos_clipe(args.levantar_brucos_clipe)
+    global LEVANTAR_UNREAL_VARIANTS
+    if args.levantar_brucos_marca != 0.0:
+        if not args.levantar_unreal_variante or not -0.5 <= args.levantar_brucos_marca < 0.0:
+            raise SystemExit("--levantar-brucos-marca precisa de --levantar-unreal-variante e de um valor em [-0.5, 0)")
+        LEVANTAR_UNREAL_VARIANTS = (LEVANTAR_UNREAL_VARIANTS[0], float(args.levantar_brucos_marca)) + tuple(LEVANTAR_UNREAL_VARIANTS[2:])
+    # (14/11 14h15, --levantar-costas-marca) A entrada levantar.variante marca o de costas de pe (o 0 dos LEVANTAR_UNREAL_KEYS).
+    if args.levantar_costas_marca > 0:
+        if not args.levantar_unreal_variante:
+            raise SystemExit("--levantar-costas-marca precisa de --levantar-unreal-variante (a entrada levantar.variante)")
+        # (14h20) Acima de 0,5 o C++ trata o exercicio como o "rolando" de 11/11 (livre ate de brucos, fora das tentativas novas):
+        # com o clipe de costas de pe isso derrubou o modulo nativo (SEGV na r115240). A marca fica so como entrada.
+        if args.levantar_costas_marca > 0.5:
+            raise SystemExit("--levantar-costas-marca deve ser <= 0,5 (acima disso o C++ liga o comportamento do rolando)")
+        LEVANTAR_UNREAL_VARIANTS = (float(args.levantar_costas_marca),) + tuple(LEVANTAR_UNREAL_VARIANTS[1:])
 
 
 def ler_receita(argv: list[str]):
@@ -3241,6 +3742,18 @@ def configurar_levantar(b, args, fraction: float) -> None:
     b.set_clip_get_up(LEVANTAR_UNREAL, fraction, args.levantar_unreal_meio, args.levantar_unreal_depois,
                           args.levantar_unreal_ruido, args.levantar_unreal_largura, args.levantar_unreal_vel)
     b.set_clip_get_up_parts(args.levantar_unreal_partes)
+    if args.levantar_rastrear:
+        if not hasattr(b, "set_clip_track_mask"):
+            raise SystemExit("--levantar-rastrear precisa da build com set_clip_track_mask (build-base-n108)")
+        b.set_clip_track_mask(int(args.levantar_rastrear))
+    if args.levantar_costas_rola is not None or args.levantar_lado_agora:
+        if not hasattr(b, "set_clip_side_now"):
+            raise SystemExit("--levantar-costas-rola / --levantar-lado-agora precisam da build com set_clip_side_now (build-base-n107)")
+        b.set_clip_side_now(True)
+    if args.levantar_chegada_de_pe != 1.0:
+        if not hasattr(b, "set_get_up_stand_bonus_scale"):
+            raise SystemExit("--levantar-chegada-de-pe precisa da build com set_get_up_stand_bonus_scale (build-base-n115)")
+        b.set_get_up_stand_bonus_scale(args.levantar_chegada_de_pe)
     b.set_clip_get_up_variants(list(LEVANTAR_UNREAL_VARIANTS))
     if hasattr(b, "set_clip_get_up_deliver"):
         b.set_clip_get_up_deliver(list(LEVANTAR_UNREAL_DELIVER))
@@ -3259,6 +3772,16 @@ def configurar_levantar(b, args, fraction: float) -> None:
             b.set_adaptive_time_fire(args.levantar_tempo_fogo)
         if args.levantar_forma > 0:
             b.set_get_up_form(args.levantar_forma)
+        if args.levantar_forma_perna[0] > 0:
+            if not hasattr(b, "set_get_up_leg_form"):
+                raise SystemExit("--levantar-forma-perna precisa da build com set_get_up_leg_form (build-base-n109)")
+            b.set_get_up_leg_form(float(args.levantar_forma_perna[0]), int(args.levantar_forma_perna[1]))
+        if args.levantar_ritmo[0] > 0:
+            if not hasattr(b, "set_get_up_pace"):
+                raise SystemExit("--levantar-ritmo precisa da build com set_get_up_pace (build-base-n95)")
+            if args.levantar_forma <= 0:
+                raise SystemExit("--levantar-ritmo precisa de --levantar-forma (a tabela da cabeca do clipe)")
+            b.set_get_up_pace(*args.levantar_ritmo)
         if args.levantar_fogo_soltar_firme:
             b.set_get_up_fire_release_at_firm(True)
         if args.levantar_forma_mao > 0:
@@ -3277,6 +3800,15 @@ def configurar_levantar(b, args, fraction: float) -> None:
             b.set_run_handoff_at_stand(True, args.levantar_correndo_troca)
         if args.levantar_e_ir[0] > 0 and hasattr(b, "set_get_up_go"):
             b.set_get_up_go(*args.levantar_e_ir)
+        if args.levantar_vista > 0 or args.levantar_brucos_tempo != 1.0:
+            if not hasattr(b, "set_get_up_view"):
+                raise SystemExit("--levantar-vista / --levantar-brucos-tempo precisam da build com set_get_up_view (build-base-n113)")
+            b.set_get_up_view(args.levantar_vista)
+            b.set_get_up_prone_time_scale(args.levantar_brucos_tempo)
+        if args.mao_atras > 0:
+            if not hasattr(b, "set_hand_behind"):
+                raise SystemExit("--mao-atras precisa da build com set_hand_behind (build-base-n114)")
+            b.set_hand_behind(args.mao_atras)
         if args.levantar_tentar:
             b.set_adaptive_retry(True)
         if args.levantar_fogo_contra_corrida > 0:
@@ -3296,6 +3828,79 @@ def configurar(b, args, counters: dict, training: bool) -> None:
     # (A nota e so a v19; o 19 aqui so liga a inclinacao da referencia, que o lote nasce sem - ver o trackingReward no .hpp.)
     b.set_tracking_reward(19)
     b.set_phase_sync(args.sincronizar_fase)
+    if args.clipe_sob_pelve:
+        if not hasattr(b, "set_clip_under_pelvis"):
+            raise SystemExit("--clipe-sob-pelve precisa da build com set_clip_under_pelvis (build-base-n117)")
+        b.set_clip_under_pelvis(True)
+    if args.pernas_alinhadas:
+        if not hasattr(b, "set_leg_align"):
+            raise SystemExit("--pernas-alinhadas precisa da build com set_leg_align (build-base-n120)")
+        b.set_leg_align(float(args.pernas_alinhadas[0]), float(args.pernas_alinhadas[1]) if len(args.pernas_alinhadas) > 1 else 10.0)
+    if args.largada_maos > 0:
+        if not hasattr(b, "set_launch_arms_calm"):
+            raise SystemExit("--largada-maos precisa da build com set_launch_arms_calm (build-base-n128)")
+        b.set_launch_arms_calm(args.largada_maos)
+    if args.parado_centro > 0 or args.velocidade_largura > 0:
+        if not hasattr(b, "set_idle_weight_center"):
+            raise SystemExit("--parado-centro/--velocidade-largura precisam da build com set_idle_weight_center (build-base-n127)")
+        b.set_idle_weight_center(args.parado_centro)
+        if args.velocidade_largura > 0:
+            b.set_speed_width_fraction(args.velocidade_largura)
+    if args.corrida_largura > 0 or args.pernas_alinhadas_comando:
+        if not hasattr(b, "set_run_width"):
+            raise SystemExit("--corrida-largura/--pernas-alinhadas-comando precisam da build com set_run_width (build-base-n126)")
+        b.set_run_width(args.corrida_largura)
+        b.set_leg_align_command(bool(args.pernas_alinhadas_comando))
+    if args.largada_margem_lado:
+        if not hasattr(b, "set_launch_side_margin"):
+            raise SystemExit("--largada-margem-lado precisa da build com set_launch_side_margin (build-base-n125)")
+        b.set_launch_side_margin(True)
+    if args.referencial_clipe or args.fase_dois_pes or args.rumo_medio[0] > 0 or args.forca_contatos or args.chao_grama > 0:
+        if not hasattr(b, "set_grass_ground_fraction"):
+            raise SystemExit("--referencial-clipe/--fase-dois-pes/--rumo-medio/--forca-contatos/--chao-grama precisam da build-base-n131")
+        b.set_reference_side_fix(bool(args.referencial_clipe))
+        b.set_phase_sync_both_feet(bool(args.fase_dois_pes))
+        b.set_heading_bias(float(args.rumo_medio[0]), float(args.rumo_medio[1]) if len(args.rumo_medio) > 1 else 0.10)
+        b.set_contact_force_observation(bool(args.forca_contatos))
+        b.set_grass_ground_fraction(float(args.chao_grama))
+    if args.reta_comando:
+        if not hasattr(b, "set_straight_command"):
+            raise SystemExit("--reta-comando precisa da build-base-n131")
+        b.set_straight_command(True)
+    if args.projeteis[0] > 0:
+        if not hasattr(b, "set_projectiles"):
+            raise SystemExit("--projeteis precisa da build-base-n134")
+        p = list(args.projeteis) + [10.0, 40.0, 0.06][len(args.projeteis) - 1:]
+        b.set_projectiles(float(p[0]), float(p[1]), float(p[2]), float(p[3]))
+    if args.imitar_velocidade:
+        if not hasattr(b, "set_imitation_velocity_targets"):
+            raise SystemExit("--imitar-velocidade precisa da build-base-n133")
+        b.set_imitation_velocity_targets(True)
+    if args.velocidade_rotacao:
+        if not hasattr(b, "set_clip_velocity_rotation"):
+            raise SystemExit("--velocidade-rotacao precisa da build-base-n132")
+        b.set_clip_velocity_rotation(True)
+    if args.lado_medio[0] > 0 or args.imitacao_portao[0] > 0:
+        if not hasattr(b, "set_imitation_gate"):
+            raise SystemExit("--lado-medio/--imitacao-portao precisam da build-base-n131")
+        b.set_lateral_bias(float(args.lado_medio[0]), float(args.lado_medio[1]) if len(args.lado_medio) > 1 else 0.03)
+        b.set_imitation_gate(float(args.imitacao_portao[0]), float(args.imitacao_portao[1]) if len(args.imitacao_portao) > 1 else 0.6)
+    if args.locomocao_ambiente > 0:
+        if not hasattr(b, "set_locomotion_scenery"):
+            raise SystemExit("--locomocao-ambiente precisa da build com set_locomotion_scenery (build-base-n130)")
+        b.set_locomotion_scenery(args.locomocao_ambiente if training else 0.0)
+    if args.revisao_15h:
+        if not hasattr(b, "set_review_fixes"):
+            raise SystemExit("--revisao-15h precisa da build com set_review_fixes (build-base-n124)")
+        b.set_review_fixes(True)
+    if args.parado_lugar:
+        if not hasattr(b, "set_idle_hold"):
+            raise SystemExit("--parado-lugar precisa da build com set_idle_hold (build-base-n121)")
+        b.set_idle_hold(float(args.parado_lugar[0]), float(args.parado_lugar[1]) if len(args.parado_lugar) > 1 else 0.10)
+    if args.parado_preso:
+        if not hasattr(b, "set_idle_clip_anchor"):
+            raise SystemExit("--parado-preso precisa da build com set_idle_clip_anchor (build-base-n118)")
+        b.set_idle_clip_anchor(True)
     b.set_imitation_loosen(args.imitacao_folga if training else 1.0)
     b.set_facing_gate(args.peito_vista if training else 0.0)
     if args.rumo_suave > 0:
@@ -3343,6 +3948,12 @@ def configurar(b, args, counters: dict, training: bool) -> None:
             b.set_star_rework(*args.estrela_caminho, *args.estrela_curvas)
     if args.comando_levantar and hasattr(b, "set_command_get_up"):
         b.set_command_get_up(True, args.comando_levantar_correndo)
+        # (13/11 17h, ele: os treinos nao encerrarem so porque houve a queda) A queda nos outros exercicios de locomocao vira comando.
+        # (So no treino: nas avaliacoes e na capacidade a queda segue encerrando - a regua continua comparavel.)
+        if args.queda_vira_comando and training:
+            if not hasattr(b, "set_fall_to_command"):
+                raise SystemExit("--queda-vira-comando precisa da build com set_fall_to_command (build-base-n94)")
+            b.set_fall_to_command(True)
     if args.fogo >= 0 and training:
         hit, hold = fire_bands(counters["fogo_nivel"])
         b.set_fire(args.fogo_fatia, hit, hold, FIRE_HOLD_SECONDS, FIRE_HOLD_FRACTION)
@@ -3423,6 +4034,38 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_idle_costs(args.parado_micro, args.parado_fora_pose)
     if hasattr(b, "set_idle_reward"):
         b.set_idle_reward(*args.parado_recompensa)
+    if args.levantar_imitar > 0:
+        if not hasattr(b, "set_get_up_imitation"):
+            raise SystemExit("--levantar-imitar precisa da build com set_get_up_imitation (build-base-n104)")
+        b.set_get_up_imitation(args.levantar_imitar, float(args.levantar_ritmo[1]))
+        if args.levantar_imitar_ritmo_correndo > 0:
+            if not hasattr(b, "set_get_up_imitation_pace_run"):
+                raise SystemExit("--levantar-imitar-ritmo-correndo precisa da build com set_get_up_imitation_pace_run (build-base-n109)")
+            b.set_get_up_imitation_pace_run(args.levantar_imitar_ritmo_correndo)
+        if args.levantar_imitar_longe[0] > 0:
+            if not hasattr(b, "set_get_up_imitation_far"):
+                raise SystemExit("--levantar-imitar-longe precisa da build com set_get_up_imitation_far (build-base-n106)")
+            b.set_get_up_imitation_far(*[float(x) for x in args.levantar_imitar_longe])
+        if args.levantar_imitar_ancora:
+            if not hasattr(b, "set_get_up_imitation_anchor"):
+                raise SystemExit("--levantar-imitar-ancora precisa da build com set_get_up_imitation_anchor (build-base-n117)")
+            b.set_get_up_imitation_anchor(True)
+        if args.levantar_imitar_nota > 0:
+            if not hasattr(b, "set_get_up_imitation_reward"):
+                raise SystemExit("--levantar-imitar-nota precisa da build com set_get_up_imitation_reward (build-base-n105)")
+            b.set_get_up_imitation_reward(args.levantar_imitar_nota)
+    if args.parada_bracos_clipe >= 0:
+        if not hasattr(b, "set_stop_arms_reach"):
+            raise SystemExit("--parada-bracos-clipe precisa da build com set_stop_arms_reach (build-base-n103)")
+        b.set_stop_arms_reach(args.parada_bracos_clipe)
+    if args.virado_tolerancia > 0:
+        if not hasattr(b, "set_turned_grace"):
+            raise SystemExit("--virado-tolerancia precisa da build com set_turned_grace (build-base-n101)")
+        b.set_turned_grace(args.virado_tolerancia)
+    if args.parado_quieto_na_base > 0:
+        if not hasattr(b, "set_idle_still_base"):
+            raise SystemExit("--parado-quieto-na-base precisa da build com set_idle_still_base (build-base-n100)")
+        b.set_idle_still_base(args.parado_quieto_na_base)
     if hasattr(b, "set_upper_rigor"):
         b.set_upper_rigor(args.rigor_superior)
     if hasattr(b, "set_unreal_starts"):
@@ -3435,6 +4078,18 @@ def configurar(b, args, counters: dict, training: bool) -> None:
         b.set_launch_step_reward(args.largada_passo)
     if hasattr(b, "set_launch_in_place_penalty"):
         b.set_launch_in_place_penalty(args.largada_no_lugar)
+        if args.largada_velocidade_parcela > 0:
+            if not hasattr(b, "set_launch_speed_share"):
+                raise SystemExit("--largada-velocidade-parcela precisa da build com set_launch_speed_share (build-base-n110)")
+            b.set_launch_speed_share(args.largada_velocidade_parcela)
+        if args.largada_imitar > 0:
+            if not hasattr(b, "set_launch_imitation"):
+                raise SystemExit("--largada-imitar precisa da build com set_launch_imitation (build-base-n112)")
+            b.set_launch_imitation(args.largada_imitar)
+        if args.largada_inclinar > 0:
+            if not hasattr(b, "set_launch_lean"):
+                raise SystemExit("--largada-inclinar precisa da build com set_launch_lean (build-base-n109)")
+            b.set_launch_lean(args.largada_inclinar)
     if hasattr(b, "set_launch_calm_arms"):
         b.set_launch_calm_arms(args.largada_bracos_calmos)
     if hasattr(b, "set_spine_velocity_feedforward"):
@@ -3575,8 +4230,9 @@ def main() -> int:
                   "levantar_unreal_largura": args.levantar_unreal_largura, "levantar_unreal_vel": args.levantar_unreal_vel,
                   "levantar_unreal_partes": bool(args.levantar_unreal_partes),
                   "levantar_unreal_agilidade": list(args.levantar_unreal_agilidade),
-                  "levantar_unreal_entrega": list(LEVANTAR_UNREAL_DELIVER),
-                  "levantar_adaptativo": bool(args.levantar_adaptativo), "levantar_adaptativo_firmeza": args.levantar_adaptativo_firmeza, "levantar_tempo_alvo": list(args.levantar_tempo_alvo), "levantar_tempo_alvo_correndo": list(args.levantar_tempo_alvo_correndo), "levantar_calma": args.levantar_calma, "levantar_tempo_queda": args.levantar_tempo_queda, "levantar_tempo_fogo": args.levantar_tempo_fogo, "levantar_forma": args.levantar_forma, "levantar_fogo_soltar_firme": bool(args.levantar_fogo_soltar_firme), "levantar_forma_mao": args.levantar_forma_mao, "parado_quadril_nivel": args.parado_quadril_nivel, "levantar_fogo_pancada_cedo": list(args.levantar_fogo_pancada_cedo),
+                  "levantar_unreal_entrega": list(LEVANTAR_UNREAL_DELIVER), "levantar_costas_rola": args.levantar_costas_rola, "levantar_costas_clipe": args.levantar_costas_clipe, "levantar_costas_enxerto": args.levantar_costas_enxerto, "levantar_brucos_clipe": args.levantar_brucos_clipe, "levantar_brucos_marca": args.levantar_brucos_marca, "levantar_brucos_enxerto": args.levantar_brucos_enxerto,
+                  "levantar_costas_marca": args.levantar_costas_marca, "levantar_forma_perna": list(args.levantar_forma_perna),
+                  "levantar_adaptativo": bool(args.levantar_adaptativo), "levantar_adaptativo_firmeza": args.levantar_adaptativo_firmeza, "levantar_tempo_alvo": list(args.levantar_tempo_alvo), "levantar_tempo_alvo_correndo": list(args.levantar_tempo_alvo_correndo), "levantar_calma": args.levantar_calma, "levantar_tempo_queda": args.levantar_tempo_queda, "levantar_tempo_fogo": args.levantar_tempo_fogo, "levantar_forma": args.levantar_forma, "levantar_fogo_soltar_firme": bool(args.levantar_fogo_soltar_firme), "levantar_forma_mao": args.levantar_forma_mao, "levantar_ritmo": list(args.levantar_ritmo), "parado_quadril_nivel": args.parado_quadril_nivel, "levantar_fogo_pancada_cedo": list(args.levantar_fogo_pancada_cedo),
                   "levantar_impulso_corrida": args.levantar_impulso_corrida, "levantar_velocidade_corrida": list(args.levantar_velocidade_corrida), "levantar_pose_variada": args.levantar_pose_variada, "levantar_troca_calma": list(args.levantar_troca_calma), "levantar_fogo_soltar": args.levantar_fogo_soltar, "levantar_tentar": bool(args.levantar_tentar), "levantar_fogo_contra_corrida": args.levantar_fogo_contra_corrida, "levantar_paredes": list(args.levantar_paredes), "levantar_fogo_extras": list(fire_extras(args)), "levantar_fogo": list(args.levantar_fogo),
                   "levantar_fogo_de_cima": args.levantar_fogo_de_cima,
                   "levantar_fogo_entrada": bool(args.levantar_fogo_entrada),
@@ -3585,7 +4241,7 @@ def main() -> int:
                   "levantar_unreal_variante": bool(args.levantar_unreal_variante),
                   "congelar_locomocao": bool(args.congelar_locomocao), "recuperacao_norma": bool(args.recuperacao_norma),
                   "deitado": bool(args.levantar_deitado), "juiz_unreal": bool(args.juiz_unreal),
-                  "preservar_peso": args.preservar_peso, "habilidades_separadas": args.habilidades_separadas,
+                  "preservar_peso": args.preservar_peso, "habilidades_separadas": args.habilidades_separadas, "cerebro_unico": bool(args.cerebro_unico),
                   "rastreio": True, "recompensa_rastreio": 19, "rastreio_encerra": args.rastreio_encerra, "residuo": 0.0,
                   "acao_velocidade": args.acao_velocidade, "levantar_velocidade": args.levantar_velocidade is not None,
                   "congelar_recuperacao": args.congelar_recuperacao,
@@ -3625,7 +4281,7 @@ def main() -> int:
                   "velocidades_trote": gait_speeds(args.velocidade_trote),
                   "velocidades_corrida": gait_speeds(args.velocidade_corrida),
                   "largada_costas": args.largada_costas, "curva_fora": args.curva_fora, "curva_inclinar": args.curva_inclinar, "pisada_largura": args.pisada_largura,
-                  "troca_freio": args.troca_freio, "troca_pe": args.troca_pe, "troca_assentada": args.troca_assentada, "troca_arrancada": args.troca_arrancada, "troca_pratica": args.troca_pratica, "corrida_largada": args.corrida_largada, "rumo_cauda": args.rumo_cauda, "inclinacao_cauda": args.inclinacao_cauda, "sem_penhascos": args.sem_penhascos, "penhascos_partes": args.penhascos_partes, "arrancada_pulo": args.arrancada_pulo, "largada_lado": args.largada_lado, "troca_assentada_lado": args.troca_assentada_lado, "troca_assentada_frente": args.troca_assentada_frente, "troca_giro_tempo": args.troca_giro_tempo, "parada_passada": args.parada_passada, "idle_pose": args.idle_pose, "parada_clipes_frente": args.parada_clipes_frente, "parada_clipes_comando": args.parada_clipes_comando, "parada_portao": args.parada_portao, "parada_livre": args.parada_livre, "parada_postura": args.parada_postura, "parada_pose_sempre": args.parada_pose_sempre, "parado_unico": args.parado_unico, "parada_direto_idle": args.parada_direto_idle, "idle_depois_freada": args.idle_depois_freada, "parado_na_locomocao": args.parado_na_locomocao, "parado_torto": args.parado_torto, "estrela_caminho": args.estrela_caminho, "estrela_curvas": args.estrela_curvas, "comando_levantar": args.comando_levantar, "comando_levantar_correndo": args.comando_levantar_correndo, "levantar_correndo_troca": args.levantar_correndo_troca, "levantar_e_ir": list(args.levantar_e_ir), "locomocao_fogo": args.locomocao_fogo, "locomocao_fogo_liberdade": args.locomocao_fogo_liberdade, "locomocao_fogo_intervalo": args.locomocao_fogo_intervalo, "parado_torto_sem_fogo": args.parado_torto_sem_fogo, "locomocao_fogo_prova": args.locomocao_fogo_prova, "giro_variado": args.giro_variado, "giro_coluna": args.giro_coluna, "quieto_custos": args.quieto_custos, "parado_estatico": args.parado_estatico, "parado_segundos": args.parado_segundos, "parado_micro": args.parado_micro, "parado_fora_pose": args.parado_fora_pose, "parado_recompensa": args.parado_recompensa, "rigor_superior": args.rigor_superior, "arrancada_unreal": args.arrancada_unreal, "arrancada_unreal_escala": args.arrancada_unreal_escala, "largada_viva": args.largada_viva, "largada_passo": args.largada_passo, "largada_no_lugar": args.largada_no_lugar, "largada_bracos_calmos": args.largada_bracos_calmos, "coluna_sem_velocidade": args.coluna_sem_velocidade, "ruido_parado": args.ruido_parado, "tonus": args.tonus, "postura_cauda": args.postura_cauda, "tonus_coluna": args.tonus_coluna, "custo_batente": args.custo_batente, "pes_firmes": args.pes_firmes, "gravidade_motores": args.gravidade_motores, "postura_base": args.postura_base, "largada_clipe": args.largada_clipe, "largada_mao": args.largada_mao, "parada_clipes_base": args.parada_clipes_base, "parada_variantes": args.parada_variantes, "parada_variantes_mascara": args.parada_variantes_mascara, "parada_entrada": args.parada_entrada, "troca_livre": args.troca_livre, "parada_pose": args.parada_pose, "parado_livre": args.parado_livre, "pose_reforco": args.pose_reforco, "empurrao_livre": args.empurrao_livre, "parado_semelhanca": args.parado_semelhanca, "passo_baixo": args.passo_baixo, "parado_dobrado_encerra": args.parado_dobrado_encerra, "parado_largo": args.parado_largo, "simetria_ciclos": args.simetria_ciclos, "peso_tarefa_parado": args.peso_tarefa_parado, "peso_estilo_parado": args.peso_estilo_parado, "troca_assentada_costas": args.troca_assentada_costas, "troca_peito_fixo": args.troca_peito_fixo, "capacidade_minutos": args.capacidade_minutos, "pegada_cruzada": args.pegada_cruzada, "estab_ancora": args.estab_ancora,
+                  "troca_freio": args.troca_freio, "troca_aceleracao": args.troca_aceleracao, "troca_pe": args.troca_pe, "troca_assentada": args.troca_assentada, "troca_arrancada": args.troca_arrancada, "troca_pratica": args.troca_pratica, "corrida_largada": args.corrida_largada, "rumo_cauda": args.rumo_cauda, "inclinacao_cauda": args.inclinacao_cauda, "sem_penhascos": args.sem_penhascos, "penhascos_partes": args.penhascos_partes, "arrancada_pulo": args.arrancada_pulo, "largada_lado": args.largada_lado, "troca_assentada_lado": args.troca_assentada_lado, "troca_assentada_frente": args.troca_assentada_frente, "troca_giro_tempo": args.troca_giro_tempo, "parada_passada": args.parada_passada, "idle_pose": args.idle_pose, "parada_clipes_frente": args.parada_clipes_frente, "parada_clipes_comando": args.parada_clipes_comando, "parada_portao": args.parada_portao, "parada_livre": args.parada_livre, "parada_postura": args.parada_postura, "parada_pose_sempre": args.parada_pose_sempre, "parado_unico": args.parado_unico, "parada_direto_idle": args.parada_direto_idle, "idle_depois_freada": args.idle_depois_freada, "parado_na_locomocao": args.parado_na_locomocao, "parado_torto": args.parado_torto, "estrela_caminho": args.estrela_caminho, "estrela_curvas": args.estrela_curvas, "comando_levantar": args.comando_levantar, "comando_levantar_correndo": args.comando_levantar_correndo, "queda_vira_comando": bool(args.queda_vira_comando), "levantar_correndo_troca": args.levantar_correndo_troca, "levantar_e_ir": list(args.levantar_e_ir), "levantar_vista": args.levantar_vista, "levantar_brucos_tempo": args.levantar_brucos_tempo, "mao_atras": args.mao_atras, "levantar_lado_agora": bool(args.levantar_lado_agora), "levantar_imitar_ancora": bool(args.levantar_imitar_ancora), "clipe_sob_pelve": bool(args.clipe_sob_pelve), "parado_preso": bool(args.parado_preso), "pernas_alinhadas": args.pernas_alinhadas, "parado_lugar": args.parado_lugar, "revisao_15h": bool(args.revisao_15h), "largada_margem_lado": bool(args.largada_margem_lado), "corrida_largura": args.corrida_largura, "parado_centro": args.parado_centro, "largada_maos": args.largada_maos, "velocidade_largura": args.velocidade_largura, "pernas_alinhadas_comando": bool(args.pernas_alinhadas_comando), "locomocao_ambiente": args.locomocao_ambiente, "referencial_clipe": bool(args.referencial_clipe), "fase_dois_pes": bool(args.fase_dois_pes), "rumo_medio": list(args.rumo_medio), "forca_contatos": bool(args.forca_contatos), "chao_grama": args.chao_grama, "reta_comando": bool(args.reta_comando), "velocidade_rotacao": bool(args.velocidade_rotacao), "imitar_velocidade": bool(args.imitar_velocidade), "ancora_parado": bool(args.ancora_parado), "ancora_fogo": args.ancora_fogo, "projeteis": list(args.projeteis), "lado_medio": list(args.lado_medio), "imitacao_portao": list(args.imitacao_portao), "simetria_comando": bool(args.simetria_comando), "ancora_sem_locomocao": bool(args.ancora_sem_locomocao), "loco_saidas_vivas": bool(args.loco_saidas_vivas), "teto_custo_tarefa": bool(args.teto_custo_tarefa), "ppo_clipe_duplo": args.ppo_clipe_duplo, "levantar_chegada_de_pe": args.levantar_chegada_de_pe, "locomocao_fogo": args.locomocao_fogo, "locomocao_fogo_liberdade": args.locomocao_fogo_liberdade, "locomocao_fogo_intervalo": args.locomocao_fogo_intervalo, "parado_torto_sem_fogo": args.parado_torto_sem_fogo, "locomocao_fogo_prova": args.locomocao_fogo_prova, "giro_variado": args.giro_variado, "giro_coluna": args.giro_coluna, "quieto_custos": args.quieto_custos, "parado_estatico": args.parado_estatico, "parado_segundos": args.parado_segundos, "parado_micro": args.parado_micro, "parado_fora_pose": args.parado_fora_pose, "parado_recompensa": args.parado_recompensa, "rigor_superior": args.rigor_superior, "arrancada_unreal": args.arrancada_unreal, "arrancada_unreal_escala": args.arrancada_unreal_escala, "largada_viva": args.largada_viva, "largada_passo": args.largada_passo, "largada_no_lugar": args.largada_no_lugar, "largada_inclinar": args.largada_inclinar, "largada_velocidade_parcela": args.largada_velocidade_parcela, "largada_imitar": args.largada_imitar, "levantar_unreal_reforco": list(args.levantar_unreal_reforco), "levantar_unreal_reforco_correndo": args.levantar_unreal_reforco_correndo, "levantar_unreal_reforco_brucos": args.levantar_unreal_reforco_brucos, "levantar_imitar_ritmo_correndo": args.levantar_imitar_ritmo_correndo, "levantar_imitar_nota": args.levantar_imitar_nota, "levantar_imitar": args.levantar_imitar, "largada_bracos_calmos": args.largada_bracos_calmos, "coluna_sem_velocidade": args.coluna_sem_velocidade, "ruido_parado": args.ruido_parado, "tonus": args.tonus, "postura_cauda": args.postura_cauda, "tonus_coluna": args.tonus_coluna, "custo_batente": args.custo_batente, "pes_firmes": args.pes_firmes, "gravidade_motores": args.gravidade_motores, "postura_base": args.postura_base, "largada_clipe": args.largada_clipe, "largada_mao": args.largada_mao, "parada_clipes_base": args.parada_clipes_base, "parada_variantes": args.parada_variantes, "parada_variantes_mascara": args.parada_variantes_mascara, "parada_entrada": args.parada_entrada, "troca_livre": args.troca_livre, "parada_pose": args.parada_pose, "parado_livre": args.parado_livre, "pose_reforco": args.pose_reforco, "empurrao_livre": args.empurrao_livre, "parado_semelhanca": args.parado_semelhanca, "passo_baixo": args.passo_baixo, "parado_dobrado_encerra": args.parado_dobrado_encerra, "parado_largo": args.parado_largo, "simetria_ciclos": args.simetria_ciclos, "peso_tarefa_parado": args.peso_tarefa_parado, "peso_estilo_parado": args.peso_estilo_parado, "troca_assentada_costas": args.troca_assentada_costas, "troca_peito_fixo": args.troca_peito_fixo, "capacidade_minutos": args.capacidade_minutos, "pegada_cruzada": args.pegada_cruzada, "estab_ancora": args.estab_ancora,
                   "trote_frente_inclinar": list(args.trote_frente_inclinar),
                   "corrida_inclinar": list(args.corrida_inclinar),
                   "corrida_costas_inclinar": list(args.corrida_costas_inclinar),
@@ -3796,6 +4452,10 @@ def main() -> int:
             print(f"comecos deitados: {LYING_STAND} (clipe) e {LYING_RUN} (levantar correndo)", flush=True)
         if args.levantar_unreal > 0:
             configurar_levantar(batch, args, args.levantar_unreal)
+            if args.levantar_unreal_pesos is not None:
+                if args.levantar_unreal_prioridade > 0:
+                    raise SystemExit("--levantar-unreal-pesos e --levantar-unreal-prioridade nao se misturam")
+                batch.set_clip_get_up_weights([float(x) for x in args.levantar_unreal_pesos])
             batch.reset(args.semente)
             ends = batch.clip_get_up_ends()
             print("levantar pelo clipe: " + "; ".join(f"{k} {ends[3 * i]:.2f} s, {ends[3 * i + 1]:.2f} m/s no fim"
@@ -3806,6 +4466,31 @@ def main() -> int:
     else:
         reference = torch.as_tensor(batch.reference_pairs(), device=device)
     model = Policy(obs_size, act_size, batch.action_ranges(), split=args.habilidades_separadas).to(device)
+    # (14/11 16h25, --levantar-costas-adaptador TAXA) O ramo do de costas, fora do grupo do ator (o Adam do ator segue o mesmo), com o
+    # otimizador dele; a porta na marca normalizada (o limiar posto depois de carregar a normalizacao).
+    adapter_opt = None
+    if args.levantar_costas_adaptador > 0:
+        if args.levantar_costas_marca <= 0:
+            raise SystemExit("--levantar-costas-adaptador precisa de --levantar-costas-marca")
+        model.enable_costas_adapter(obs_size, act_size, list(batch.observation_names()).index("levantar.variante"), 1.0e9)
+        adapter_opt = torch.optim.Adam(model.costas_adapter.parameters(), lr=args.levantar_costas_adaptador)
+    if args.levantar_costas_enxerto:
+        if args.levantar_costas_marca <= 0:
+            raise SystemExit("--levantar-costas-enxerto precisa de --levantar-costas-marca")
+        expert_src = Policy(obs_size, act_size, batch.action_ranges(), split=True)
+        expert_src.load_state_dict(torch.load(Path(args.levantar_costas_enxerto).expanduser(), map_location="cpu", weights_only=False)["model"])
+        obs_names_e = list(batch.observation_names())
+        model.enable_costas_expert(expert_src, obs_names_e.index("levantar.variante"), args.levantar_costas_marca,
+                                   torch.tensor([n.startswith("chao.contato.") for n in obs_names_e]),
+                                   torch.tensor([n.startswith("fogo.forca.") for n in obs_names_e]))
+        print(f"levantar: o enxerto do de costas e {args.levantar_costas_enxerto} (congelado; no de costas levantando sem empurrao)", flush=True)
+    if args.levantar_brucos_enxerto:
+        if not args.levantar_costas_enxerto or args.levantar_brucos_marca >= 0.0:
+            raise SystemExit("--levantar-brucos-enxerto precisa de --levantar-costas-enxerto e de --levantar-brucos-marca negativa")
+        brucos_src = Policy(obs_size, act_size, batch.action_ranges(), split=True)
+        brucos_src.load_state_dict(torch.load(Path(args.levantar_brucos_enxerto).expanduser(), map_location="cpu", weights_only=False)["model"])
+        model.enable_brucos_expert(brucos_src, args.levantar_brucos_marca)
+        print(f"levantar: o enxerto do de brucos e {args.levantar_brucos_enxerto} (marca {args.levantar_brucos_marca}; a base a ve zerada)", flush=True)
     piso_do_desvio(model, batch, args, device)
     disc = Discriminator(amp).to(device)
     disc_loco = reference_loco = disc_loco_opt = None
@@ -3886,7 +4571,36 @@ def main() -> int:
             grown = True
         # (Uma entrada nova no contrato - 31/10 22h15, o rumo pedido do corpo; 01/11, o v3, o corpo contra o chao: as
         # colunas novas em zero e o Adam do ator e do critico do zero, as formas mudaram.)
-        model.load_state_dict(split_state(expand_inputs(source_state, obs_size)) if args.habilidades_separadas else expand_inputs(source_state, obs_size))
+        loaded = split_state(expand_inputs(source_state, obs_size)) if args.habilidades_separadas else expand_inputs(source_state, obs_size)
+        if model.has_costas_adapter:
+            # (14/11 16h25) O ramo do de costas ainda nao salvo: o do comeco (a saida zero).
+            for key, value in model.state_dict().items():
+                if (key.startswith("costas_adapter.") or key == "costas_gate") and key not in loaded:
+                    loaded[key] = value
+        if model.has_costas_expert:
+            for key, value in model.state_dict().items():
+                if key.startswith(("costas_expert.", "expert_", "brucos_expert.", "brucos_")):
+                    loaded[key] = value
+        if not model.has_costas_expert and any(k.startswith(("costas_expert.", "expert_", "brucos_expert.", "brucos_")) for k in loaded):
+            # (14/11 18h25, ele: "de forma alguma segunda rede") Sem o enxerto: os pesos dele no ponto ficam de fora - uma rede so.
+            loaded = {k: v for k, v in loaded.items() if not k.startswith(("costas_expert.", "expert_", "brucos_expert.", "brucos_"))}
+            print("levantar: sem enxerto (os pesos dele no ponto ignorados) - uma rede so", flush=True)
+        if not model.has_costas_adapter and any(k.startswith("costas_adapter.") for k in loaded):
+            # (14/11 17h58) O ramo desligado (sem --levantar-costas-adaptador): os pesos dele no ponto ficam de fora. Medido: o ramo aprendia
+            # as correcoes do professor no limpo e as levava para debaixo do empurrao (pancadas 0,62 -> 0,25 no de costas).
+            loaded = {k: v for k, v in loaded.items() if not (k.startswith("costas_adapter.") or k == "costas_gate")}
+            print("levantar: o ramo do de costas desligado (os pesos dele no ponto ignorados)", flush=True)
+        model.load_state_dict(loaded)
+        if model.has_costas_adapter:
+            # O limiar da porta: metade da marca na escala da normalizacao carregada (a de pe e os outros levantares ficam em 0).
+            mark_at = int(model.costas_gate[0])
+            norm_l = model.norm.locomotion if model.split else model.norm
+            threshold = 0.5 * args.levantar_costas_marca / math.sqrt(float(norm_l.var[mark_at]) + 1e-8)
+            model.costas_gate[1] = threshold
+            print(f"levantar: o ramo do de costas na entrada {mark_at}, porta >= {threshold:.3f} (normalizada); taxa {args.levantar_costas_adaptador}",
+                  flush=True)
+            if "adapter_opt" in state:
+                adapter_opt.load_state_dict(state["adapter_opt"])
         # (07/11 04h: a versao do conjunto do juiz - a corrida nova a 6,0/5,5 e os giros parados por angulo trocaram os clipes
         # depois de 90 atualizacoes com o conjunto antigo: os juizes de novo do zero, uma vez.)
         fresh_judges = args.juiz_unreal and state["counters"].get("juiz") != JUIZ_UNREAL_VERSAO
@@ -4053,6 +4767,10 @@ def main() -> int:
         print(f"ancora no campeao: peso {args.ancora}, {len(anchor_obs)} estados do banco, rede {anchor_from}", flush=True)
 
     def export_policy() -> None:
+        # (13/11 v1, a revisao: so depois da migracao - num treino novo com --de, a copia antes dela deixava a normalizacao da recuperacao
+        # igual a da locomocao, e a mistura misturava 0 entradas sem avisar.)
+        if args.cerebro_unico and counters.get("cerebro_unico_v"):
+            sync_single_brain(model)
         export(model, run / "exports" / "policy_latest.mrlpolicy",
                {"run": args.treino, "iteration": counters["atualizacao"], "steps": counters["amostras"],
                 "observationNames": settings["observacao"]})
@@ -4060,10 +4778,13 @@ def main() -> int:
     def save() -> None:
         nonlocal log
         tmp = run / "ultimo.tmp"
+        if args.cerebro_unico and counters.get("cerebro_unico_v"):
+            sync_single_brain(model)
         torch.save({"model": model.state_dict(), "disc": disc.state_dict(), "actor_opt": actor_opt.state_dict(),
                     **({"disc_loco": disc_loco.state_dict(), "disc_loco_opt": disc_loco_opt.state_dict()} if disc_loco else {}),
                     **({"disc_loco_parado": disc_loco_idle.state_dict()} if disc_loco_idle is not None else {}),
                     "critic_opt": critic_opt.state_dict(), "disc_opt": disc_opt.state_dict(), "counters": counters,
+                    **({"adapter_opt": adapter_opt.state_dict()} if adapter_opt is not None else {}),
                     "settings": settings,
                     **({"preservation_anchor": retained.state_dict()} if retained is not None else {})}, tmp)
         tmp.replace(checkpoint)
@@ -4120,7 +4841,7 @@ def main() -> int:
         # (A taxa de cada cabeca que o ajuste achou, ao retomar.)
         for group, lr in zip(actor_opt.param_groups, counters.get("taxa_cabecas", [args.taxa_ator, args.taxa_ator])):
             group["lr"] = lr
-        if args.taxa_adaptativa_loco == 0:
+        if args.taxa_adaptativa_loco == 0 and not args.cerebro_unico:
             actor_opt.param_groups[1]["lr"] = args.taxa_ator
         print(f"taxa adaptativa (KL alvo {args.taxa_adaptativa}): recuperacao {actor_opt.param_groups[0]['lr']:.3g}, "
               f"locomocao {actor_opt.param_groups[1]['lr']:.3g}", flush=True)
@@ -4183,6 +4904,90 @@ def main() -> int:
     # coleta - 2,41 de 2,48 s - e a atualizacao 0,41 s, 14% da rodada; a GPU ficava em 1-20%. A coleta usa a rede de uma
     # atualizacao atras; o PPO e o desacoplado (Hilton et al. 2021, como o do B21): o corte contra a rede do comeco da
     # atualizacao e o peso de importancia da coleta, cortado em 2.)
+    if args.cerebro_unico:
+        if not counters.get("cerebro_unico_v"):
+            # (13/11) Uma vez: a normalizacao da mistura com a primeira camada compensada, sem o Adam da camada antiga (os momentos eram
+            # da outra parametrizacao), e o critico aquece antes do ator mexer (aquecer_desde, como no zeramento do levantar).
+            gap, merged = merge_norm_single(model, args.cerebro_unico_mistura, list(batch.observation_names()))
+            if gap > 1.0e-3:
+                raise SystemExit(f"cerebro unico: a compensacao da normalizacao mudou a locomocao em {gap:.2e} - abortado")
+            for head, opt in ((model.actor.locomotion, actor_opt), (model.critic.locomotion, critic_opt)):
+                for parameter in head[0].parameters():
+                    opt.state.pop(parameter, None)
+            counters["cerebro_unico_v"] = 1
+            counters["cerebro_unico"] = counters["atualizacao"]
+            counters["aquecer_desde"] = counters["atualizacao"]
+            # (A taxa da cabeca unica comeca a 1/5 da da locomocao - o KL do levantar ~1 por passo a 1,5e-5 cai ~25x - e o ajuste
+            # pelo KL do levantar segue dali.)
+            actor_opt.param_groups[-1]["lr"] = args.taxa_ator / 5.0
+            counters["taxa_cabecas"] = [group["lr"] for group in actor_opt.param_groups]
+            print(f"cerebro unico: normalizacao da locomocao = mistura ({args.cerebro_unico_mistura} do levantar) em {merged} entradas, "
+                  f"primeira camada compensada (diferenca {gap:.2e}); o critico aquece {args.aquecer_critico} rodadas", flush=True)
+        set_single_brain(model)
+        print(f"cerebro unico: a cabeca da locomocao comanda tudo desde a atualizacao {counters['cerebro_unico']}", flush=True)
+    teacher = None
+    distill_reserve = []
+    if args.cerebro_unico and (args.cerebro_unico_destilar[0] > 0 or args.cerebro_unico_destilar_puro > 0):
+        # (13/11 16h) O professor do kickstarting: a rede de duas cabecas inteira, congelada, com as normalizacoes dela - escolhe a
+        # cabeca pela ultima entrada, como no treino de antes.
+        if not args.cerebro_unico_professor:
+            raise SystemExit("--cerebro-unico-destilar precisa de --cerebro-unico-professor")
+        teacher = Policy(obs_size, act_size, batch.action_ranges(), split=True).to(device)
+        teacher.load_state_dict(torch.load(Path(args.cerebro_unico_professor).expanduser(), map_location=device,
+                                           weights_only=False)["model"])
+        teacher.eval()
+        for parameter in teacher.parameters():
+            parameter.requires_grad_(False)
+        print(f"cerebro unico: o professor e {args.cerebro_unico_professor} (peso {args.cerebro_unico_destilar[0]} caindo a zero em "
+              f"{int(args.cerebro_unico_destilar[1])} rodadas)", flush=True)
+    costas_teacher, costas_teacher_weight = None, 0.0
+    if args.levantar_imitar_professor:
+        if not args.cerebro_unico or args.levantar_imitar == 0:
+            raise SystemExit("--levantar-imitar-professor precisa de --cerebro-unico e --levantar-imitar")
+        costas_teacher = Policy(obs_size, act_size, batch.action_ranges(), split=True).to(device)
+        costas_teacher.load_state_dict(torch.load(Path(args.levantar_imitar_professor[0]).expanduser(), map_location=device,
+                                                  weights_only=False)["model"])
+        set_single_brain(costas_teacher)
+        costas_teacher.eval()
+        for parameter in costas_teacher.parameters():
+            parameter.requires_grad_(False)
+        costas_teacher_weight = float(args.levantar_imitar_professor[1])
+        print(f"levantar: o professor do levantar da mascara e {args.levantar_imitar_professor[0]} (peso {costas_teacher_weight})", flush=True)
+    costas_anchor, costas_anchor_weight = None, 0.0
+    if args.levantar_imitar_professor_ancora:
+        costas_anchor = Policy(obs_size, act_size, batch.action_ranges(), split=True).to(device)
+        costas_anchor.load_state_dict(torch.load(Path(args.levantar_imitar_professor_ancora[0]).expanduser(), map_location=device,
+                                                 weights_only=False)["model"])
+        set_single_brain(costas_anchor)
+        costas_anchor.eval()
+        for parameter in costas_anchor.parameters():
+            parameter.requires_grad_(False)
+        costas_anchor_weight = float(args.levantar_imitar_professor_ancora[1])
+        print(f"levantar: a ancora do resto e {args.levantar_imitar_professor_ancora[0]} (peso {costas_anchor_weight})", flush=True)
+    # (14h15, --levantar-costas-marca) A coluna da marca: o professor ve 0 nela e a ancora prende as linhas sem ela.
+    costas_mark_at = list(batch.observation_names()).index("levantar.variante") if args.levantar_costas_marca > 0 else None
+    # (14h33) As entradas do fogo: o professor so onde elas estao zeradas. (17h00: so as da FORCA - as fogo.acel.* sao a aceleracao do
+    # centro de massa, != 0 em 97% dos passos tambem no limpo: com elas o professor so ensinava o primeiro passo deitado, nunca o ajoelhar.)
+    costas_push_cols = [k for k, name in enumerate(batch.observation_names()) if name.startswith("fogo.forca.")] if costas_mark_at is not None else []
+    fire_force_cols = [k for k, name in enumerate(batch.observation_names()) if name.startswith("fogo.forca.")]
+    # (15h40, --levantar-imitar-professor-pernas) O peso de cada canal na puxada do professor (as pernas mais pesadas).
+    costas_leg_w = None
+    if costas_teacher is not None and args.levantar_imitar_professor_pernas != 1.0:
+        legs = ("LeftThigh", "LeftShin", "LeftFoot", "RightThigh", "RightShin", "RightFoot")
+        costas_leg_w = torch.tensor([args.levantar_imitar_professor_pernas if n.split(".")[0] in legs else 1.0 for n in batch.action_names()],
+                                    device=device)
+        print(f"levantar: as pernas pesam {args.levantar_imitar_professor_pernas} na puxada do professor "
+              f"({int((costas_leg_w != 1.0).sum())} de {len(costas_leg_w)} canais)", flush=True)
+    if costas_mark_at is not None:
+        print(f"levantar: a marca do de costas e {args.levantar_costas_marca} na entrada {costas_mark_at} (levantar.variante)", flush=True)
+    if args.loco_saidas_vivas:
+        dead_names = [n in LOCO_DEAD_OUTPUTS for n in batch.action_names()]
+        if sum(dead_names) != len(LOCO_DEAD_OUTPUTS):
+            raise SystemExit(f"--loco-saidas-vivas: {sum(dead_names)} das {len(LOCO_DEAD_OUTPUTS)} saidas mortas nas acoes do lote")
+        model.gait_dead = torch.tensor(dead_names, dtype=torch.bool, device=device)
+        print(f"saidas vivas: {len(LOCO_DEAD_OUTPUTS)} saidas mortas fora do log da probabilidade nas linhas da marcha", flush=True)
+    # (17/11 09h, --ancora-parado) A entrada da velocidade pedida (zero: de pe, sem pedido).
+    cmd_speed_at = list(batch.observation_names()).index("comando.velocidade") if "comando.velocidade" in list(batch.observation_names()) else None
     collector = copy.deepcopy(model)
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     update_generator = torch.Generator(device=device)
@@ -4258,6 +5063,11 @@ def main() -> int:
             # escala de ~100 de um gamma 0,99.)
             # (A rl_final: na locomocao, os pesos dela - a tarefa pesando mais e o tranco menos, o passo e rapido.)
             loco = roll["loco"]
+            if args.cerebro_unico and args.cerebro_unico_queda_aprende:
+                # (13/11 17h, a etapa das quedas: com um cerebro so, o levantar no meio da locomocao - caiu no comando, levanta e segue - e o
+                # mesmo cerebro, e aprende: as linhas da fase do levantar contam como levantar (os pesos, os custos e o aprender), nao como
+                # locomocao. Com duas cabecas a recuperacao so "salvava" o episodio, sem aprender, porque o objetivo ali era outro.)
+                loco = loco * (roll["obs"][..., -1] > .5).float()
             task_w = args.peso_tarefa + (args.peso_tarefa_loco - args.peso_tarefa) * loco
             style_w = args.peso_estilo + (args.peso_estilo_loco - args.peso_estilo) * loco
             jerk_w = args.suave + (args.suave_loco - args.suave) * loco
@@ -4305,7 +5115,10 @@ def main() -> int:
             costs = (1.0 - args.protecao_alivio * roll["prot"]) * (jerk_w * roll["jerk"] + args.limite * roll["limit"])
             # (03/11: no rastreio os custos so comem a nota do passo, nunca a deixam negativa - com a nota baixa do
             # comeco, o limite x2 deixava cada passo negativo e cair voltava a compensar, o erro da locomocao livre.)
-            costs = torch.where(loco > .5, torch.minimum(costs, roll["feedback"][..., 0]), costs)
+            # (17/11, --teto-custo-tarefa - a auditoria: com o teto na nota inteira e o peso 0,5 da tarefa, acima do teto o premio era
+            # 0,5 nota + estilo - nota: melhorar a nota TIRAVA premio. O teto na parte da tarefa: acima dele o premio nao cai com a nota.)
+            cap = task_w * roll["feedback"][..., 0] if args.teto_custo_tarefa else roll["feedback"][..., 0]
+            costs = torch.where(loco > .5, torch.minimum(costs, cap), costs)
             if args.levantar_unreal > 0:
                 # (11/11 14h, a regra dele - "a recompensa por ficar na pose nunca pode ser maior que o objetivo de nao cair": com a
                 # recuperacao no comando os custos nunca passam da nota, que e >= 0; acabar cedo nunca compensa.)
@@ -4316,6 +5129,14 @@ def main() -> int:
                 # cabeca da locomocao os custos tambem nunca passam da nota - de pe a nota nunca fica negativa e cair nunca compensa.)
                 idle_head = (roll["obs"][..., -1] > .5) & (loco < .5)
                 costs = torch.where(idle_head, torch.minimum(costs, roll["feedback"][..., 0].clamp(min=0.0)), costs)
+            if args.cerebro_unico and args.cerebro_unico_queda_aprende:
+                # (13/11 17h05, a regra dele - cair nunca pode compensar) Caido no meio de um episodio de locomocao (o levantar do comando),
+                # o tempo no chao e so custo: sem a nota do levantar, sem o premio do tempo na entrega (ate 40 x 0,01 = 0,4 de retorno,
+                # mais que 1,5 s de locomocao, ~0,11-0,19) e sem estilo; -custo por passo. Levantar rapido paga por devolver a tarefa.
+                # O levantar com a nota inteira fica nos exercicios dele.
+                rescue = (roll["loco"] > .5) & (roll["obs"][..., -1] < .5)
+                task_style = torch.where(rescue, torch.full_like(task_style, -args.cerebro_unico_queda_custo), task_style)
+                costs = torch.where(rescue, torch.zeros_like(costs), costs)
             rew = (1.0 - gamma) * (task_style - costs) + gamma * roll["boot"]
             adv = torch.zeros(T, n, device=device)
             gae = torch.zeros(n, device=device)
@@ -4329,22 +5150,92 @@ def main() -> int:
             flat = lambda x: x.reshape(T * n, *x.shape[2:])  # noqa: E731
             f_obs, f_act, f_adv, f_ret = flat(roll["obs"]), flat(roll["act"]), flat(adv), flat(ret)
             f_mirror = flat(roll["espelho"])
+            # (17/11 11h, --ancora-fogo) As linhas com forca de fogo agora ou nos ultimos S segundos (dentro da coleta).
+            # shortcut: um empurrao antes do comeco da coleta nao marca as linhas seguintes; ~1 s em ~2 s de coleta - aceitavel.
+            f_fire_recent = None
+            if args.ancora_fogo > 0 and fire_force_cols:
+                hit = (roll["obs"][..., fire_force_cols].abs().sum(-1) > 1.0e-6).float().cumsum(0)
+                span = max(1, int(round(args.ancora_fogo / batch.policy_dt)))
+                lag = torch.cat([torch.zeros_like(hit[:span]), hit[:-span]], 0) if span < T else torch.zeros_like(hit)
+                f_fire_recent = flat((hit - lag) > 0)
             # (03/11 18h30, ele: "como tu espera que ele consiga se mover para os lados e costas?" - a rede de levantar
             # nunca deu um passo de lado ou de costas e o RL sozinho so achava a frente. No comeco, a cabeca da locomocao
             # aprende supervisionada os alvos de motor do clipe do rumo pedido (na acao normalizada), com o peso caindo a
             # zero em --imitar-atualizacoes; o clipe nunca vai aos motores.)
             imitate = args.imitar * max(0.0, 1.0 - counters["atualizacao"] / max(1, args.imitar_atualizacoes))
-            f_clip = (flat(roll["clip"]) - model.action_mid) / model.action_half if imitate > 0 else None
+            # (13/11 15h45, --cerebro-unico-imitar) O comeco do levantar da cabeca unica: a media dela nas linhas do levantar puxada
+            # para os alvos de motor do clipe uma decisao a frente (os mesmos professores da Unreal), o peso caindo a zero. Medido: a
+            # cabeca da locomocao deitada manda 20% dos eixos para fora da faixa (a do levantar, 3%) e em 450 rodadas de RL a
+            # semelhanca nao saiu de 0,16 - a cabeca zerada de 11/11 comecava no meio do movimento.
+            rise_imitate = 0.0
+            if args.cerebro_unico and args.cerebro_unico_imitar[0] > 0:
+                since = counters.setdefault("cerebro_unico_imitar_desde", counters["atualizacao"])
+                rise_imitate = args.cerebro_unico_imitar[0] * max(0.0, 1.0 - (counters["atualizacao"] - since)
+                                                                   / max(1.0, args.cerebro_unico_imitar[1]))
+            if rise_imitate > 0 and args.cerebro_unico_imitar_taxa > 0:
+                # (13/11 15h42: a 2,2e-6 a MSE ate o clipe caia 0,3% por rodada - 0,99 -> 0,93 em 20 -, devagar para a janela de 300.
+                # Enquanto imita, esta taxa; o freio da fase de pe (0,4) e a volta (2,0) seguem guardando a locomocao.)
+                actor_opt.param_groups[-1]["lr"] = args.cerebro_unico_imitar_taxa
+            f_clip = (flat(roll["clip"]) - model.action_mid) / model.action_half if imitate > 0 or rise_imitate > 0 or costas_teacher is not None else None
             # (01/11 21h50: normalizar tudo junto afogava o levantar - a imitacao x4 da locomocao varia muito mais e a
             # vantagem do levantar ia a ~0; ele: "a calibragem de recompensa dele esta bem defeituosa". Cada grupo a parte.)
             f_loco = f_obs[:, -1] > .5 if model.split else flat(loco) > .5
             # Recovery can rescue a locomotion episode without learning its different objective.
             learn = (~f_loco if args.congelar_locomocao else f_loco if args.congelar_recuperacao else ~(flat(loco) > .5) | f_loco) \
                 if model.split else torch.ones_like(f_loco)
+            # (13/11 15h35, o cerebro unico parado em 0,16: o critico de cada fase - a variancia explicada do retorno e o desvio da
+            # vantagem antes de normalizar, nas linhas que aprendem.)
+            phase_stats = {}
+            if args.cerebro_unico:
+                f_val = flat(roll["val"])
+                for tag, mask in (("lev", learn & ~f_loco), ("pe", learn & f_loco)):
+                    if int(mask.sum()) > 10:
+                        r_, v_ = f_ret[mask], f_val[mask]
+                        phase_stats[f"ev_{tag}"] = float(1.0 - (r_ - v_).var() / (r_.var() + 1e-12))
+                        phase_stats[f"vantagem_{tag}"] = float(f_adv[mask].std())
+                        phase_stats[f"retorno_{tag}"] = float(r_.mean())
             for group in (f_loco, ~f_loco):
                 if int(group.sum()) > 1:
                     f_adv[group] = (f_adv[group] - f_adv[group].mean()) / (f_adv[group].std() + 1e-8)
-            anchor = skill_logp(model, model.distribution(model.norm(f_obs)), f_act, f_obs)
+            phase_weight = None
+            if args.cerebro_unico and args.cerebro_unico_peso_levantar > 0:
+                # (13/11 15h20, --cerebro-unico-peso-levantar) A parte do levantar no gradiente da cabeca unica: com 17% das linhas ele
+                # tinha 17% da perda (a cabeca do levantar de 11/11 tinha 100%) e, em 300 rodadas com o KL dele no alvo, a semelhanca
+                # nao saiu de 0,16. Cada fase pesa a fracao pedida da perda do PPO, nas linhas que aprendem.
+                rising = learn & ~f_loco
+                share = float(rising.float().sum()) / max(1.0, float(learn.float().sum()))
+                if 0.0 < share < 1.0:
+                    w_rise = args.cerebro_unico_peso_levantar
+                    phase_weight = torch.where(~f_loco, torch.full_like(f_adv, w_rise / share),
+                                               torch.full_like(f_adv, (1.0 - w_rise) / (1.0 - share)))
+            distill, distill_weight = 0.0, None
+            if teacher is not None:
+                since = counters.setdefault("cerebro_unico_destilar_desde", counters["atualizacao"])
+                distill = args.cerebro_unico_destilar[0] * max(0.0, 1.0 - (counters["atualizacao"] - since)
+                                                               / max(1.0, args.cerebro_unico_destilar[1]))
+                if distill > 0:
+                    rising_rows = learn & ~f_loco
+                    share_rise = float(rising_rows.float().sum()) / max(1.0, float(learn.float().sum()))
+                    if 0.0 < share_rise < 1.0:
+                        distill_weight = torch.where(~f_loco, torch.full_like(f_adv, 0.5 / share_rise),
+                                                     torch.full_like(f_adv, 0.5 / (1.0 - share_rise)))
+                    else:
+                        distill_weight = torch.ones_like(f_adv)
+                    if args.cerebro_unico_destilar_taxa > 0:
+                        actor_opt.param_groups[-1]["lr"] = args.cerebro_unico_destilar_taxa
+            pure = False
+            if teacher is not None and args.cerebro_unico_destilar_puro > 0:
+                since_pure = counters.setdefault("cerebro_unico_puro_desde", counters["atualizacao"])
+                pure = counters["atualizacao"] - since_pure < args.cerebro_unico_destilar_puro
+                if not pure and not counters.get("cerebro_unico_puro_fim"):
+                    # (O fim da copia pura: o PPO comeca na taxa da locomocao/5 e o ajuste pelo KL do levantar segue dali.)
+                    counters["cerebro_unico_puro_fim"] = counters["atualizacao"]
+                    actor_opt.param_groups[-1]["lr"] = args.taxa_ator / 5.0
+            # (14/11 13h35, o DAgger do de costas: o professor tambem ensina - sem isto o freio de 0,12 na fase do levantar, que o puxao
+            # do professor sempre passa, parava a rede inteira em 7-11 dos 16 passos e a perda dele ficava em ~0,09; o freio e a volta
+            # da fase de pe seguem valendo.)
+            teaching = rise_imitate > 0 or distill > 0 or pure or costas_teacher is not None or costas_anchor is not None
+            anchor = skill_logp(model, model.distribution(model.norm(f_obs)), f_act, f_obs, gait=f_mirror[:, 0] > .5)
             logp_coleta = flat(roll["logp"])
             weight = torch.exp((anchor - logp_coleta).clamp(max=math.log(2.0)))
         replay = torch.cat([replay, pairs[style_rows]])[-100_000:]
@@ -4360,32 +5251,182 @@ def main() -> int:
         skill_kl = [0.0, 0.0]
         minibatches = 0
         loco_before = loco_restore = None
+        if pure:
+            # (13/11 16h20, a copia pura - DAgger: os estados que o aluno visitou nas ultimas rodadas, a acao media e o valor do professor.
+            # A copia junto do PPO (kickstarting, 16h00) parou em MSE 0,07 no chao sem levantar e mexeu na locomocao - trote 0,931 -> 0,872:
+            # 16 passos por rodada era pouco para copiar e muito para a rede de pe.)
+            skill_frozen = [True, True]
+            distill_reserve.append(f_obs.detach())
+            del distill_reserve[:-max(1, args.cerebro_unico_destilar_reserva)]
+            data = torch.cat(distill_reserve)
+            with torch.no_grad():
+                t_act = torch.cat([teacher.actor(teacher.norm(c)) for c in data.split(16384)])
+                t_val = torch.cat([teacher.value(teacher.norm(c)) for c in data.split(16384)])
+                rise = data[:, -1] <= .5
+                share = float(rise.float().mean())
+                w_row = (torch.where(rise, torch.full_like(t_val, 0.5 / share), torch.full_like(t_val, 0.5 / (1.0 - share)))
+                         if 0.0 < share < 1.0 else torch.ones_like(t_val))
+                keep = torch.ones_like(t_act)
+                if model.step_count and model.joint_names:
+                    chan = torch.arange(t_act.shape[-1], device=t_act.device)
+                    steps_ch = (chan >= len(model.joint_names)) & (chan < len(model.joint_names) + model.step_count)
+                    keep = torch.where(rise[:, None] & steps_ch, torch.zeros_like(keep), keep)
+            for group in actor_opt.param_groups:
+                group["lr"] = args.cerebro_unico_destilar_taxa if args.cerebro_unico_destilar_taxa > 0 else 1.0e-4
+            acc = {"destilar_lev": [0.0, 0], "destilar_pe": [0.0, 0], "destilar_valor": [0.0, 0]}
+            for _ in range(args.cerebro_unico_destilar_passos):
+                pick = torch.randint(len(data), (min(4096, len(data)),), device=data.device, generator=update_generator)
+                x = model.norm(data[pick])
+                gap = ((model.actor(x) - t_act[pick]).pow(2) * keep[pick]).mean(-1)
+                loss = (gap * w_row[pick]).mean()
+                actor_opt.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(list(model.actor.locomotion.parameters()), 1.0)
+                actor_opt.step()
+                value_loss = ((model.value(x) - t_val[pick]).pow(2) * w_row[pick]).mean()
+                critic_opt.zero_grad()
+                value_loss.backward()
+                nn.utils.clip_grad_norm_(list(model.critic.locomotion.parameters()), 1.0)
+                critic_opt.step()
+                with torch.no_grad():
+                    r = rise[pick]
+                    if r.any():
+                        acc["destilar_lev"][0] += float(gap[r].mean()); acc["destilar_lev"][1] += 1
+                    if (~r).any():
+                        acc["destilar_pe"][0] += float(gap[~r].mean()); acc["destilar_pe"][1] += 1
+                    acc["destilar_valor"][0] += float(value_loss); acc["destilar_valor"][1] += 1
+            phase_stats.update({k: v[0] / max(1, v[1]) for k, v in acc.items()})
+            phase_stats["destilar_reserva"] = int(len(data))
         for _ in range(args.epocas):
             for idx in torch.randperm(T * n, device=device, generator=update_generator).split(minibatch):
                 idx = idx[learn[idx]]
                 if not len(idx): continue
                 obs_n = model.norm(f_obs[idx])
-                vf_loss = (model.value(obs_n) - f_ret[idx]).pow(2).mean()
-                critic_opt.zero_grad()
-                vf_loss.backward()
-                if model.split:
-                    nn.utils.clip_grad_norm_(model.critic.recovery.parameters(), 1.0)
-                    nn.utils.clip_grad_norm_(model.critic.locomotion.parameters(), 1.0)
+                if pure:
+                    vf_loss = torch.zeros((), device=obs_n.device)
                 else:
-                    nn.utils.clip_grad_norm_(model.critic.parameters(), 1.0)
-                critic_opt.step()
+                    vf_loss = (model.value(obs_n) - f_ret[idx]).pow(2).mean()
+                    critic_opt.zero_grad()
+                    vf_loss.backward()
+                    if model.split:
+                        nn.utils.clip_grad_norm_(model.critic.recovery.parameters(), 1.0)
+                        nn.utils.clip_grad_norm_(model.critic.locomotion.parameters(), 1.0)
+                    else:
+                        nn.utils.clip_grad_norm_(model.critic.parameters(), 1.0)
+                    critic_opt.step()
                 dist_mb = model.distribution(obs_n)
-                logp = skill_logp(model, dist_mb, f_act[idx], f_obs[idx])
+                logp = skill_logp(model, dist_mb, f_act[idx], f_obs[idx], gait=f_mirror[idx][:, 0] > .5)
                 # (03/11 21h06: com o desvio 0,05 da cabeca da locomocao a razao das linhas que a imitacao moveu estourava -
                 # exp de centenas -, e o NaN do gradiente dessas linhas mascaradas envenenava a rede: o log da razao preso.)
                 ratio = torch.exp((logp - anchor[idx]).clamp(-20.0, 20.0))
                 w = weight[idx]
                 a_mb = f_adv[idx]
-                pol_loss = -torch.min(ratio * w * a_mb, ratio.clamp(1 - clip, 1 + clip) * w * a_mb).mean()
-                if f_clip is not None:
+                surrogate = torch.min(ratio * w * a_mb, ratio.clamp(1 - clip, 1 + clip) * w * a_mb)
+                if args.ppo_clipe_duplo > 0:
+                    # (15/11 15h, a revisao: a razao vai a e^20 e, com a vantagem negativa, o min deixava a perda sem limite - os picos de KL
+                    # de 1e5-1e7 nas linhas do levantar dominavam o passo. O clipe duplo (Ye et al. 2020): nao passa de C x A.)
+                    surrogate = torch.where(a_mb < 0, torch.maximum(surrogate, args.ppo_clipe_duplo * w * a_mb), surrogate)
+                pol_loss = -(surrogate if phase_weight is None else surrogate * phase_weight[idx]).mean()
+                if distill > 0:
+                    with torch.no_grad():
+                        target = teacher.actor(teacher.norm(f_obs[idx]))
+                    gap = (dist_mb.mean - target).pow(2)
+                    if model.step_count and model.joint_names:
+                        # (Os canais do passo nao contam no levantar - a recuperacao nao os usa, como no skill_logp.)
+                        chan = torch.arange(gap.shape[-1], device=gap.device)
+                        steps_ch = (chan >= len(model.joint_names)) & (chan < len(model.joint_names) + model.step_count)
+                        gap = torch.where((f_obs[idx][:, -1:] <= .5) & steps_ch, torch.zeros_like(gap), gap)
+                    per_row = gap.mean(-1)
+                    pol_loss = pol_loss + distill * (per_row * distill_weight[idx]).mean()
+                    with torch.no_grad():
+                        rise_mask = ~f_loco[idx]
+                        if rise_mask.any():
+                            stats["destilar_lev"] = stats.get("destilar_lev", 0.0) + float(per_row[rise_mask].mean())
+                        if (~rise_mask).any():
+                            stats["destilar_pe"] = stats.get("destilar_pe", 0.0) + float(per_row[~rise_mask].mean())
+                if f_clip is not None and rise_imitate > 0:
+                    rising = ~f_loco[idx] & (flat(roll["clip"])[idx].abs().sum(-1) > 0)
+                    if rising.any():
+                        joints = len(model.joint_names)
+                        rise_im = (dist_mb.mean[rising][:, :joints] - f_clip[idx][rising][:, :joints]).pow(2).mean()
+                        pol_loss = pol_loss + rise_imitate * rise_im
+                        stats["imitacao_levantar"] = stats.get("imitacao_levantar", 0.0) + rise_im.item()
+                # (14/11 18h50, ele: "o especialista nem deveria existir mais") A ancora tambem sem o professor.
+                if costas_teacher is not None or costas_anchor is not None:
+                    rising = ~f_loco[idx] & (flat(roll["clip"])[idx].abs().sum(-1) > 0)
+                    if costas_mark_at is not None:
+                        # (14h25) Com a marca: todas as linhas do de costas marcadas (limpo e sob fogo, ate a troca) - deitado o de fogo e
+                        # igual ao limpo, e o PPO adaptativo puxava o rolar rapido na mesma entrada em que o professor puxava o clipe.
+                        rising = ~f_loco[idx] & (f_obs[idx][:, costas_mark_at] >= 0.5 * args.levantar_costas_marca)
+                        # (14h33) So sem empurrao agindo: nos estados empurrados o professor (treinado no limpo) dava acoes ruins - saltos
+                        # de KL desfeitos pela volta e o puxao vazando para o correndo de costas (12,8 -> 15,9 cm). Ali fica o PPO.
+                        if costas_push_cols:
+                            rising = rising & (f_obs[idx][:, costas_push_cols].abs().sum(-1) < 1.0e-6)
+                    if costas_teacher is not None and rising.any():
+                        with torch.no_grad():
+                            seen = f_obs[idx][rising]
+                            if costas_mark_at is not None:
+                                seen = seen.clone(); seen[:, costas_mark_at] = 0.0
+                            target = costas_teacher.actor(costas_teacher.norm(seen))
+                        if model.has_costas_adapter:
+                            # (16h25) Com o ramo do de costas, o professor ensina so o ramo: a rede de base entra destacada (sem gradiente
+                            # do professor) - nada da puxada vaza para o correndo de costas nem para a locomocao.
+                            xr = obs_n[rising]
+                            gap = (model.actor(xr).detach() + model.costas_adapter(xr) - target).pow(2)
+                        else:
+                            gap = (dist_mb.mean[rising] - target).pow(2)
+                        if costas_leg_w is not None:
+                            gap = gap * costas_leg_w
+                        if model.step_count and model.joint_names:
+                            # (Os canais do passo nao contam no levantar, como no --cerebro-unico-destilar.)
+                            chan = torch.arange(gap.shape[-1], device=gap.device)
+                            gap = gap[:, (chan < len(model.joint_names)) | (chan >= len(model.joint_names) + model.step_count)]
+                        teach = gap.mean()
+                        pol_loss = pol_loss + costas_teacher_weight * teach
+                        stats["professor_levantar"] = stats.get("professor_levantar", 0.0) + teach.item()
+                    # (14/11 13h50, --levantar-imitar-professor-ancora) As linhas de pe presas ao principal congelado. (14h02: so as de
+                    # pe - com todas as outras, o de costas sob fogo, deitado no mesmo estado do limpo, ficava preso ao rolar antigo e
+                    # brigava com o professor na mesma entrada; os levantares seguem no PPO, como no DAgger da manha.)
+                    # (14h15) Com a marca: todas as linhas sem ela (os outros levantares, o correndo de costas, a locomocao) e as de pe.
+                    others = f_loco[idx] | (f_obs[idx][:, costas_mark_at] < 0.5 * args.levantar_costas_marca) if costas_mark_at is not None and not args.ancora_so_locomocao else f_loco[idx]
+                    # (17/11, --ancora-sem-locomocao - o plano de desentortar: a ancora segurava a locomocao na rede torta; o modo de ensino fica.)
+                    if args.ancora_sem_locomocao:
+                        others = others & ~f_loco[idx]
+                        # (17/11 09h, --ancora-parado) O parado e a freada (de pe, sem pedido) tambem na ancora.
+                        if args.ancora_parado and cmd_speed_at is not None:
+                            others = others | (f_loco[idx] & (f_obs[idx][:, cmd_speed_at].abs() <= 1.0e-6))
+                        if f_fire_recent is not None:
+                            fired = f_loco[idx] & f_fire_recent[idx]
+                            others = others | fired
+                            stats["ancora_fogo_linhas"] = stats.get("ancora_fogo_linhas", 0.0) + fired.float().mean().item()
+                    if costas_anchor is not None and others.any():
+                        with torch.no_grad():
+                            held_in = f_obs[idx][others]
+                            if args.levantar_brucos_marca < 0.0:
+                                held_in = held_in.clone()
+                                held_in[:, costas_mark_at] = held_in[:, costas_mark_at].clamp(min=0.0)
+                            held = costas_anchor.actor(costas_anchor.norm(held_in))
+                        per_row = (dist_mb.mean[others] - held).pow(2).mean(-1)
+                        # (14h47) Duas partes de peso igual - as de pe e os outros levantares: na media unica, as do levantar (o correndo
+                        # de costas) eram poucas entre as da locomocao e quase nao pesavam (correndo de costas 11,8 -> 13,3 cm, 1,15 -> 1,35 s).
+                        rise_rows = ~f_loco[idx][others]
+                        hold = per_row[~rise_rows].mean() if (~rise_rows).any() else per_row.new_zeros(())
+                        if rise_rows.any():
+                            hold_rise = per_row[rise_rows].mean()
+                            hold = hold + hold_rise
+                            stats["ancora_levantares"] = stats.get("ancora_levantares", 0.0) + hold_rise.item()
+                        pol_loss = pol_loss + costas_anchor_weight * hold
+                        stats["ancora_resto"] = stats.get("ancora_resto", 0.0) + hold.item()
+                if f_clip is not None and imitate > 0:
                     shown = f_loco[idx] & (flat(roll["clip"])[idx].abs().sum(-1) > 0)
                     if shown.any():
-                        imitation = (dist_mb.mean[shown] - f_clip[idx][shown]).pow(2).mean()
+                        if args.imitar_velocidade and model.step_count and model.joint_names:
+                            # (17/11, --imitar-velocidade) As posicoes e as velocidades do clipe; os canais do passo fora.
+                            chan = torch.arange(dist_mb.mean.shape[-1], device=dist_mb.mean.device)
+                            cols = (chan < len(model.joint_names)) | (chan >= len(model.joint_names) + model.step_count)
+                            imitation = (dist_mb.mean[shown][:, cols] - f_clip[idx][shown][:, cols]).pow(2).mean()
+                        else:
+                            imitation = (dist_mb.mean[shown] - f_clip[idx][shown]).pow(2).mean()
                         pol_loss = pol_loss + imitate * imitation
                         stats["imitacao"] = stats.get("imitacao", 0.0) + imitation.item()
                 if mirror is not None:
@@ -4397,7 +5438,8 @@ def main() -> int:
                     # dobrou as quedas; ele: "esse problema se propaga em todos os movimentos de corrida... isso inclui as curvas".)
                     man = f_mirror[idx][:, 2]
                     rows = f_loco[idx] & (f_mirror[idx][:, 0] > .5) & ((man == 0) | args.simetria_manobras
-                                                                        | ((man >= 5) & args.simetria_curvas))
+                                                                        | ((man >= 5) & args.simetria_curvas)
+                                                                        | ((man == 12) & args.simetria_comando))
                     if rows.any():
                         with torch.set_grad_enabled(args.simetria > 0):
                             seen = f_obs[idx][rows]
@@ -4452,10 +5494,15 @@ def main() -> int:
                     if model.split and args.kl_max > 0:
                         for skill, mask in enumerate((~f_loco[idx], f_loco[idx])):
                             # (Na imitacao do comeco a cabeca da locomocao nao freia pelo KL.)
-                            if skill == 1 and f_clip is not None: continue
+                            if skill == 1 and imitate > 0: continue
+                            # (13/11, --cerebro-unico-imitar: enquanto imita, a fase do levantar nao freia - a de pe segue com o freio.)
+                            if skill == 0 and teaching: continue
                             limit = args.kl_max_loco if skill == 1 and args.kl_max_loco > 0 else args.kl_max
                             if mask.any() and kl_rows[mask].mean() > limit:
                                 skill_frozen[skill] = True
+                if args.cerebro_unico and any(skill_frozen):
+                    # (13/11) Uma cabeca so: o freio de qualquer das fases para a rede inteira.
+                    skill_frozen[0] = skill_frozen[1] = True
                 if model.split:
                     actor_frozen = all(skill_frozen)
                 elif args.kl_max > 0 and kl > args.kl_max:
@@ -4467,7 +5514,12 @@ def main() -> int:
                         for skill, mask in enumerate((~f_loco[idx], f_loco[idx])):
                             if not skill_frozen[skill] and mask.any(): skill_steps[skill] += 1
                     actor_opt.zero_grad()
+                    if adapter_opt is not None:
+                        adapter_opt.zero_grad()
                     pol_loss.backward()
+                    if adapter_opt is not None:
+                        nn.utils.clip_grad_norm_(list(model.costas_adapter.parameters()), 1.0)
+                        adapter_opt.step()
                     if model.split:
                         for frozen, head, std in ((skill_frozen[0], model.actor.recovery, model.log_std),
                                                   (skill_frozen[1], model.actor.locomotion, model.loco_log_std)):
@@ -4554,31 +5606,44 @@ def main() -> int:
                 pool = torch.nonzero(f_loco & learn).squeeze(-1)
                 if len(pool):
                     pick = pool[torch.randint(len(pool), (min(minibatch, len(pool)),), device=device, generator=update_generator)]
-                    last = skill_logp(model, model.distribution(model.norm(f_obs[pick])), f_act[pick], f_obs[pick])
+                    last = skill_logp(model, model.distribution(model.norm(f_obs[pick])), f_act[pick], f_obs[pick], gait=f_mirror[pick][:, 0] > .5)
                     log_l = (last - anchor[pick]).clamp(-20.0, 20.0)
                     if (torch.exp(log_l) - 1 - log_l).mean() > args.kl_reverter_loco:
                         for q, old in zip(list(model.actor.locomotion.parameters()) + [model.loco_log_std], loco_before):
                             q.copy_(old)
                         stats["revertidos_loco"] = stats.get("revertidos_loco", 0.0) + 1.0
             loco_before = None
-        if args.taxa_adaptativa > 0 and len(actor_opt.param_groups) == 2 \
+        # (13/11, --cerebro-unico-imitar: a taxa parada enquanto imita - o KL do levantar ali e o da imitacao, nao o do PPO.)
+        if args.taxa_adaptativa > 0 and len(actor_opt.param_groups) == 2 and not (args.cerebro_unico and teaching) \
                 and counters["atualizacao"] - counters.get("aquecer_desde", 0) >= args.aquecer_critico:
             # (05/11: cada cabeca para o KL alvo no fim da atualizacao - o KL cresce ~ com o quadrado do passo, entao a raiz
             # quarta da razao, no maximo 10% por atualizacao; so a cabeca que treinou nesta.)
             for skill, group in enumerate(actor_opt.param_groups):
                 target = args.taxa_adaptativa if skill == 0 or args.taxa_adaptativa_loco is None else args.taxa_adaptativa_loco
+                measured = skill_kl[skill]
+                if args.cerebro_unico:
+                    # (13/11 14h56, medido: com a taxa fixa da locomocao, 1,5e-5, o primeiro passo ja dava KL 0,3-1,2 nas linhas do
+                    # levantar - uma rede treinada responde muito mais a um passo do Adam do que a cabeca zerada de 11/11 - e o freio de
+                    # 0,12 deixava 1 passo de 16. A cabeca unica pela fase do levantar, com o alvo dele (0,03, a correcao 1 de 11/11);
+                    # a de pe fica com o freio e a volta dela. A recuperacao nao treina.)
+                    if skill == 0:
+                        continue
+                    target, measured = args.taxa_adaptativa, skill_kl[0]
                 if target <= 0:
                     continue
                 if skill_steps[skill] > 0 or skill_frozen[skill]:
-                    factor = (target / max(skill_kl[skill], 1.0e-6)) ** 0.25
+                    factor = (target / max(measured, 1.0e-6)) ** 0.25
                     group["lr"] = float(np.clip(group["lr"] * np.clip(factor, 0.9, 1.1), 1.0e-6, 3.0e-4))
             counters["taxa_cabecas"] = [group["lr"] for group in actor_opt.param_groups]
+        if (costas_teacher is not None or costas_anchor is not None) and args.levantar_imitar_professor_taxa > 0:
+            actor_opt.param_groups[-1]["lr"] = args.levantar_imitar_professor_taxa
         # (12/11 16h) Nunca numa cabeca congelada: de 11/11 14h48 a 12/11 o ReDo seguiu na locomocao congelada, julgando as unidades so
         # pelos 1,5 s de locomocao depois do levantar, e zerou as que a locomocao de verdade usa (vault plano_fogo_da_locomocao_12_11).
         if args.redo_atualizacoes > 0 and model.split and not args.congelar_locomocao:
             # (07/11) A janela do ReDo: o maximo de cada unidade nas linhas da locomocao desde o ultimo renascimento.
             with torch.no_grad():
-                rows = f_obs[f_loco]
+                # (13/11, --cerebro-unico: as duas fases - so com as de pe, as unidades que o levantar usa pareceriam mortas.)
+                rows = f_obs if args.cerebro_unico else f_obs[f_loco]
                 if len(rows):
                     rows = rows[torch.randperm(len(rows), device=device, generator=update_generator)[:8192]]
                     z = model.norm(rows)
@@ -4617,6 +5682,7 @@ def main() -> int:
         if device.type == "cuda":
             torch.cuda.synchronize()
         out = {k: v / max(1, steps) for k, v in stats.items()}
+        out.update(phase_stats)
         if "revertidos_loco" in stats:
             out["revertidos_loco"] = int(stats["revertidos_loco"])
         out.update(mm_stats)
@@ -4981,6 +6047,10 @@ def main() -> int:
                 perf = drill_performance(held_rows, args.locomocao_segundos)
                 res[key] = {"de_pe": round(float(perf["fim"]), 3), "vel": round(float(perf["vel"]), 3), "n": len(rows),
                             "sem": round(float(perf["semelhanca"]), 3)}
+                # (13/11 v1, a revisao: o de_pe conta qualquer fim antes da hora - no comando e na estrela ~80% eram o fim pelo virado, a regra
+                # do treino, nao queda. A queda de verdade: o fim por cair ou perder o equilibrio, coluna 32 em 1 ou 2.)
+                if held_rows.shape[1] > 32:
+                    res[key]["caiu"] = round(float(np.isin(held_rows[:, 32], (1, 2)).mean()), 3)
                 if key.startswith("fogo_") and held_rows.shape[1] > 45:
                     pushed = held_rows[held_rows[:, 38] > 0]
                     res[key]["sem_cair_empurrao"] = round(float(1.0 - pushed[:, 45].mean()), 3) if len(pushed) else None
@@ -5047,7 +6117,9 @@ def main() -> int:
                 # congelada a dela fica parada - 13h10 medido: aprendendo os estados do levantar, a pose do parado dela caiu
                 # 0,66 -> 0,36-0,57 com os pesos intactos.)
                 if model.split:
-                    collector.norm.update(obs, recovery=args.recuperacao_norma, locomotion=not args.congelar_locomocao)
+                    # (13/11, --cerebro-unico: a mistura fica parada - mexer nela mexe na locomocao.)
+                    if not args.cerebro_unico:
+                        collector.norm.update(obs, recovery=args.recuperacao_norma, locomotion=not args.congelar_locomocao)
                 else:
                     collector.norm.update(obs)
                 obs_n = collector.norm(obs)
@@ -5062,7 +6134,8 @@ def main() -> int:
                 if mirror is not None:
                     # (O espelho do estado destas entradas: lido antes do step, como elas.)
                     roll["espelho"][t] = torch.as_tensor(batch.mirror_info(), device=device)
-                if args.imitar > 0:
+                # (14/11 09h10: o DAgger do rolar tambem precisa das linhas marcadas pelos alvos do clipe - sem isto a perda do professor ficou em 0.)
+                if args.imitar > 0 or (args.cerebro_unico and args.cerebro_unico_imitar[0] > 0) or args.levantar_imitar_professor:
                     roll["clip"][t] = torch.as_tensor(batch.locomotion_targets(), device=device)
                 # (01/11 00h17: o tranco na acao media da rede, nao na sorteada - nas sorteadas ele tambem punia o ruido
                 # da exploracao, 2 sigma^2 em media, e o PPO encolhia o desvio para fugir do custo; o Codex concordou.)
@@ -5070,7 +6143,7 @@ def main() -> int:
                 roll["limit"][t] = torch.clamp(mean.abs() - 0.8, min=0.0).pow(2).mean(-1)
                 roll["jerk"][t] = torch.where(previous_valid, (mean - previous_action).pow(2).mean(-1),
                                               torch.zeros_like(previous_valid, dtype=torch.float32))
-                roll["logp"][t] = skill_logp(collector, dist, action, obs)
+                roll["logp"][t] = skill_logp(collector, dist, action, obs, gait=(roll["espelho"][t][:, 0] > .5) if mirror is not None else None)
                 roll["val"][t] = collector.value(obs_n)
                 env_action = collector.env_action(action, obs).cpu().numpy().astype(np.float32)
                 roll["prot"][t] = torch.as_tensor(batch.protecting(), device=device).float()
@@ -5359,7 +6432,22 @@ def main() -> int:
                     start = counters.setdefault("reforco_costas_inicio", counters["atualizacao"])
                     ramp = max(1.0, float(args.levantar_unreal_reforco[1]))
                     emphasis = args.levantar_unreal_reforco[0] * min(1.0, (counters["atualizacao"] - start) / ramp)
-                    batch.set_clip_get_up_emphasis([emphasis] + [0.0] * (len(LEVANTAR_UNREAL) - 1))
+                    per_exercise = [emphasis] + [0.0] * (len(LEVANTAR_UNREAL) - 1)
+                    # (14/11 20h45) O mesmo reforco nos correndo, com a rampa propria.
+                    if args.levantar_unreal_reforco_correndo > 0:
+                        start_run = counters.setdefault("reforco_correndo_inicio", counters["atualizacao"])
+                        run_emphasis = args.levantar_unreal_reforco_correndo * min(1.0, (counters["atualizacao"] - start_run) / ramp)
+                        # (Nao "run": e o caminho da pasta do treino neste escopo - 20h41 derrubou o treino no write_status.)
+                        for k, running in enumerate(LEVANTAR_UNREAL_RUN):
+                            if running:
+                                per_exercise[k] = run_emphasis
+                        row["reforco_correndo"] = round(run_emphasis, 3)
+                    if args.levantar_unreal_reforco_brucos > 0:
+                        start_prone = counters.setdefault("reforco_brucos_inicio", counters["atualizacao"])
+                        prone_emphasis = args.levantar_unreal_reforco_brucos * min(1.0, (counters["atualizacao"] - start_prone) / ramp)
+                        per_exercise[1] = prone_emphasis
+                        row["reforco_brucos"] = round(prone_emphasis, 3)
+                    batch.set_clip_get_up_emphasis(per_exercise)
                     row["reforco_costas"] = round(emphasis, 3)
                 fire = get_up_fire_state(args, counters)
                 if fire is not None:
@@ -5367,7 +6455,8 @@ def main() -> int:
                     # (12/11 12h55) As duas primeiras janelas depois de comecar so tem os episodios curtos (os que deram certo): a escada
                     # lia o levantou alto demais a cada religar e subia a forca a mais.
                     FIRE_WINDOWS[0] += 1
-                    for change in (get_up_fire_step(fire, recent, counters["atualizacao"], args.levantar_fogo_faixa, args.levantar_fogo_congelar)
+                    for change in (get_up_fire_step(fire, recent, counters["atualizacao"], args.levantar_fogo_faixa, args.levantar_fogo_congelar,
+                                                    tracked=int(args.levantar_rastrear or 0))
                                    if FIRE_WINDOWS[0] > 2 else []):
                         print("fogo do levantar:", change, flush=True)
                     batch.set_get_up_fire(list(args.levantar_fogo) + [args.levantar_fogo_de_cima], fire_levels_flat(fire["niveis"]), False)
@@ -5408,6 +6497,16 @@ def main() -> int:
             if args.comando_levantar and len(recent) and recent.shape[1] >= 71:
                 # (12/11 18h) O comando ligado ao levantar: n, os sem queda, as quedas por episodio, a fracao das quedas que levantou de
                 # volta e o tempo medio do levantar (s).
+                # (13/11, --queda-vira-comando) As quedas dos outros exercicios que viraram comando: n, levantou de volta e o tempo.
+                turned = recent[np.isin(recent[:, 1], (6, 7)) & ~((recent[:, 1] == 6) & (recent[:, 26] == 12)) & (recent[:, 68] > 0)]
+                if args.queda_vira_comando:
+                    loco_eps = int(np.isin(recent[:, 1], (6, 7)).sum() - ((recent[:, 1] == 6) & (recent[:, 26] == 12)).sum())
+                    t_falls, t_rises = float(turned[:, 68].sum()), float(turned[:, 69].sum())
+                    t_timed = turned[turned[:, 70] >= 0, 70]
+                    row["queda_vira_comando"] = {"episodios": loco_eps, "com_queda": int(len(turned)),
+                                                 "levantou": round(t_rises / t_falls, 3) if t_falls > 0 else None,
+                                                 "tempo_s": round(float(t_timed.mean()), 2) if len(t_timed) else None,
+                                                 "segundos": round(float(turned[:, 4].mean()), 2) if len(turned) else None}
                 cmd = recent[(recent[:, 1] == 6) & (recent[:, 26] == 12)]
                 if len(cmd):
                     falls, rises = float(cmd[:, 68].sum()), float(cmd[:, 69].sum())

@@ -156,10 +156,41 @@ struct TrackingGetUpAmpSettings3D {
     // de peso x (1 - forma); a forma compara a cabeca contra o peito (para tras, de lado) o peito contra a pelve (torcao e, 12h25, arqueado para tras) e o olhar para cima com a media
     // do proprio clipe NA MESMA ALTURA DA CABECA (nao no tempo: o ritmo e a tecnica seguem dele), com folga. 0: nada.
     float getUpFormWeight = 0.0f;
+    // (13/11 17h45, ele: "normalizar os tempos... o de costas levanta muito mais rapido que o de brucos... proximo de 1.5 segundos... o de
+    // costas pelo menos 1.2") getUpPaceWeight: no levantar adaptativo limpo de pe (sem fogo, sem o correndo), ate a entrega, custa por
+    // passo estar com a cabeca mais alta que a do clipe tocado no ritmo de getUpPaceSeconds ate a entrega (do instante do comeco da
+    // tentativa): w x clamp((cabeca - alvo - 0,05 m) / 0,25 m, 0, 1). Mais baixo ou outro movimento nao custa - so subir antes da hora.
+    // Medido (13/11, r110380): a rede pulava a pausa ajoelhada do clipe (~0,75 m) e ia de 0,45 a 1,5 m em 0,5 s. 0: desligado.
+    float getUpPaceWeight = 0.0f, getUpPaceSeconds = 1.5f;
     // (13/11 13h30, ele: "sem melhoras nenhuma quanto a mao" - medido: 100% dos de costas ainda apoiam a esquerda virada depois de 45 min;
     // dentro da forma a mao custava ~2 por levantar, ~10x menos que a subida que mudou) A mao virada com peso proprio: por passo,
     // isto x (1 - nota da mao), fora da forma. 0: a mao dentro da nota da forma (metade dela com mao apoiada).
     float getUpPalmWeight = 0.0f;
+    // (14/11 20h10, ele: "porque nao poderiamos usar o mesmo metodo que ja foi usado... para trazer a semelhanca com o clipe" - a perna
+    // esquerda do de costas indo para tras no ajoelhar; o rastreio do corpo inteiro dilui a perna em 3 de 18 partes) A forma da perna
+    // esquerda, como a da cabeca e do peito: no levantar adaptativo limpo (sem fogo) com a recuperacao no comando e a cabeca acima de
+    // 0,6 m, nos exercicios da mascara (bit e = exercicio e), um custo por passo de peso x min(1,5, (erro - 5 cm) / 30 cm); o erro e a
+    // media do joelho (a canela) e do pe esquerdos contra a pelve, nos eixos dela, contra a media do clipe na mesma altura da cabeca
+    // (+-0,1 m) perto do relogio dele (+-0,4 s). 0: nada.
+    float getUpLegWeight = 0.0f;
+    std::uint32_t getUpLegMask = 0u;
+    // (14/11 20h40, ele: "os bracos estabanados na arrancada, e os passinhos parado/curtos" - visto: o clipe sai inclinado 20-30 graus
+    // com passadas longas e a rede fica com o tronco reto trotando no lugar; os bracos seguem o balanco do clipe num corpo reto) Na janela
+    // da largada, de pe, um custo por passo de peso x min(1,5, (inclinacao do clipe - a do corpo - 5 graus) / 15 graus) x o peso da
+    // janela: a inclinacao e a do peito alto contra a pelve, no rumo do movimento, contra a vertical; so o MENOS inclinado que o clipe
+    // custa. 0: nada.
+    float launchLeanWeight = 0.0f;
+    // (14/11 22h10, o Codex consultado: "pagar a velocidade cedo fora dos multiplicadores de forma") Na largada da corrida de frente (a
+    // faixa da corrida, rumos 0, 1 e 7), com a janela da largada como envelope: a nota do rastreio vira (1 - s x janela) x ela + s x janela
+    // x p, p = a velocidade do centro de massa no rumo sobre max(1 m/s, a pedida agora) - ganhar velocidade cedo paga por si, mesmo com a
+    // pose longe do clipe (medido: a rede ficava reta trotando no lugar, 1,0-1,2 m/s a 1 s). 0: nada.
+    float launchSpeedShare = 0.0f;
+    // (15/11 06h30, ele: "ainda falta a arrancada da corrida... ha clipe para isso, basta ele seguir o clipe da arrancada para correr
+    // corretamente") Na largada de pe da corrida de frente (rumos 0, 1 e 7, o clipe de largada tocando - starting), a nota da
+    // semelhanca do levantar (TrackingClipGetUp3D::score: a pose por partes, a linha do tronco, maos e pes, o centro de massa e a
+    // velocidade dele, o pulo) contra o quadro do clipe no relogio dele, posto sob a pelve no rumo do clipe, com a velocidade do
+    // centro de massa da referencia a da rampa do clipe (os clipes sao no lugar). Soma isto x a nota x a janela da largada. 0: nada.
+    float launchImitationReward = 0.0f;
     // (13/11 14h, ele: "no treino do parado, gostaria de que o quadril dele ficasse retinho alinhado" - medido: no parado a linha dos
     // quadris caida -14,9 graus em media, acima de 5 graus 96% do tempo; o clipe 0; os pes 21 / 38 cm para os lados contra 31 / 31) No
     // parado (a locomocao no comando, sem pedido de movimento, de pe), um custo por passo de peso x (1 - e^-(inclinacao/6 graus)^2), a
@@ -464,6 +495,12 @@ struct TrackingGetUpAmpSettings3D {
     // caiu no comando, a cabeca do levantar levanta (o clipe de pe do lado do corpo, no trecho da pose, adaptativo, sem fogo) e, de pe e
     // firme, devolve a locomocao no idle alerta com o jogador parado; a queda nao encerra (a multa fica). false: como antes.
     bool commandGetUp = false;
+    // (13/11 17h, ele: "os treinos nao encerrarem so porque houve a queda... aprender com as falhas... como cair melhor, se recuperar
+    // melhor"; o cerebro unico) fallToCommand: com commandGetUp, a queda num exercicio de locomocao (os rumos, as manobras, a estrela,
+    // o giro) nao encerra - o episodio vira comando no instante da queda (o jogador emulado com a tecla e o shift do que ele fazia) e
+    // levanta como no comando; firme, o jogador retoma. O episodio segue contando no grupo de antes (sceneryPreset = a manobra
+    // original). false: como antes.
+    bool fallToCommand = false;
     // (12/11 18h, ele: "levantar correndo... quando ele ta caido mas quer correr") A fracao das quedas andando em que o jogador segue
     // segurando a tecla: o levantar correndo, e a troca ja correndo na frente da vista.
     float commandRunGetUpShare = 0.5f;
@@ -525,6 +562,155 @@ struct TrackingGetUpAmpSettings3D {
     // pes apoiados, ate 0,5. Mais o custo pequeno dos passos do gerador.
     float idleRewardPose = 0.0f;
     float idleRewardStill = 0.0f;
+    // (13/11 v1, a volta a base: depois de parar ele ficava com os pes paralelos - o idle alerta tem um pe ~14 cm a frente - porque quieto
+    // na base errada valia quase o mesmo e o passo de acerto nao se pagava no resto do episodio.) idleStillBase (0-1): a quietude do parado
+    // vale 1 - idleStillBase x (1 - perto da base dos pes), sem fogo; 0 desliga.
+    float idleStillBase = 0.0f;
+    // (13/11 v1, a revisao: no comando e na estrela a referencia do rumo salta ou gira rapido de proposito - a vista de ate 120 graus, o giro
+    // de ate 143 graus/s, a troca de perna - e o "virou de costas" (100 graus por 0,5 s) encerrava e multava o corpo que ainda virava: das
+    // "quedas" do comando e da estrela livre medidas, ~80% eram esse fim, nao queda.) turnedGrace: s a mais no limite do virado enquanto a
+    // referencia gira rapido e ate turnedGrace s depois; 0 desliga.
+    float turnedGrace = 0.0f;
+    // (13/11 v1, o braco estabanado na freada) stopArmsReach >= 0: freando (stopping), a correcao da rede nos bracos (armClipReach) vira
+    // esta - 0 = os bracos so no clipe da parada; < 0 desliga.
+    float stopArmsReach = -1.0f;
+    // (14/11 v1, o levantar de costas parecido com o clipe) getUpImitationMask: os exercicios do levantar (bit = o indice em clipGetUpClips)
+    // cujos alvos de imitacao (locomotionTargets, a imitacao supervisionada do treino) sao o clipe do comeco no ritmo de
+    // getUpImitationPace s, limpos; com a mascara ligada os outros levantares ficam sem alvo; 0 = como antes.
+    int getUpImitationMask = 0;
+    float getUpImitationPace = 1.5f;
+    // (14/11 21h45, ele: 'cobrar mais semelhanca com o clipe para os nossos levantares correndo') O ritmo proprio dos correndo (s ate o
+    // ponto de entrega; os de pe ficam no getUpImitationPace); 0: o mesmo dos de pe.
+    float getUpImitationPaceRun = 0.0f;
+    // (15/11 07h15, ele: "quando ele se levanta, ele ja va girando para a direcao onde ele deve olhar, onde a camera estaria apontada... mesmo
+    // que tenha que fazer um 180") getUpViewReward > 0: nos levantares de pe com vista - o levantar e ir de pe (o ponto em qualquer rumo, a
+    // vista nele desde o comeco) e o levantar do comando (a vista de antes da queda) -, a vista entra na observacao do levantar (contra o rumo
+    // do corpo, bodyYaw, como ja era no comando), a nota soma isto x a subida (cabeca de 0,15 a 1,5 m) x o peito para a vista ((1 + cos)/2) e
+    // na troca a vista fica onde estava (antes virava para o tronco). 0: como antes.
+    float getUpViewReward = 0.0f;
+    // (15/11 07h12, ele: "aumentar a velocidade do levantar de brucos... 0,3 s mais lento que o de costas... ambos com as mesmas velocidades")
+    // A escala do tempo do levantar de brucos de pe (o exercicio 1): a faixa do tempo (adaptiveTimeMin/Max), o ritmo (getUpPaceSeconds) e o
+    // ritmo da imitacao (getUpImitationPace) vezes isto. 1: como antes.
+    float getUpProneTimeScale = 1.0f;
+    // (15/11 08h30, ele: "passe a penalizar a mao ficar travada atras das costas, em todos os casos") handBehindWeight > 0: de pe (a cabeca
+    // acima de 1,3 m), cada mao mais de 10 cm atras da pelve e a menos de 15 cm da linha do meio (no quadro da pelve) por mais de 0,3 s
+    // seguidos custa por passo isto x (o tempo alem de 0,3 s / 0,5 s, ate 1), em todos os exercicios. Medido nas capturas de 15/11: o
+    // balanco do braco do clipe passa pela regiao por no maximo 0,23 s seguidos (retas, largada, levantares); a mao travada fica. 0: nada.
+    float handBehindWeight = 0.0f;
+    // (15/11 09h10, ele: "nessa fase de correcao mais forte.. o sucesso ao levantar deve ficar mais fraco do que o ganho que ele tera por se
+    // assemelhar ao clipe") O premio da chegada do levantar adaptativo (adaptiveSpeedBonus) nos levantares de pe vezes isto; os correndo
+    // ficam com o inteiro. 1: como antes.
+    float getUpStandBonusScale = 1.0f;
+    // (14/11 v1) getUpImitationReward: a nota por passo da semelhanca da pose com esse clipe no ritmo (TrackingClipGetUp3D::score, alinhado
+    // ao rumo e a raiz do corpo), nos levantares limpos da mascara ate a troca; 0 desliga.
+    float getUpImitationReward = 0.0f;
+    // (14/11 v1) getUpImitationFar: abaixo desta semelhanca com o clipe no ritmo por getUpImitationFarSeconds, o levantar da mascara acaba
+    // (o fim cedo do levantar pelo clipe de 11/11); 0 desliga.
+    float getUpImitationFar = 0.0f, getUpImitationFarSeconds = 0.6f;
+    // (15/11 12h15, ele: o levantar de costas "da uns passos em rumo a uma certa direcao... deveria permanecer no mesmo lugar 100% das vezes")
+    // getUpImitationAnchor: nos levantares de pe, o clipe no ritmo fica preso no mundo desde o primeiro passo (o rumo do comeco e a raiz
+    // do corpo ali), como o DeepMimic - o pe de apoio do clipe parado no chao e a deriva cobrada. Desligado: realinhado a cada passo ao
+    // rumo cabeca - raiz e a raiz do corpo (de pe o rumo cabeca - raiz vira a inclinacao do tronco e gira: medido, a rede andava ~56 cm
+    // depois de de pe contra ~12 cm do clipe).
+    bool getUpImitationAnchor = false;
+    // (15/11 12h20, ele: "o proprio clipe BUGADO se desloca pelo mundo") clipUnderPelvis: o quadro "posto sob a pelve" do corpo poe a
+    // PELVE do clipe na pelve do corpo. Desligado: poe a ORIGEM do clipe ali e a pelve dele fica deslocada pelo deslocamento da raiz do
+    // clipe (o idle alerta: 5,5 cm para tras e para o lado; o levantar de costas: 38 cm), andando junto com o corpo - um alvo que o corpo
+    // nunca alcanca nas maos e pes e no centro de massa (a imitacao da locomocao, a do parado, a da freada livre e o fantasma desenhado).
+    // O fantasma do levantar pelo clipe passa a ser o clipe preso no mundo (o da nota da agilidade).
+    bool clipUnderPelvis = false;
+    // (15/11 12h23, ele: "esse bug ai tambem ocorre no clipe do parado") idleClipAnchor: no parado, o clipe do idle da imitacao (o
+    // da pose e o da nota de rastreio) fica com a pelve na ancora do parado (idleAnchor: onde o parado comecou, re-ancorada so no
+    // pouso de um passo do gerador), nao na pelve de agora - preso no mundo, a deriva custa nas maos, pes e centro de massa. O rumo
+    // segue o do corpo (01/11: cobrar o rumo do idle derrubou o levantar).
+    bool idleClipAnchor = false;
+    // (15/11 12h50, ele: "notei um leve desalinhamento das pernas nas locomocoes frontais pelo menos, as outras... acredito que tambem")
+    // legAlignWeight: nos retos, a semelhanca vezes (1 - peso) + peso x exp(-soma dos erros^2 / (2 x legAlignWidth^2)), os erros sendo o
+    // rumo de cada coxa (para onde o joelho aponta) e de cada pe, contra a pelve, menos o mesmo no clipe (pelo eixo de lado do elo, que fica
+    // no plano na flexao). A regua das juntas cobrava 2% por 5 graus no pe e 7% por 20 graus no joelho: medido 12h48, a corrida de frente
+    // com os pes ~5 graus girados para a direita, a diagonal 7 com a perna esquerda 16-18 graus para dentro. 0 desliga.
+    float legAlignWeight = 0.0f, legAlignWidth = 0.1745f;
+    // (15/11 13h00, a revisao: no caminho ativo do parado - idleUnified com idleRewardPose - nada via o lugar no mundo: a forma e por
+    // rotacao, a base e relativa a pelve, a quietude e os custos sao velocidade; arrastar 3 cm/s quase nao custava e a distancia
+    // acumulada saia de graca - o parado se afastava 14,6 cm em 5 s.) idleHoldWeight: o bonus do parado vezes (1 - peso) + peso x
+    // 1/(1 + (d / idleHoldWidth)^2), d a distancia da pelve ao ponto onde o parado comecou (refeito so depois de empurrao ou fogo).
+    // A base de 0,5 de ficar de pe nao muda (11/11, ele: "a recompensa por ficar na pose nunca pode ser maior que nao cair"). 0 desliga.
+    float idleHoldWeight = 0.0f, idleHoldWidth = 0.10f;
+    // (15/11 15h, a revisao profunda - 04_locomocao/revisao_profunda_rl_15_11.md) reviewFixes: (a) as misturas entre clipes - o clipe sem
+    // ciclo fica no fim em vez de enrolar para o comeco, o de ciclo leva o rumo acumulado dos ciclos (o giro), e a mistura leva a
+    // inclinacao do tronco e das pernas de quando comecou; na troca do levantar para o parado, a mistura parte do clipe do levantar
+    // na fase da nota (o relogio adaptativo), parada, no rumo dele - antes um quadro velho do relogio do comeco, as vezes enrolado ate o
+    // deitado; (b) o fogo alivia o 'aligned' do parado, o custo de quietude, a coluna e o peito do giro e o quadril reto do parado, como
+    // ja aliviava os outros termos. Desligado: como antes.
+    bool reviewFixes = false;
+    // (15/11 15h10, a revisao - item 5) launchSideMargin: na largada (o corpo ainda abaixo da velocidade de andar, os dois pes no chao),
+    // a margem do equilibrio da firmeza so de lado, no eixo de lado do rumo pedido - como andando. Antes, parado, a base inteira: o ponto
+    // de captura a frente dos pes, que a arrancada precisa (cair para a frente e o correr), era cobrado nos primeiros ~0,3 s (10 cm fora:
+    // o equilibrio 0,06, a firmeza x0,44). Desligado: como antes.
+    bool launchSideMargin = false;
+    // (15/11 15h15, a revisao - itens 11 e 12) runWidthWeight: correndo e no sprint retos (fora os laterais), a semelhanca vezes (1 - peso)
+    // + peso x exp(-((abertura - a do clipe - 4 cm) / 6 cm)^2), so quando os pes estao MAIS abertos que no clipe alem de 4 cm (a largura do
+    // trote nao vale na corrida - o clipe no corpo fisico varia - e a base da corrida de frente abriu de 16 para 22 cm, o clipe 12).
+    // legAlignCommand: as pernas alinhadas (legAlignWeight) tambem no comando andando, fora das misturas entre clipes. 0/false desligam.
+    float runWidthWeight = 0.0f;
+    bool legAlignCommand = false;
+    // (17/11, o plano de desentortar - a auditoria) referenceSideFix: o rolamento do peito (retas e curvas), a largura dos pes (corrida e
+    // trote) e o joelho para dentro medem o CLIPE no eixo de lado do proprio clipe (o rumo da referencia) e o corpo no dele; antes os dois
+    // no eixo do corpo, e com a pelve virada a inclinacao do clipe para a frente vazava como inclinacao de lado exigida. false: como antes.
+    bool referenceSideFix = false;
+    // (17/11, o plano de desentortar - Fase 1, item 3) phaseSyncBothFeet: a fase do clipe acertada no pouso dos DOIS pes (antes so no
+    // esquerdo: o passo direito nunca era alinhado). Desligado: so o esquerdo.
+    bool phaseSyncBothFeet = false;
+    // (17/11, Fase 1, item 2) headingBiasWeight: nas retas com pedido, o rumo MEDIO da pelve contra o do clipe (a media movel de ~0,6 s,
+    // o balanco do passo sai) derruba a semelhanca: (1 - peso) + peso / (1 + (vies / headingBiasWidth)^2). Antes o rumo so ia ao log e o
+    // episodio so acabava a 100 graus. 0: sem.
+    float headingBiasWeight = 0.0f;
+    float headingBiasWidth = 0.10f;
+    // (17/11, Fase 1 - D2, ele: "Igualar") contactForceObservation: a entrada da forca externa do fogo soma a forca dos contatos que nao
+    // sao o apoio (outro corpo que se move; parede ou coisa estatica de normal de lado), a mesma conta no treino e no jogo - no jogo ela
+    // era sempre zero. O run.json leva forca_contatos. Desligado: so as forcas do treino.
+    bool contactForceObservation = false;
+    // (17/11, Fase 1) straightCommand: os fatores da reta (o peito de lado, o rumo medio da pelve, as pernas alinhadas, a largura e o
+    // pe cruzado) tambem no COMANDO quando ele esta numa reta - a tecla segurada correndo (estado 0), a vista parada (sem giro) e fora das
+    // misturas entre clipes. O comando e o modo do jogo e so a manobra 0 os tinha: ali o torto saia de graca. Desligado: so a manobra 0.
+    bool straightCommand = false;
+    // (17/11, o plano de desentortar - Fase 2) lateralBiasWeight: nas retas, o LADO medio (~0,6 s, o balanco do passo sai) da cabeca, do
+    // peito alto e do meio dos pes contra a pelve, no eixo de lado do corpo, menos o mesmo no clipe (no eixo dele) - o que se ve de tras
+    // (a regua visual: a cabeca 5 cm, o peito 3,5 cm a direita, o pe direito 16 contra 11,6 cm). A semelhanca vezes
+    // (1 - peso) + peso / (1 + (rms / lateralBiasWidth)^2). 0: sem.
+    float lateralBiasWeight = 0.0f;
+    float lateralBiasWidth = 0.03f;
+    // (17/11, Fase 2 - a literatura: a imitacao >= 50-70% da nota, em produto) imitationGate: andando, a nota inteira vezes
+    // (1 - g) + g x min(1, semelhanca / imitationGateFull). 0: sem.
+    float imitationGate = 0.0f;
+    float imitationGateFull = 0.6f;
+    // (16/11, o plano de melhoria do RL - foco 5, ele: "treinar melhor o RL com colisoes no mundo e com outros jogadores")
+    // locomotionSceneryFraction: a fatia dos episodios de locomocao (de pe, no treino; o comando e o parado tambem) com 2-5 coisas paradas em
+    // volta do caminho -
+    // caixas, paredes curtas e pilares do tamanho de um jogador - de 1 m atras a 8 m a frente, quase todas a 0,55-2,15 m da linha do pedido
+    // (12% das de mais de 3 m na frente, na linha: a trombada). Os raios do ambiente da rede so viam o livre na locomocao (as paredes so
+    // existiam no levantar e no prensado do fogo) e no jogo qualquer parede perto saturava a entrada. 0 desliga.
+    float locomotionSceneryFraction = 0.0f;
+    // (15/11 15h20, ele: "o parado sempre distribui o peso em cima da perna esquerda, ao inves de ficar perfeitamente na pose do clipe")
+    // idleWeightCenter: o bonus do parado vezes (1 - peso) + peso x 1/(1 + (d / 2,5 cm)^2), d a diferenca entre o centro de massa do
+    // corpo e o do clipe do idle, cada um contra o meio dos proprios pes, no rumo da propria pelve (o fogo alivia). Nada media para
+    // onde ia o peso: a base e relativa a pelve e a forma e por rotacao. 0 desliga.
+    float idleWeightCenter = 0.0f;
+    // (15/11 15h20, ele: "a corrida nao deveria ser abaixo de 5,5 m/s") speedWidthFraction: a largura do termo da velocidade, fracao da
+    // pedida (nunca abaixo de 1 m/s). 0,35 (o de antes): a 6 m/s, 2,1 m/s de largura - 84% da pedida valia 0,82 do termo e subir ate a
+    // pedida rendia pouco. Menor = mais cobranca perto da pedida.
+    float speedWidthFraction = 0.35f;
+    // (15/11 15h56, ele: "a arrancada da corrida piorou, bem mais estabanada agora" - com os bracos calmos de 10/11, que mudam o alvo dos
+    // motores; desligados.) launchArmsCalm: na largada, a semelhanca vezes (1 - peso x lw) + peso x lw / (1 + (excesso / 0,4)^2), o excesso
+    // sendo a velocidade media das maos contra o peito alto alem da do clipe no mesmo instante (no ritmo da largada) mais 0,15 m/s - a
+    // regua da arrancada mede 1,8 m/s contra 1,4 do clipe. A rede aprende a acalmar os bracos; o alvo dos motores nao muda. 0 desliga.
+    float launchArmsCalm = 0.0f;
+    // (14/11 v1) clipSideNow: o "virou para o outro lado" da tentativa nova compara o peito com o do clipe no quadro de agora (nao o do
+    // comeco) - para o clipe de costas que rola e levanta de brucos (levantar_costas_rola); desligado: como antes.
+    bool clipSideNow = false;
+    // (14/11 v1) clipTrackMask: bit k = o levantar limpo (sem fogo, fora do comando) do exercicio k pelo rastreio do clipe mesmo com o
+    // adaptativo ligado; 0: como antes.
+    std::uint32_t clipTrackMask = 0u;
     float idleSlideCost = 0.0f;
     // (10/11 04h, ele: "desde agora precisamos cobrar a coluna correta, cabeca, bracos com mais rigor durante as locomocoes e
     // parado") A regua da imitacao da coluna, da cabeca e dos bracos vezes isto (andando, no giro e nas trocas); 1: sem.
@@ -575,6 +761,30 @@ struct TrackingGetUpAmpSettings3D {
     // a rigidez e o amortecimento vezes isto. Medido: as 3 juntas de 440 N.m/rad em serie dao ~150 N.m/rad no tronco, contra ~250-440
     // in vivo com os musculos pre-ativados (Moorhouse & Granata 2005; Andersen 2004) e ~785 (Cholewicki 2000). 1: como antes.
     float spineTone = 1.0f;
+    // (17/11, o plano de desentortar - os bracos abertos) O tonus so dos bracos (UpperArm, Forearm, Hand): a rigidez e o amortecimento vezes
+    // isto. Medido na r130240 correndo: o ombro 18 graus fora do clipe e o cotovelo 2,5; com a correcao da rede nos bracos a 1/3 (0,05) os
+    // cotovelos seguiam 7 cm para fora de cada lado - o motor do ombro nao segura o clipe contra o balanco do tronco. 1: como antes.
+    float armTone = 1.0f;
+    // (17/11, o Codex achou a causa dos bracos abertos) clipVelocityRotation: a velocidade-alvo do clipe nos bracos e na cabeca (os eixos
+    // que seguem o clipe: armClipReach, headClipReach, e a janela da largada) por JUNTA, como o backend a entrega ao Jolt - a velocidade
+    // angular no referencial da junta do filho (SetTargetAngularVelocityCS): w = Log(conj(Exp(a_agora)) Exp(a_proximo)) / dt. Antes, a
+    // derivada de cada coordenada: no ombro (3 eixos, 60-70 graus) as duas diferem ate 6 rad/s e o braco abria. Medido pelo Codex na
+    // r130240 (n132): cotovelos 61,6 -> 46,3 cm (clipe 45,4), maos 60,8 -> 44,3 (clipe 43,4). Desligado: como antes.
+    bool clipVelocityRotation = false;
+    // (17/11, o tronco ereto e a passada curta - a imitacao supervisionada dos alvos do clipe, --imitar) imitationVelocityTargets: os
+    // alvos do clipe da imitacao (locomotionTargets) com a velocidade-alvo de cada eixo do clipe - por junta, como o backend a quer (a mesma
+    // conta do clipVelocityRotation) - no lugar das saidas de velocidade; antes so as posicoes vinham e as 39 saidas de velocidade eram
+    // puxadas para zero (a imitacao freava os motores: em 16/11 o --imitar 1 levou as pernas a 6,6 graus do clipe e a corrida de 5,0 a
+    // 3,6 m/s). Desligado: como antes.
+    bool imitationVelocityTargets = false;
+    // (17/11, o plano de desentortar - Fase 3, o auto-equilibrio "MUITO" melhor; a literatura: DReCon, projeteis pequenos e frequentes em
+    // ponto sorteado do corpo aumentam muito a robustez sem impacto visivel no estilo - em todos os episodios, entao a rede nao anda "com
+    // medo" de um episodio especial) projectileRate: na locomocao de pe (treino), por segundo, a chance de um projetil - um impulso de
+    // projectileImpulse N.s (sorteado) num elo sorteado, de lado e um pouco para cima ou para baixo, em projectileSeconds; ele entra na
+    // entrada da forca externa enquanto age (como os empurroes). 0: sem.
+    float projectileRate = 0.0f;
+    std::array<float, 2> projectileImpulse { 10.0f, 40.0f };
+    float projectileSeconds = 0.06f;
     // (10/11 14h30, ele: "pos-freio parece a coluna quebrada", "a coluna torta"; medido: a rede empurra as juntas da coluna contra os
     // batentes para se enrijecer - a lombar no batente de flexao na freada, a torcao no batente no parado.) O custo do batente: por
     // decisao, o torque que os batentes da coluna fazem (todos os eixos) alem de JamSlack, em unidades de JamScale, vezes isto.
@@ -1421,6 +1631,7 @@ public:
     void setCrookedStart(float share, float bonus, float close);
     void setStarRework(float pathWeight, float pathWidth, float curveShare, float curveMin, float curveMax);
     void setCommandGetUp(bool on, float runShare = 0.5f);
+    void setFallToCommand(bool on);
     void setRunHandoffAtStand(bool on, float afterSeconds);
     void setGetUpGo(float share, float minMeters, float maxMeters);
     void setTurnVariety(bool on, float spineReward);
@@ -1428,6 +1639,44 @@ public:
     void setIdleStatic(bool on);
     void setIdleCosts(float motion, float pose);
     void setIdleReward(float pose, float still, float slide);
+    void setIdleStillBase(float gate);
+    void setTurnedGrace(float seconds);
+    void setStopArmsReach(float reach);
+    void setGetUpImitation(int mask, float paceSeconds);
+    void setGetUpImitationPaceRun(float seconds);
+    // (15/11) settings.getUpViewReward e, para as sondas, de um mundo: {a vista menos o peito (graus), a altura da cabeca (m), 1 se a vista vale
+    // no levantar agora, 1 se ja trocou, 1 se e o levantar e ir, 1 se na locomocao}; e settings.getUpProneTimeScale.
+    void setGetUpView(float weight);
+    [[nodiscard]] std::vector<float> getUpViewNow(std::size_t world) const;
+    void setGetUpProneTimeScale(float scale);
+    void setHandBehind(float weight);
+    void setGetUpStandBonusScale(float scale);
+    void setGetUpImitationReward(float weight);
+    void setGetUpImitationFar(float threshold, float seconds);
+    void setGetUpImitationAnchor(bool enabled);
+    void setClipUnderPelvis(bool enabled);
+    void setIdleClipAnchor(bool enabled);
+    void setLegAlign(float weight, float widthDegrees);
+    void setIdleHold(float weight, float widthMeters);
+    void setReviewFixes(bool enabled);
+    void setLaunchSideMargin(bool enabled);
+    void setRunWidth(float weight);
+    void setIdleWeightCenter(float weight);
+    void setSpeedWidthFraction(float fraction);
+    void setLaunchArmsCalm(float weight);
+    void setLegAlignCommand(bool enabled);
+    void setLocomotionScenery(float fraction);
+    void setReferenceSideFix(bool enabled);
+    void setPhaseSyncBothFeet(bool enabled);
+    void setHeadingBias(float weight, float width);
+    void setContactForceObservation(bool enabled);
+    void setStraightCommand(bool enabled);
+    void setLateralBias(float weight, float width);
+    void setImitationGate(float gate, float full);
+    // (17/11, D2) A fatia dos mundos com o chao de grama (o do campo); os outros ficam no concreto (o do laboratorio). Recria o chao.
+    void setGrassGroundFraction(float fraction);
+    void setClipSideNow(bool enabled);
+    void setClipTrackMask(int mask);
     void setUpperRigor(float factor);
     void setUnrealStarts(bool on);
     void setUnrealStartScale(float scale);
@@ -1442,6 +1691,10 @@ public:
     void setMotorTone(float tone);
     void setPostureTail(float share);
     void setSpineTone(float tone);
+    void setArmTone(float tone);
+    void setClipVelocityRotation(bool enabled);
+    void setImitationVelocityTargets(bool enabled);
+    void setProjectiles(float rate, float minimumImpulse, float maximumImpulse, float seconds);
     void setJamCost(float weight);
     void setFootSlipCost(float weight);
     void setMotorGravity(bool on);
@@ -1588,7 +1841,21 @@ public:
     void setAdaptiveTimeFall(float seconds);
     void setAdaptiveTimeFire(float slack);
     void setGetUpForm(float weight);
+    void setGetUpPace(float weight, float seconds);
     void setGetUpPalm(float weight);
+    // (14/11 20h10) A forma da perna esquerda (settings.getUpLegWeight) e, para as sondas, o erro dela agora num mundo (m; < 0: sem).
+    void setGetUpLegForm(float weight, std::uint32_t mask);
+    [[nodiscard]] float getUpLegErrorNow(std::size_t world) const;
+    // (O corpo - cabeca, pelve, joelho e pe esquerdos -, a media do clipe comparada, n e o erro.)
+    [[nodiscard]] std::vector<float> getUpLegFormNow(std::size_t world) const;
+    // (14/11 20h40) O custo da inclinacao na largada (settings.launchLeanWeight) e, para as sondas, agora num mundo: a inclinacao do
+    // corpo, a do clipe (graus, no rumo do movimento) e o peso da janela da largada.
+    void setLaunchLean(float weight);
+    void setLaunchSpeedShare(float share);
+    // (15/11) settings.launchImitationReward e, para as sondas, a ultima nota da semelhanca com o clipe da largada de um mundo (-1: fora).
+    void setLaunchImitation(float weight);
+    [[nodiscard]] float launchImitationNow(std::size_t world) const;
+    [[nodiscard]] std::vector<float> launchLeanNow(std::size_t world) const;
     void setIdlePelvisLevel(float weight);
     // (13/11 11h30) Para as sondas: a tabela da forma do clipe do exercicio (altura da cabeca, cabeca para a frente, de lado, torcao do
     // peito, peito contra a pelve, olhar para cima; 6 por amostra) e a forma de agora de um mundo (as mesmas 6 e a nota 0-1).

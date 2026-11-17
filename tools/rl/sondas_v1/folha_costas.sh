@@ -1,0 +1,5 @@
+#!/bin/bash
+# (14/11 v1) folha_costas.sh TREINO CHECKPOINT NOME: o levantar de costas do checkpoint em quadros (de lado), para pôr ao lado de costas_clipe_poses.png.
+O=/tmp/claude-1000/-home-dahaka--rea-de-trabalho-IA-Brain/8fe86884-eddc-41e6-ada9-9fcf6d9b523b/scratchpad/v1/folhas_costas/$3; mkdir -p $O
+cd /home/dahaka/Projetos/matter_engine_wip/tools/rl && MATTER_TRACKING_NATIVE=/home/dahaka/Projetos/matter_engine_wip/build-base-n106/python timeout 600 freio /home/dahaka/Projetos/matter_engine/tools/rl/.venv/bin/python -m inspecao.captura --treino $1 --checkpoint $2 --exercicios lev_levantar_costas --modos atual --mundos 2 --segundos 3 --saida $O --forcar 2>&1 | grep -v "^\[INFO\]\|exploracao" | tail -2
+cd /home/dahaka/Projetos/matter_engine && timeout 300 freio build-profile/MatterModelInspector quadros --dump $O/lev_levantar_costas__atual.dump --instantes 0.2,0.4,0.6,0.8,1.0,1.2,1.4,1.6,1.9,2.4 --yaw 90 --pitch 4 --colunas 10 --largura 200 --altura 260 --saida $O/costas.png 2>&1 | grep -v "^\[INFO\]" | tail -1

@@ -20,7 +20,8 @@ inline constexpr float TrackingDampingScale = 0.5f;
 // reservas de um ragdoll, do chao e dos projeteis.
 [[nodiscard]] PhysicsSceneSettings3D trackingSceneSettings3D();
 // O chao: uma laje de concreto com o topo em z = 0.
-void createTrackingGround3D(PhysicsScene3D& scene, float halfExtentMeters);
+// (17/11) O chao do treino; o material escolhivel (o concreto de sempre ou a grama do campo) e o corpo devolvido.
+PhysicsBodyHandle3D createTrackingGround3D(PhysicsScene3D& scene, float halfExtentMeters, const char* material = "concrete");
 
 // Puxada dinamica: cada participante pega o proximo mundo livre; cada mundo e
 // independente, a ordem nao muda nenhum bit.

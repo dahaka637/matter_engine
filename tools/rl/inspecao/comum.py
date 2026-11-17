@@ -224,12 +224,32 @@ class Ambiente:
             return L.get_up_batch(A, environments=worlds, threads=4, seed=seed, evaluation=True, evaluation_kind=0, **S.TRACK)
         # (11/11 14h: o levantar pelo clipe - as avaliacoes 11 a 14, deitado no quadro 0, os clipes e as opcoes do treino.)
         if key in L.LEVANTAR_UNREAL_KEYS:
+            # (14/11 v1) O treino com --levantar-costas-rola: o de costas de pe pelo clipe que rola.
+            if self.v2.get("levantar_costas_rola") is not None and self.v2.get("levantar_costas_rola") is not False and hasattr(L, "usar_costas_rola"):
+                L.usar_costas_rola(self.v2["levantar_costas_rola"] if isinstance(self.v2["levantar_costas_rola"], list) else [])
+            # (14/11 v1) --levantar-costas-clipe: o de costas de pe por outro clipe (o rapido), sem o lado no quadro de agora.
+            if self.v2.get("levantar_costas_clipe") and hasattr(L, "usar_costas_rola"):
+                L.usar_costas_rola(self.v2["levantar_costas_clipe"])
+            if self.v2.get("levantar_brucos_clipe") and hasattr(L, "usar_brucos_clipe"):
+                L.usar_brucos_clipe(self.v2["levantar_brucos_clipe"])
             b = L.get_up_batch(A, environments=worlds, threads=4, seed=seed, evaluation=True,
                                evaluation_kind=11 + L.LEVANTAR_UNREAL_KEYS.index(key), **S.TRACK)
             b.add_style_clips(L.LEVANTAR_UNREAL)
             b.set_clip_get_up(L.LEVANTAR_UNREAL, 0.0, 0.0, float(self.v2.get("levantar_unreal_depois", 1.5)), 0.0,
                               float(self.v2.get("levantar_unreal_largura", 2.0)), float(self.v2.get("levantar_unreal_vel", 1.5)))
-            b.set_clip_get_up_variants(list(L.LEVANTAR_UNREAL_VARIANTS))
+            # (14/11 14h15) A marca do de costas (--levantar-costas-marca) na entrada levantar.variante, como no treino.
+            variants = list(L.LEVANTAR_UNREAL_VARIANTS)
+            if float(self.v2.get("levantar_costas_marca") or 0.0) > 0:
+                variants[0] = float(self.v2["levantar_costas_marca"])
+            if float(self.v2.get("levantar_brucos_marca") or 0.0) < 0:
+                variants[1] = float(self.v2["levantar_brucos_marca"])
+            b.set_clip_get_up_variants(variants)
+            if self.v2.get("clipe_sob_pelve") and hasattr(b, "set_clip_under_pelvis"):
+                b.set_clip_under_pelvis(True)
+            if self.v2.get("parado_preso") and hasattr(b, "set_idle_clip_anchor"):
+                b.set_idle_clip_anchor(True)
+            if (self.v2.get("levantar_costas_rola") not in (None, False) or self.v2.get("levantar_lado_agora")) and hasattr(b, "set_clip_side_now"):
+                b.set_clip_side_now(True)
             if hasattr(b, "set_clip_get_up_deliver") and hasattr(L, "LEVANTAR_UNREAL_DELIVER"):
                 b.set_clip_get_up_deliver(list(L.LEVANTAR_UNREAL_DELIVER))
             # (12/11 03h20) O relogio da agilidade como no treino (so ligado ou nao importa aqui).
@@ -306,6 +326,18 @@ class Ambiente:
         """A politica do checkpoint (como sondas_rl_final.policy), devolvendo o modelo para o ruido e as acoes."""
         L, torch = self.L, self.torch
         model = L.Policy(b.observations().shape[1], b.action_size, b.action_ranges(), split=True)
+        # (14/11 16h25) O ramo do de costas (--levantar-costas-adaptador), quando o ponto tem: a porta vem salva no ponto.
+        if "costas_adapter.0.weight" in self.state["model"] and hasattr(model, "enable_costas_adapter"):
+            model.enable_costas_adapter(b.observations().shape[1], b.action_size, 0, 0.0,
+                                        hidden=int(self.state["model"]["costas_adapter.0.weight"].shape[0]))
+        if "costas_expert.0.weight" in self.state["model"] and hasattr(model, "enable_costas_expert"):
+            # (14/11 17h) O enxerto do de costas: a forma de um professor qualquer; os pesos e as entradas vem do estado.
+            names = list(b.observation_names())
+            dummy = L.Policy(b.observations().shape[1], b.action_size, b.action_ranges(), split=True)
+            model.enable_costas_expert(dummy, names.index("levantar.variante"), 0.4, torch.tensor([n.startswith("chao.contato.") for n in names]),
+                                       torch.tensor([n.startswith("fogo.forca.") for n in names]))
+        if "brucos_expert.0.weight" in self.state["model"] and hasattr(model, "enable_brucos_expert"):
+            model.enable_brucos_expert(L.Policy(b.observations().shape[1], b.action_size, b.action_ranges(), split=True), -0.4)
         model.load_state_dict(self.state["model"])
         if float(self.v2.get("ruido_parado", 1.0)) < 1.0:
             L.configure_idle_noise(model, b, float(self.v2["ruido_parado"]))

@@ -15,7 +15,12 @@ class SkillHead(nn.Module):
         self.locomotion = factory(observations, outputs)
         self.outputs = outputs
 
+    # (13/11, --cerebro-unico) Um cerebro so: todas as linhas na locomocao; a ultima entrada vira a fase (0 levantando, 1 de pe).
+    single = False
+
     def forward(self, x):
+        if self.single:
+            return self.locomotion(x)
         shape = x.shape[:-1]
         x = x.reshape(-1, x.shape[-1])
         moving = x[:, -1] > .5
@@ -36,9 +41,12 @@ class SplitNorm(nn.Module):
         self.recovery = RunningNorm(observations)
         self.locomotion = RunningNorm(observations)
 
+    # (13/11, --cerebro-unico) A da locomocao em todas as linhas (a mistura das duas, feita uma vez - ver merge_norm_single).
+    single = False
+
     def forward(self, x):
         moving = x[..., -1:] > .5
-        out = torch.where(moving, self.locomotion(x), self.recovery(x))
+        out = self.locomotion(x) if self.single else torch.where(moving, self.locomotion(x), self.recovery(x))
         return torch.cat([out[..., :-1], x[..., -1:]], -1)
 
     def update(self, x, recovery=False, locomotion=True):

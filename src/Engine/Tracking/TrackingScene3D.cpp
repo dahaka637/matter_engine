@@ -15,16 +15,16 @@ PhysicsSceneSettings3D trackingSceneSettings3D() {
     return scene;
 }
 
-void createTrackingGround3D(PhysicsScene3D& scene, float halfExtentMeters) {
+PhysicsBodyHandle3D createTrackingGround3D(PhysicsScene3D& scene, float halfExtentMeters, const char* material) {
     PhysicsShape3D shape;
     shape.type = PhysicsShapeType3D::Box;
     shape.halfExtents = { halfExtentMeters, halfExtentMeters, 0.1f };
-    shape.materialId = "concrete";
+    shape.materialId = material;
     PhysicsBodyDefinition3D ground;
     ground.motionType = PhysicsMotionType3D::Static;
     ground.position = { 0.0f, 0.0f, -0.1f };
-    ground.materialId = "concrete";
-    (void)scene.createBody(ground, std::span<const PhysicsShape3D>(&shape, 1));
+    ground.materialId = material;
+    return scene.createBody(ground, std::span<const PhysicsShape3D>(&shape, 1));
 }
 
 } // namespace MatterEngine
