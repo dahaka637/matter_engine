@@ -20,6 +20,14 @@ produção.
 
 <img width="1403" height="759" alt="image" src="https://github.com/user-attachments/assets/c230494d-3666-4e34-98e4-5d8bea7ec0a3" />
 
+## Retomar o projeto (arquivado em novembro de 2026)
+
+- `main`: o jogo, o laboratório in-game e a rede de RL dirigindo o corpo real no jogo. Para compilar e rodar: `./compilar.sh --run`.
+- `rl-base-wip`: o código do treino de RL (o cérebro único). Diverge do `main` e era usado num worktree à parte (`matter_engine_wip`).
+- `rl_modelo/`: a rede treinada atual (r130240) e o checkpoint para continuar o treino. Veja [rl_modelo/LEIA.md](rl_modelo/LEIA.md).
+- A memória do projeto (decisões, planos, diários e o estado de cada frente) fica no vault privado `matter_engine_ia_brain`. Comece pelo `LEIA_PRIMEIRO.md`. As regras do repositório estão em `AGENTS.md`, e o diário técnico em `DESENVOLVIMENTO_ATUAL.md`.
+- Os outros ramos (`rl-base-correta`, `rl-estado-1011`, `rl-suite`) são marcos antigos do RL, guardados para consulta.
+
 ## Compilação
 
 Requisitos comuns: Git, CMake 3.20+ e driver compatível com Vulkan 1.4. As

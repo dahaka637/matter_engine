@@ -1,0 +1,31 @@
+{
+ "_descricao": "F0 (12/11 04h49, r86400, sonda_fogo.py, prova de 32 mundos no levantar adaptativo): a forca em que a rede falha ~100% - o continuo em fracao do peso (os correndo nunca zeraram ate 0,35, o teto fisico), as pancadas no comeco, meio e quase fim em m/s ao centro de massa.",
+ "lev_levantar_costas": [
+  0.54,
+  4.5,
+  1.5,
+  3.7
+ ],
+ "lev_levantar_brucos": [
+  0.44,
+  2.7,
+  1.5,
+  3.2
+ ],
+ "lev_levantar_correndo_costas": [
+  0.37,
+  2.0,
+  2.0,
+  2.5
+ ],
+ "lev_levantar_correndo_brucos": [
+  0.56,
+  0.75,
+  0.8,
+  1.2
+ ],
+ "_versao": 4,
+ "_descricao_v2": "12/11 05h24 (r86800, sonda_continuo.py, so o continuo, 6 rumos x 2): ele - 'calibrar a forca adequadamente para garantir que derrube e impeca o levantar 100% das vezes no estado atual'. Os de pe seguem em 0,15 do peso (0% levantam; 0,12: 8-17%); os correndo vao a 0,55 (0%; 0,45: 17-25%; 0,35: 50-67%).",
+ "_descricao_v3": "12/11 06h14 (r87350-87400, sonda_fogo2.py, 48 mundos, o sorteio de treino 0,8-1): ele - 'a partir do momento em que ele ficou de pe posturado, ele se levantou com sucesso' e 'as forcas e desafios precisam ser mais fortes, para tentar IMPEDIR ele de chegar a ficar de pe'. Com o sucesso novo (de pe na postura 0,2 s) o continuo de 0,15-0,30 nao impedia nada; o de ~100% de falha: costas 0,75, brucos 0,70, correndo costas 0,95, correndo brucos 1,10 do peso; as pancadas pela subida: meio 5-7, quase fim 6-7 m/s; a do comeco (no chao) nunca impede sozinha - 7 m/s.",
+ "_descricao_v4": "12/11 06h50 (r87800, a rede com as entradas do fogo, sonda_fogo3.py, 48 mundos, o sorteio 0,8-1, deitado): ele - 'recalibre tudo para que apenas 10-30% das tentativas sob fogo tenham sucesso'. O continuo sozinho para ~27% (costas 0,54, brucos 0,44, correndo costas 0,37, correndo brucos 0,56 - entre 0,50 (44%) e 0,65 (2%)); as pancadas sobre ele para ~15% por momento (comeco, meio, quase fim)."
+}
